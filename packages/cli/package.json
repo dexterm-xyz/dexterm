@@ -1,0 +1,37 @@
+{
+  "name": "dexterm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "dexterm: terminal DEX screener with a local Claude CLI analyst",
+  "author": "The dexterm authors",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "bin": {
+    "dexterm": "./dist/packages/cli/bin/dexterm.mjs"
+  },
+  "exports": {
+    ".": "./dist/packages/cli/src/index.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build-dist.mjs",
+    "prepack": "node scripts/build-dist.mjs"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@dexterm/agents": "0.0.1",
+    "@dexterm/custom": "0.0.1",
+    "@dexterm/data": "0.0.1",
+    "@dexterm/mcp": "0.0.1",
+    "@dexterm/packs": "0.0.1",
+    "@dexterm/popup": "0.0.1",
+    "@dexterm/recorder": "0.0.1",
+    "@dexterm/tui": "0.0.1",
+    "@dexterm/voice": "0.0.1"
+  }
+}

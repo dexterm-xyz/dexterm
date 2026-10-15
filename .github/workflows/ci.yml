@@ -1,0 +1,84 @@
+# dexterm CI: typecheck + tests from a clean checkout, workflow lint, secret scan of the full history,
+# vulnerability scan of the lockfiles. Every action is pinned to a commit SHA (Dependabot keeps them current).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck + tests (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: install (dev tooling only; dexterm has no third-party runtime dependencies)
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      - name: "tests (offline: no live data source is contacted in CI)"
+        env:
+          DEXTERM_OFFLINE: '1'
+          # no NO_COLOR here: the effects tests (fx.test.ts) assert on colour output and fail under NO_COLOR
+        run: timeout 20m npm test
+
+  lint-workflows:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: actionlint (pinned binary, checksum-verified)
+        run: |
+          bin="$(scripts/release/fetch-tool.sh actionlint "$RUNNER_TEMP/tools")"
+          "$bin" -color
+
+  secrets:
+    name: gitleaks (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks (pinned binary, checksum-verified)
+        run: |
+          bin="$(scripts/release/fetch-tool.sh gitleaks "$RUNNER_TEMP/tools")"
+          "$bin" git --log-opts=--all --config .gitleaks.toml --no-banner --redact --exit-code 1 .
+
+  vulnerabilities:
+    name: osv-scanner (lockfiles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # osv-scanner.toml lists the accepted advisories (each with a reason and an expiry); anything else fails.
+      # The release's scan-results.json still reports them (supply-chain.mjs does not read this file).
+      - name: osv-scanner (pinned binary, checksum-verified)
+        run: |
+          bin="$(scripts/release/fetch-tool.sh osv-scanner "$RUNNER_TEMP/tools")"
+          "$bin" scan source --config osv-scanner.toml --lockfile package-lock.json --lockfile packages/popup/shell/wry/Cargo.lock
