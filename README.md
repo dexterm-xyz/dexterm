@@ -4,10 +4,8 @@
 
 > **Status: early.** dexterm is pre-1.0. Screens, keys and output change between versions. **Known issues in 0.1.0: paper and live trading are the roughest parts.** The ticket flow, simulated fills and the wallet hand-off have bugs we are still fixing, so treat all trading as experimental and do not rely on it. It shows you data and a model's reading of that data; it is not financial advice and it will be wrong sometimes. The live trading path is still maturing: it does not promise fills, prices or returns. Read [what it can and cannot do](#the-safety-model) before you trust it with anything.
 
-<!-- badges land here once the repo is public and the pipeline has run:
 [![ci](https://github.com/dexterm-xyz/dexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/dexterm-xyz/dexterm/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dexterm-xyz/dexterm/badge)](https://scorecard.dev/viewer/?uri=github.com/dexterm-xyz/dexterm)
--->
 
 ## What it does
 
