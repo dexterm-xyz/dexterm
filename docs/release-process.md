@@ -34,7 +34,7 @@ Everything except signing and uploading runs locally; the dry run script in the 
 
 ## Homebrew
 
-A tap formula (`Formula/dexterm.rb`, in the `homebrew-dexterm` tap repo once created) installs the release tarball with Homebrew's `node` and writes a `dexterm` wrapper; `sha256` is the `SHA256SUMS` line for the tarball. Users: `brew install dexterm-xyz/dexterm/dexterm`. No Apple Developer account, no notarization: nothing in the formula is a signed Mach-O; the optional native chart window is compiled on the user's machine by `cargo` if they choose. Homebrew core submission is possible later (needs a stable tag history, an OSI license and notability).
+A tap formula (`Formula/dexterm.rb`, in the `homebrew-dexterm` tap repo once created) installs the release tarball with Homebrew's `node` and writes a `dexterm` wrapper; `sha256` is the `SHA256SUMS` line for the tarball. Users: `brew tap dexterm-xyz/dexterm && brew trust dexterm-xyz/dexterm && brew install dexterm` (Homebrew 7+ refuses to load a third-party tap until it is trusted). No Apple Developer account, no notarization: nothing in the formula is a signed Mach-O; the optional native chart window is compiled on the user's machine by `cargo` if they choose. Homebrew core submission is possible later (needs a stable tag history, an OSI license and notability).
 
 ## macOS Gatekeeper and notarization
 

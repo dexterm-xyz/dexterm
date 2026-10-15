@@ -2,7 +2,7 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-10-15
 
 First public release. Items marked *in progress* ship in this release but are labelled experimental or partial in the app; they are not a promise.
 

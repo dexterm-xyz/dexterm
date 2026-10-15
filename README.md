@@ -45,7 +45,18 @@ git clone https://github.com/dexterm-xyz/dexterm.git && cd dexterm
 npm run dexterm       # runs from the source tree; `npm install` is optional and only pulls the TypeScript dev tooling
 ```
 
-Homebrew and npm installs are planned once the first release is out; see [docs/release-process.md](docs/release-process.md).
+### With Homebrew (macOS)
+
+```sh
+brew tap dexterm-xyz/dexterm
+brew trust dexterm-xyz/dexterm   # Homebrew 7+ loads third-party taps only after you trust them
+brew install dexterm
+dexterm doctor
+```
+
+Without the trust step, `brew install dexterm` stops with "Refusing to load formula … from untrusted tap". The one-line form `brew install dexterm-xyz/dexterm/dexterm` also works: naming the formula in full trusts that one formula. The formula installs the same release tarball with Homebrew's own Node. Homebrew no longer ships prebuilt packages for Intel Macs, so there it builds Node and its toolchain from source, which takes a long time; the release installer above is much faster on Intel.
+
+npm installs are planned; see [docs/release-process.md](docs/release-process.md).
 
 ### Optional pieces
 
