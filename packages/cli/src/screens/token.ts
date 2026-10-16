@@ -168,7 +168,7 @@ export function renderToken(c: Canvas, state: AppState): void {
   if (showAi) analystPanel(c, mainW, top, aiW, bottom - top, tk, state);
   footer(c, state.tokenSocial
     ? [['esc', 'back'], ['s', 'on-chain'], ['f', 'filter'], ['x', state.socialShowSpam ? 'hide spam' : 'show hidden'], ['K', 'KOL lists'], ['a', showAi ? 'hide analyst' : 'analyst'], ['w', 'watch'], ['q', 'quit']]
-    : [['esc', 'back'], ['a', showAi ? 'hide analyst' : 'analyst'], ['h/t/r', 'holders/trades/traders'], ['w', 'watch'], ['b', 'alert'], ['1-6', 'timeframe'], ['q', 'quit']], state.theme.name, isCalm(v));
+    : [['esc', 'back'], ['g', 'go to'], ['a', showAi ? 'hide analyst' : 'analyst'], ['h/t/r', 'holders/trades/traders'], ['w', 'watch'], ['b', 'alert'], ['1-6', 'timeframe'], ['q', 'quit']], state.theme.name, isCalm(v));
 }
 
 // ---------------- AI analyst panel (coral for the verdict and tool-call lines; answers decrypt in) ----------------

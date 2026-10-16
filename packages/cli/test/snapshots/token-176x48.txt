@@ -45,4 +45,4 @@
 │                                          ││  43s ▲BUY      $584  $0.0831  qwA…doU             │   │  ││  ││   │   ││ ▌ask about $GIGA…  read-only · never trades             │
 │                                          ││   2m ▼SELL    $2.9K  $0.0828  i6a…ANo  dev        │   ││ ▲│  ▼│   │ │ ││                                                         │
 ╰──────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────╯
-  esc  back   a  hide analyst   h/t/r  holders/trades/traders   w  watch   b  alert   1-6  timeframe   q  quit
+  esc  back   g  go to   a  hide analyst   h/t/r  holders/trades/traders   w  watch   b  alert   1-6  timeframe   q  quit

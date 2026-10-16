@@ -75,6 +75,8 @@ export function renderNewPairs(c: Canvas, state: AppState): void {
     c.rainZone(tableW, top, 1, bottom - top, 1);
     pairSpotlight(c, c.w - sideW, top, sideW, bottom - top, pairs[sel], priceModeOf(state));
   }
+  // task-1388: `g` opens the go-to prompt here too (keymap + the ? overlay list it); the footer is kept
+  // byte-identical to prototype-v2 (snapshot parity), so the hint lives in `?` and on the screener footer.
   footer(c, [['j/k', 'move'], ['⏎', 'open'], ['p', 'pause feed'], ['f', 'filters'], ['w', 'watch'], ['a', 'ask claude'], ['q', 'quit']], state.theme.name, isCalm(state.vfx));
 }
 

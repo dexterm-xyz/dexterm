@@ -37,4 +37,4 @@
 │                                                                                        │
 │                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
-  j/k  move   PgUp/Dn·g/G  page   [ ]  feed   ⏎  open
+  j/k  move   PgUp/Dn·G  page   [ ]  feed   ⏎  open   g  go to

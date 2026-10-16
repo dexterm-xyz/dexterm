@@ -174,8 +174,8 @@ export function renderScreener(c: Canvas, state: AppState): void {
     : sc.mode === 'sort'
       ? [['j/k', 'move'], ['⏎', 'pick / flip'], ['esc', 'close']] as const
       : sc.query
-        ? [['j/k', 'move'], ['⏎', 'open'], ['/', 'filter'], ['\\', 'clear filter'], ['s', 'sort'], ['w', 'watch'], ['a', 'ask'], ['q', 'quit']] as const
-        : [['j/k', 'move'], ['PgUp/Dn·g/G', 'page'], ['[ ]', 'feed'], ['⏎', 'open'], ['/', 'filter'], ['s', 'sort'], ['w', 'watch'], ['a', 'ask'], ['q', 'quit']] as const;
+        ? [['j/k', 'move'], ['⏎', 'open'], ['g', 'go to'], ['/', 'filter'], ['\\', 'clear filter'], ['s', 'sort'], ['w', 'watch'], ['a', 'ask'], ['q', 'quit']] as const
+        : [['j/k', 'move'], ['PgUp/Dn·G', 'page'], ['[ ]', 'feed'], ['⏎', 'open'], ['g', 'go to'], ['/', 'filter'], ['s', 'sort'], ['w', 'watch'], ['a', 'ask'], ['q', 'quit']] as const;
   footer(c, hints, state.theme.name, isCalm(state.vfx));
 }
 

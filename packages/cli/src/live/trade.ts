@@ -6,7 +6,7 @@
 // sends a transaction — the only trade op is `executor.execute`, a TradeExecutor the UI holds behind
 // an interface (acceptance (d)).
 import {
-  SOL_MINT, lamportsToSol, rawToTokens, positionPnl, shortPubkey, LiveLedger,
+  SOL_MINT, lamportsToSol, rawToTokens, positionPnl, shortPubkey, LiveLedger, withPriority,
   type DataLayer, type Fill, type PaperWallet, type Position, type SwapQuote, type TradeExecutor, type TradeRecord,
   type SignerPort, type StatusView, type PlanView, type ConfirmView, type LinkedWallet, type QuoteView,
 } from '@dexterm/data';
@@ -412,13 +412,15 @@ export class TradeTicketLive {
     const req = { inputMint: order.side === 'buy' ? SOL_MINT : order.mint, outputMint: order.side === 'buy' ? order.mint : SOL_MINT, amount: order.amountRaw, slippageBps: order.slippageBps, mode: 'ExactIn' as const };
     // task-1368: a LIVE preview is quoted BY THE SIGNER (its own limiter paces preview, re-quote and build as one,
     // and the build reuses this very quote); PAPER keeps the terminal's keyless adapter. A fake signer without
-    // `quote` falls back to the terminal's adapter.
+    // `quote` falls back to the terminal's adapter. task-1387: the terminal quote runs at `high`
+    // priority so a user-initiated trade quote preempts the background screener/token enrichment on
+    // the shared 0.5 rps keyless `jupiter` bucket — otherwise the warm quote queues for seconds.
     const s = this.ticket.mode === 'live' ? this.liveDeps?.signer() ?? null : null;
     const viaSigner = s && s.alive && typeof s.quote === 'function'
       ? s.quote({ mint: order.mint, symbol: order.symbol, side: order.side, decimals: order.decimals, amountRaw: order.amountRaw.toString(), slippageBps: order.slippageBps })
         .then((v) => { this.liveSolUsd = v.solUsd.price; return quoteFromView(v); })
       : null;
-    (viaSigner ?? this.dl.jupiterSwap.quote(req))
+    (viaSigner ?? withPriority('high', () => this.dl.jupiterSwap.quote(req)))
       .then((q) => { if (my !== this.seq) return; this.quote = q; this.quoteAt = this.now(); this.loading = false; this.onChange(); })
       .catch((e: unknown) => { if (my !== this.seq) return; this.quote = null; this.loading = false; this.error = rateLimitOf(e)?.message ?? msg(e); this.onChange(); });
   }
@@ -466,7 +468,10 @@ export class TradeTicketLive {
     try {
       if (!orderValid(this.ticket, ctx)) throw new Error('order is no longer valid');
       const req = { inputMint: order.side === 'buy' ? SOL_MINT : order.mint, outputMint: order.side === 'buy' ? order.mint : SOL_MINT, amount: order.amountRaw, slippageBps: order.slippageBps, mode: 'ExactIn' as const };
-      const fresh = await this.dl.jupiterSwap.quote(req, ac.signal);
+      // task-1387: the confirm-time re-quote is the user's committed action — at `high` priority it
+      // jumps the shared keyless `jupiter` bucket ahead of background enrichment and drains within
+      // the `confirmTimeoutMs` abort, so a PAPER fill no longer errors with "quote timed out".
+      const fresh = await withPriority('high', () => this.dl.jupiterSwap.quote(req, ac.signal));
       const costBefore = this.wallet.position(this.ticket.mint)?.costLamports ?? null; // PnL % basis for a sell
       const rec = await this.exec.execute(order, fresh);
       this.receipt = rec;

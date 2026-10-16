@@ -215,7 +215,16 @@ test('applyKey routes keys: / opens the editor and swallows keys, s the sort men
   assert.equal(state.screener.preset, 'trending');
   applyKey(state, key('G'), stack);
   assert.equal(state.selected, state.screener.rows.length - 1);
+  // task-1388: `g` now opens the go-to prompt on the screener (home still jumps to top). The prompt swallows
+  // keys and leaves the selection where it was; esc closes it.
   applyKey(state, key('g'), stack);
+  assert.ok(state.goto, 'g opens the go-to prompt');
+  assert.equal(state.selected, state.screener.rows.length - 1, 'opening the prompt does not move the cursor');
+  applyKey(state, key('q'), stack); // swallowed into the prompt, never quits
+  assert.equal(state.goto!.input, 'q');
+  applyKey(state, key('\x1b'), stack);
+  assert.equal(state.goto, null, 'esc closes the prompt');
+  applyKey(state, key('\x1b[H'), stack); // home jumps to the top
   assert.equal(state.selected, 0);
   assert.equal(applyKey(state, key('q'), stack), 'quit');
 });

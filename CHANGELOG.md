@@ -2,6 +2,23 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.1] - 2026-10-15
+
+The first release published to npm. `npm i -g dexterm` now installs it, with build provenance attached on npmjs.com. The GitHub release tarball and the Homebrew tap are unchanged.
+
+### Added
+
+- **`npm i -g dexterm`**: dexterm is now on npm, published from CI with provenance. The package ships compiled JavaScript so a global install needs no build step (the release tarball and a checkout still run the TypeScript sources directly).
+- **Go to a coin by address**: press `g` on the screener, new pairs, watchlist or a token to open a prompt, paste a contract address, and jump straight to that token.
+
+### Fixed
+
+- **Paper trade quotes no longer time out.** Paper fills fetch their Jupiter quote at high priority, so a ticket no longer fails with "quote timed out" when the shared quote budget is busy with screener enrichment.
+
+### Known issues
+
+- **Trading is still experimental.** Paper trading and the live (wallet-signed) path still have bugs; the quote fix above removes one failure mode but does not make either path reliable. Do not rely on them for anything that matters.
+
 ## [0.1.0] - 2026-10-15
 
 First public release. Items marked *in progress* ship in this release but are labelled experimental or partial in the app; they are not a promise.

@@ -12,7 +12,7 @@ export { runAnalyst, buildArgv, turnPrompt, analystContextBlock, untrusted, ASSE
 export { renderAnalystSession, type AnalystRenderOpts } from './screens/analyst-session.ts';
 export * from './boot-state.ts';
 export * from './doctor.ts';
-export { renderOverlay, OVERLAY_HINTS, helpRows, type HelpRow } from './screens/overlay.ts';
+export { renderOverlay, renderGotoPrompt, OVERLAY_HINTS, helpRows, type HelpRow } from './screens/overlay.ts';
 export * from './audit.ts';
 export { renderBoot } from './screens/boot.ts';
 export { renderScreener, screenerColumns, spotlight, COLUMN_GATE } from './screens/screener.ts';

@@ -37,4 +37,4 @@
 │ ● RugCheck score      27/100 ││  43s ▼SELL    $3.0K  $0.0841  YAd…sNQ        ││ ▌ask about $GIGA…  read-only · neve  │
 │                              ││  40s ▲BUY      $405  $0.0834  gFr…Fts        ││                                      │
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯╰──────────────────────────────────────╯
-  esc  back   a  hide analyst   h/t/r  holders/trades/traders   w  watch   b  alert
+  esc  back   g  go to   a  hide analyst   h/t/r  holders/trades/traders   w  watch

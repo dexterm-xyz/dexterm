@@ -1,7 +1,6 @@
 {
   "name": "dexterm",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.1",
   "description": "dexterm: terminal DEX screener with a local Claude CLI analyst",
   "author": "The dexterm authors",
   "license": "AGPL-3.0-only",

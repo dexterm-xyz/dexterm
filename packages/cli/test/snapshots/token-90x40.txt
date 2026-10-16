@@ -37,4 +37,4 @@
 │ ● RugCheck score                                                                27/100 │
 │                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
-  esc  back   a  analyst   h/t/r  holders/trades/traders
+  esc  back   g  go to   a  analyst

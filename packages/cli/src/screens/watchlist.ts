@@ -98,5 +98,7 @@ export function renderWatchlist(c: Canvas, state: AppState): void {
     }
     if (ry + 1 < rb.y + rb.h) c.rainZone(rb.x + 1, ry + 1, rb.w - 2, rb.y + rb.h - ry - 1, 2);
   }
+  // task-1388: `g` opens the go-to prompt here too (keymap + the ? overlay list it); the footer is kept
+  // byte-identical to prototype-v2 (snapshot parity), so the hint lives in `?` and on the screener footer.
   footer(c, [['j/k', 'move'], ['⏎', 'open'], ['d', 'remove'], ['n', 'note'], ['b', 'add alert'], ['a', 'ask claude'], ['q', 'quit']], state.theme.name, isCalm(state.vfx));
 }
