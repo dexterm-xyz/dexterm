@@ -4,11 +4,11 @@ All notable changes to dexterm are listed here. The format follows [Keep a Chang
 
 ## [0.1.1] - 2026-10-15
 
-The first release published to npm. `npm i -g dexterm` now installs it, with build provenance attached on npmjs.com. The GitHub release tarball and the Homebrew tap are unchanged.
+The first release published to npm. `npm i -g dexterm-cli` now installs it (npm refuses the name `dexterm` as too similar to `xterm`; the command is still `dexterm`). This upload was published by hand, so it has no build provenance yet. The GitHub release tarball and the Homebrew tap are unchanged.
 
 ### Added
 
-- **`npm i -g dexterm`**: dexterm is now on npm, published from CI with provenance. The package ships compiled JavaScript so a global install needs no build step (the release tarball and a checkout still run the TypeScript sources directly).
+- **`npm i -g dexterm-cli`**: dexterm is now on npm as `dexterm-cli`, published by hand without provenance. The package ships compiled JavaScript so a global install needs no build step (the release tarball and a checkout still run the TypeScript sources directly).
 - **Go to a coin by address**: press `g` on the screener, new pairs, watchlist or a token to open a prompt, paste a contract address, and jump straight to that token.
 
 ### Fixed
