@@ -17,6 +17,8 @@ export interface StatsOptions {
   complete?: boolean;
   /** how many raw txs the trades came from (for the sample caption) */
   txs?: number;
+  /** when the history these trades came from was last fetched (ms) — the data age shown next to every number */
+  asOf?: number | null;
 }
 
 function closedNow(p: { tokensRaw: bigint; peakRaw: bigint }): boolean {
@@ -31,9 +33,9 @@ export function positionsOf(trades: readonly WalletTrade[]): MintPosition[] {
   for (const tr of sorted) {
     const delta = BigInt(tr.tokenDelta);
     let p = pos.get(tr.mint);
-    if (!p) { p = { mint: tr.mint, tokensRaw: 0n, peakRaw: 0n, costSol: 0, realisedSol: 0, buys: 0, sells: 0, transfers: 0, flagged: false, closed: false, firstT: tr.t, lastT: tr.t }; pos.set(tr.mint, p); }
+    if (!p) { p = { mint: tr.mint, tokensRaw: 0n, peakRaw: 0n, costSol: 0, realisedSol: 0, buys: 0, sells: 0, transfers: 0, flagged: false, closed: false, firstT: tr.t, lastT: tr.t, firstKnown: tr.tKnown, lastKnown: tr.tKnown, holdMs: null }; pos.set(tr.mint, p); }
     const L = lots.get(tr.mint) ?? []; lots.set(tr.mint, L);
-    p.lastT = tr.t;
+    p.lastT = tr.t; p.lastKnown = tr.tKnown;
     if (delta > 0n) {
       // a buy with a SOL leg carries cost; a token-swap leg or an airdrop is cost 0 and flagged
       const cost = tr.side === 'buy' && tr.solDelta !== null ? Math.abs(tr.solDelta) : 0;
@@ -59,7 +61,29 @@ export function positionsOf(trades: readonly WalletTrade[]): MintPosition[] {
     }
     p.closed = closedNow(p);
   }
+  // hold time = first buy → last sell, only trustworthy for a CLOSED position whose first+last block times are both real
+  for (const p of pos.values()) p.holdMs = p.closed && p.firstKnown && p.lastKnown && p.lastT > p.firstT ? p.lastT - p.firstT : null;
   return [...pos.values()].sort((a, b) => b.lastT - a.lastT);
+}
+
+/** Compact human hold time: 45s · 12m · 3.2h · 2.1d. null → '—'. */
+export function fmtHoldMs(ms: number | null): string {
+  if (ms === null) return '—';
+  const s = ms / 1000;
+  if (s < 90) return `${Math.round(s)}s`;
+  const m = s / 60;
+  if (m < 90) return `${Math.round(m)}m`;
+  const h = m / 60;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
+
+/** Median over the numbers (already finite); undefined on an empty list. */
+function median(xs: readonly number[]): number | undefined {
+  if (!xs.length) return undefined;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 /** Early-entry score = median over tokens of (1 − rank / buyers); null without ranks (design §4.3). */
@@ -80,6 +104,11 @@ export function walletStats(wallet: string, trades: readonly WalletTrade[], opts
   const ts = trades.map((t) => t.t).filter((t) => t > 0);
   const winRate = closed.length >= WIN_RATE_MIN_N ? wins / closed.length : null;
   const txs = opts.txs ?? new Set(trades.map((t) => t.sig)).size;
+  const holds = closed.map((p) => p.holdMs).filter((m): m is number => m !== null);
+  const holdMedianMs = median(holds) ?? null;
+  const holdNote = holdMedianMs === null
+    ? (closed.length ? `no closed position with both block times known (${closed.length} closed)` : 'no closed positions yet')
+    : `median first-buy→last-sell over ${holds.length} closed position${holds.length === 1 ? '' : 's'} with known times`;
   return {
     wallet,
     trades: trades.length,
@@ -96,9 +125,11 @@ export function walletStats(wallet: string, trades: readonly WalletTrade[], opts
     winRateNote: closed.length >= WIN_RATE_MIN_N ? `${wins}/${closed.length} closed` : `hidden under n=${WIN_RATE_MIN_N} (${wins}/${closed.length} closed so far)`,
     open: positions.length - closed.length,
     earlyEntry: earlyEntryScore(opts.earlyEntry ?? []),
+    holdMedianMs,
+    holdNote,
     positions,
     firstT: ts.length ? Math.min(...ts) : null,
     lastT: ts.length ? Math.max(...ts) : null,
-    sample: { txs, complete: !!opts.complete, note: opts.complete ? `all ${txs} txs` : `last ${txs} txs only · older history not fetched` },
+    sample: { txs, complete: !!opts.complete, note: opts.complete ? `all ${txs} txs` : `last ${txs} txs only · older history not fetched`, source: 'helius-history', asOf: opts.asOf ?? null },
   };
 }

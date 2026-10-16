@@ -15,10 +15,14 @@
 // Helius key (keyless prints the fix) and reads public history. Secrets never print: the RPC URL stays inside the
 // data layer.
 
-import { createDataLayer, resolveRpcUrl, HeliusHistory, type DataLayer } from '@dexterm/data';
-import { FollowStore, WalletTracker, defaultFollowsPath, isWalletAddress, shortAddr, CopyAuto, defaultCopyJournalPath, AUTO_HARD, autoSizeCap, type HistorySource, type WalletStats } from '@dexterm/data/copy';
+import { createDataLayer, resolveRpcUrl, HeliusHistory, type DataLayer, type Clock } from '@dexterm/data';
+import { FollowStore, WalletTracker, defaultFollowsPath, isWalletAddress, shortAddr, fmtHoldMs, CopyAuto, defaultCopyJournalPath, AUTO_HARD, autoSizeCap, buildMirror, leaderSoldSince, type HistorySource, type WalletStats, type MirrorMarket, type MirrorResult } from '@dexterm/data/copy';
 import { PlanService, defaultPlansJournalPath } from '@dexterm/data/plans';
+import { CopyLive } from './live/copy.ts';
 import type { Io } from './main.ts';
+
+/** Default per-mirror cap for the headless path (same as the TUI's MIRROR_DEFAULT_CAP_USD); overridable with --cap. */
+export const FOLLOW_MIRROR_DEFAULT_CAP_USD = 20;
 
 export interface FollowCmdOverrides {
   /** Follow-list path (tests use a temp dir); null = in-memory. */
@@ -30,6 +34,10 @@ export interface FollowCmdOverrides {
   copyJournalPath?: string | null;
   /** Plans journal path (tests); null = memory. */
   plansJournalPath?: string | null;
+  /** `follow mirror` test seam: resolve the mirror market for a mint instead of hitting the data layer. */
+  mirrorMarket?: (mint: string) => Promise<MirrorMarket>;
+  /** `follow mirror` test seam: a fake clock so a replayed buy's lag/drift are deterministic (default: system clock). */
+  clock?: Clock;
 }
 
 function flag(rest: string[], name: string): string | undefined { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined; }
@@ -41,6 +49,9 @@ const USAGE = `dexterm follow <command>
   list [--json]
   stats <addr> [--json]            one Helius history fetch: trades, FIFO realised PnL, win rate (hidden under n=10)
   trades <addr> [--limit N]        the decoded swaps behind the stats
+  mirror <addr> [--cap USD] [--k X] [--propose] [--json]
+                                   preview a MIRROR TICKET from this wallet's latest BUY (checks + size);
+                                   --propose writes it as an INERT order plan (arm only in the app, keypress/Phantom gate)
   purge --yes                      delete every follow and label
   auto <addr> [--per-trade USD] [--daily USD] [--max-open N] [--cooldown SEC] [--k X] [--disarm N] [--off]
                                    draft the auto-mirror caps (always OFF here: enabling is a keypress in the app, U then A,
@@ -52,7 +63,9 @@ function fmtStats(s: WalletStats): string[] {
     `${shortAddr(s.wallet)}  ${s.trades} trades (${s.buys} buys · ${s.sells} sells · ${s.transfers} transfers) over ${s.mints} mints · ${s.sample.note}`,
     `realised ${s.realisedSol >= 0 ? '+' : ''}${s.realisedSol.toFixed(4)} SOL${s.realisedUsd !== null ? ` (${s.realisedUsd >= 0 ? '+' : ''}$${s.realisedUsd.toFixed(2)} at $${s.solUsdAt}/SOL now)` : ' (no SOL price: USD not shown)'} · FIFO over fetched history, fees and tips included`,
     `win rate ${s.winRate === null ? '—' : `${(s.winRate * 100).toFixed(0)}%`} · ${s.winRateNote} · open positions ${s.open}`,
+    `hold time ${fmtHoldMs(s.holdMedianMs)} · ${s.holdNote}`,
     `early-entry score ${s.earlyEntry.score === null ? '—' : s.earlyEntry.score.toFixed(2)} · ${s.earlyEntry.note}`,
+    `source ${s.sample.source}${s.sample.asOf ? ` · as of ${new Date(s.sample.asOf).toISOString().replace('T', ' ').slice(0, 19)} (${Math.max(0, Math.round((Date.now() - s.sample.asOf) / 1000))}s ago)` : ' · not fetched yet'}`,
   ];
   for (const p of s.positions.slice(0, 12)) out.push(`  ${shortAddr(p.mint)}  ${p.closed ? 'closed' : 'open  '}  realised ${p.realisedSol >= 0 ? '+' : ''}${p.realisedSol.toFixed(4)} SOL  ${p.buys}b/${p.sells}s${p.flagged ? '  (cost-0 lot: airdrop/transfer/unpriced leg)' : ''}`);
   if (s.positions.length > 12) out.push(`  … ${s.positions.length - 12} more mints`);
@@ -154,6 +167,72 @@ export async function runFollow(rest: string[], io: Io, over: FollowCmdOverrides
         const trades = tracker.trades(addr).slice(0, Number.isFinite(limit) && limit > 0 ? limit : 20);
         if (!trades.length) { out('no swaps in the fetched history'); return 0; }
         for (const tr of trades) out(`${tr.tKnown ? new Date(tr.t).toISOString().replace('T', ' ').slice(0, 19) : 'time unknown      '}  ${tr.side.toUpperCase().padEnd(8)} ${shortAddr(tr.mint)}  ${tr.solDelta !== null ? `${Math.abs(tr.solDelta).toFixed(4)} SOL` : 'unpriced   '}${tr.usd !== null ? ` ≈ $${tr.usd.toFixed(2)}` : ''}${tr.note ? `  (${tr.note})` : ''}  ${tr.sig.slice(0, 12)}…`);
+        return 0;
+      } finally { dl?.close(); }
+    }
+    // task-1400 Tier 2 (headless): the one-key MIRROR TICKET from a shell. Reuses the exact TUI path — poll the
+    // tracker, take the wallet's latest BUY alert, resolve its market, run buildMirror. --propose writes the result
+    // as an INERT `proposed` order plan through PlanService; it is armable ONLY through the app's keypress / Phantom
+    // gate. There is no arm/sign/execute path in this command (the plan engine refuses to arm without a gesture and
+    // an armed mandate), so a pipe or an agent calling `follow mirror --propose` can never trade.
+    case 'mirror': {
+      const addr = rest[1];
+      if (!isWalletAddress(addr)) { errOut('usage: dexterm follow mirror <addr> [--cap USD] [--k X] [--propose] [--json]'); return 2; }
+      if (!store.has(addr)) { errOut(`dexterm follow mirror: ${shortAddr(addr)} is not followed (dexterm follow add <addr> first)`); return 1; }
+      const capUsd = flag(rest, '--cap') ? Number(flag(rest, '--cap')) : FOLLOW_MIRROR_DEFAULT_CAP_USD;
+      if (!(capUsd > 0)) { errOut('dexterm follow mirror: --cap needs a USD number > 0'); return 2; }
+      const kRaw = flag(rest, '--k');
+      const k = kRaw ? Number(kRaw) : undefined;
+      if (kRaw !== undefined && !(k! > 0)) { errOut('dexterm follow mirror: --k needs a number > 0'); return 2; }
+
+      let dl: DataLayer | null = null;
+      let history: HistorySource | null;
+      if (over.history !== undefined) history = over.history;
+      else {
+        const rpc = resolveRpcUrl({ env: io.env });
+        if (rpc.provider !== 'helius') history = null;
+        else { dl = createDataLayer({ rpcUrl: rpc.url, rpcFallbackUrl: rpc.fallbackUrl }); history = dl.rpcPool.heliusUrl ? new HeliusHistory(dl.http, dl.rpcPool.heliusUrl) : null; }
+      }
+      try {
+        const copy = new CopyLive(dl, { followsPath: null, history, solUsd: () => over.solUsd ?? null, ...(over.clock ? { clock: over.clock } : {}) });
+        copy.store.add(addr);
+        if (copy.status().state === 'unavailable') { errOut(`dexterm follow mirror: ${copy.status().why}`); return 1; }
+        await copy.tracker.pollOnce();
+        const after = copy.status();
+        if (after.state === 'degraded') { errOut(`dexterm follow mirror: ${after.why}`); return 1; }
+        // Prefer a live "news" buy alert (a buy the tracker saw AFTER priming). A one-shot shell call primes and
+        // sees the history in a single poll, so there is usually no news alert yet; fall back to the latest BUY in
+        // the fetched history, synthesising the same CopyAlert shape and captioning it as history, not live news.
+        let alert = copy.alerts(200).find((a) => a.wallet === addr && a.trade.side === 'buy');
+        let fromHistory = false;
+        if (!alert) {
+          const lastBuy = copy.trades(addr).filter((t) => t.side === 'buy').sort((a, b) => b.slot - a.slot || b.sig.localeCompare(a.sig))[0];
+          if (!lastBuy) { out(`no BUY from ${shortAddr(addr)} in the fetched history (nothing to mirror)`); return 0; }
+          alert = { id: `copy_hist_${lastBuy.sig.slice(0, 12)}`, t: copy.now(), wallet: addr, name: store.get(addr)?.name ?? null, trade: lastBuy, lagMs: lastBuy.tKnown ? Math.max(0, copy.now() - lastBuy.t) : null };
+          fromHistory = true;
+        }
+
+        const market = over.mirrorMarket ? await over.mirrorMarket(alert.trade.mint) : await copy.mirrorMarket(alert.trade.mint);
+        const soldSince = leaderSoldSince(alert, copy.trades(addr));
+        // No wallet-intel scan from a shell: the leader's dev-cluster / holdings stay unknown (shown as such).
+        const result: MirrorResult = buildMirror(alert, { now: copy.now(), capUsd, k, market, leaderSoldSince: soldSince, leaderIntel: null });
+
+        if (has(rest, '--json')) { out(JSON.stringify(result)); return result.ok ? 0 : 1; }
+
+        out(`mirror of ${shortAddr(addr)}'s latest BUY — ${shortAddr(alert.trade.mint)}${market.symbol ? ` (${market.symbol})` : ''}${fromHistory ? ' · from fetched history (not a live alert)' : ' · live alert'}`);
+        for (const c of result.checks) out(`  ${c.ok === true ? 'ok ' : c.ok === false ? 'NO ' : '?  '} ${c.name.padEnd(12)} ${c.detail}`);
+        if (!result.ok) { errOut(`refused: ${result.reason} — ${result.message}`); return 1; }
+        out(`  size $${result.sizeUsd.toFixed(2)} = ${result.sizeWhy}`);
+        if (!has(rest, '--propose')) {
+          out('preview only · add --propose to write the inert plan (then arm it in the app: O screen, hold a — keypress/Phantom gate)');
+          out('not a recommendation · a wallet\'s past fills say nothing about its next one');
+          return 0;
+        }
+        const plans = new PlanService({ journalPath: over.plansJournalPath === undefined ? defaultPlansJournalPath(io.env) : over.plansJournalPath });
+        const plan = plans.propose(result.input, { supply: result.supply, by: 'copy', ref: result.ref });
+        out(`proposed ${plan.id} · ${plan.status.toUpperCase()} (${plan.side} ${plan.symbol} ≈ $${plan.sizeUsd.toFixed(2)}) · INERT — nothing is armed`);
+        out('arm it in the app: U → O (the plans screen), select it, hold a (keypress) or approve in Phantom · the gate stays on');
+        out('not a recommendation · a wallet\'s past fills say nothing about its next one');
         return 0;
       } finally { dl?.close(); }
     }

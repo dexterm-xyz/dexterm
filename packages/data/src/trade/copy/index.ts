@@ -5,7 +5,7 @@
 export type { TradeSide, WalletTrade, FollowRecord, CopyAlert, MintLot, MintPosition, EarlyEntryInput, WalletStats } from './types.ts';
 export { SOL_LEG_MIN_LAMPORTS, tokenDeltasForOwner, lamportsDeltaFor, decodeTx, decodeWalletTrades } from './trades.ts';
 export type { DecodeOptions } from './trades.ts';
-export { WIN_RATE_MIN_N, positionsOf, earlyEntryScore, walletStats } from './stats.ts';
+export { WIN_RATE_MIN_N, positionsOf, earlyEntryScore, walletStats, fmtHoldMs } from './stats.ts';
 export type { StatsOptions } from './stats.ts';
 export { FOLLOW_NAME_MAX, FOLLOWS_MAX, defaultFollowsPath, isWalletAddress, cleanFollowName, FollowStore, shortAddr } from './follows.ts';
 export type { FollowResult } from './follows.ts';

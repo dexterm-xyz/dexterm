@@ -86,7 +86,8 @@ test('keymap: U is global and collision-free; i/d are follows-only; the keymap c
   const globalU = DEFAULT_KEYMAP.bindings.filter((b) => b.keys.includes('U'));
   assert.equal(globalU.length, 1); assert.equal(globalU[0].action, 'screen.follows'); assert.equal(globalU[0].screen, undefined);
   const onFollows = DEFAULT_KEYMAP.forScreen('follows').filter((b) => b.screen === 'follows').map((b) => b.action).sort();
-  assert.deepEqual(onFollows, ['follows.add', 'follows.auto', 'follows.mirror', 'follows.remove', 'refresh']);
+  // task-1407: `H` (pnl.card) previews a read-only TRACKED PnL card; it neither trades nor proposes
+  assert.deepEqual(onFollows, ['follows.add', 'follows.auto', 'follows.mirror', 'follows.remove', 'pnl.card', 'refresh']);
   assert.equal(DEFAULT_KEYMAP.resolve(parseKeys('i')[0], 'follows'), 'follows.add');
   assert.equal(DEFAULT_KEYMAP.resolve(parseKeys('d')[0], 'follows'), 'follows.remove');
   assert.equal(DEFAULT_KEYMAP.resolve(parseKeys('r')[0], 'follows'), 'refresh');
@@ -122,6 +123,39 @@ test('live binding: a scripted history fills stats + alerts, the screen renders 
   assert.doesNotThrow(() => render(state, 90, 30));
 });
 
+test('enter opens a per-wallet DETAIL view (its trades + positions + metrics with source + data age); enter/esc close it (task-1399)', async () => {
+  const clock = new SimClock();
+  const history = new FakeHistory(clock, { [LEADER]: leaderHistory() });
+  const copy = new CopyLive(null, { followsPath: null, history, clock, solUsd: () => 100 });
+  copy.store.add(LEADER, 'leader');
+  const state = followsState(copy);
+  state.now = new Date(clock.now());
+  await copy.tracker.pollOnce();
+  // enter (not typing, no modal) opens the detail for the selected wallet
+  keys(state, '\r');
+  assert.ok(state.copyUi!.detail); assert.equal(state.copyUi!.detail!.wallet, LEADER);
+  const txt = render(state);
+  assert.match(txt, /WALLET · leader — read-only/);
+  assert.ok(txt.includes(LEADER), 'the full address is shown');
+  assert.match(txt, /source helius-history/);
+  assert.match(txt, /RECENT TRADES/);
+  assert.match(txt, /POSITIONS/);
+  assert.match(txt, /hold/);
+  assert.match(txt, /not a recommendation/);
+  // j/k scroll the view without throwing (also at a compact size)
+  applyAction(state, 'move.down', []); applyAction(state, 'move.up', []);
+  assert.doesNotThrow(() => render(state, 90, 30));
+  // enter again closes it
+  keys(state, '\r');
+  assert.equal(state.copyUi!.detail, null);
+  // reopen, then esc (back) closes the detail BEFORE leaving the screen
+  keys(state, '\r'); assert.ok(state.copyUi!.detail);
+  applyAction(state, 'back', []);
+  assert.equal(state.copyUi!.detail, null); assert.equal(state.screen, 'follows');
+  // nothing on the detail view traded, armed or proposed
+  assert.equal(state.ticket ?? null, null); assert.equal(state.plansSvc ?? null, null);
+});
+
 function io(): Io & { out: string; err: string } {
   const o = {
     out: '', err: '', env: {} as NodeJS.ProcessEnv, stdin: undefined as unknown as Io['stdin'],
@@ -145,6 +179,7 @@ test('dexterm follow: add/list/remove/purge on a temp file; stats + trades over 
   const history = new FakeHistory(clock, { [LEADER]: leaderHistory() });
   o = io(); assert.equal(await runFollow(['stats', LEADER], o, { ...over, history, solUsd: 100 }), 0);
   assert.match(o.out, /10 trades \(3 buys · 4 sells · 3 transfers\)/); assert.match(o.out, /realised \+0\.70\d+ SOL \(\+\$70\.\d+ at \$100\/SOL now\)/); assert.match(o.out, /win rate — · hidden under n=10/); assert.match(o.out, /not a recommendation/);
+  assert.match(o.out, /hold time \d+s · median .*over 4 closed positions/); assert.match(o.out, /source helius-history · as of .* \(\d+s ago\)/); // task-1399
   o = io(); assert.equal(await runFollow(['stats', LEADER, '--json'], o, { ...over, history }), 0); assert.equal(JSON.parse(o.out).closed, 4);
   o = io(); assert.equal(await runFollow(['trades', LEADER, '--limit', '3'], o, { ...over, history }), 0); assert.equal(o.out.trim().split('\n').length, 3); assert.match(o.out, /BUY|SELL|TRANSFER/);
   history.fail = '429 too many';

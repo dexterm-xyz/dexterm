@@ -3,7 +3,7 @@
 //   dexterm mcp                         run the read-only MCP server on stdio (what the analyst uses and
 //                                       what `claude mcp add dexterm -- dexterm mcp` wires up)
 //   dexterm mcp install <client>        write/print the MCP config for a client (claude-code, claude-desktop,
-//                                       cursor, codex, openclaw, generic). Shows the exact change, asks first,
+//                                       cursor, codex, generic). Shows the exact change, asks first,
 //                                       is idempotent, and backs the file up before editing.
 //   dexterm mcp doctor                  spawn the server over stdio, do the MCP handshake, and list the tools,
 //                                       prompts and resources the agent sees — proof the connection works.
@@ -84,14 +84,9 @@ export const CLIENTS: readonly ClientSpec[] = [
     note: 'Codex reads MCP servers from the [mcp_servers.*] tables in ~/.codex/config.toml.',
   },
   {
-    id: 'openclaw', label: 'OpenClaw / generic agent', format: 'print', keyPath: 'mcpServers',
-    path: () => null,
-    note: 'OpenClaw and most agents take a standard mcpServers entry; paste this where your agent reads MCP servers, or pass --config FILE to write a JSON file.',
-  },
-  {
     id: 'generic', label: 'Generic (print the snippet)', format: 'print', keyPath: 'mcpServers',
     path: () => null,
-    note: 'the standard stdio MCP server entry; add it to your client\'s MCP config.',
+    note: 'the standard stdio mcpServers entry most agents take; paste it where your agent reads MCP servers, or pass --config FILE to write a JSON file.',
   },
 ] as const;
 

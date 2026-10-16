@@ -164,5 +164,5 @@ export function renderPositions(c: Canvas, state: AppState): void {
   }
   if (v.history.length === 0) c.text(hb.x + 1, hb.y, 'no paper trades yet', { fg: t.dim, bg: hb.bg });
 
-  footer(c, [['esc', 'back'], ['r', 'refresh'], ['1-4', 'screens'], ['q', 'quit']], t.name, isCalm(state.vfx));
+  footer(c, [['esc', 'back'], ['r', 'refresh'], ['H', 'PnL card'], ['1-4', 'screens'], ['q', 'quit']], t.name, isCalm(state.vfx));
 }

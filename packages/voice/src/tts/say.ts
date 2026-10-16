@@ -16,8 +16,9 @@ import type { SpeakHandle, SpeakOptions, TtsEngine } from '../types.ts';
 import { parseSayVoices, sanitizeSpeech, type VoiceInfo } from './voices.ts';
 
 export const SAY_BIN = process.env.DEXTERM_SAY_BIN || 'say';
-/** Consistent speaking rate (words-per-minute-ish) for every reply path. */
-export const DEFAULT_RATE = 190;
+/** Consistent speaking rate (words-per-minute-ish) for every reply path. Brisk by default (task-1411:
+ * the old delivery was reported "way too slow"); the user can nudge it live with < / > or set voice.rate. */
+export const DEFAULT_RATE = 205;
 
 export class SayTts implements TtsEngine {
   readonly name = 'say';

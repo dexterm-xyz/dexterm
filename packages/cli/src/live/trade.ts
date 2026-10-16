@@ -8,7 +8,7 @@
 import {
   SOL_MINT, lamportsToSol, rawToTokens, positionPnl, shortPubkey, LiveLedger, withPriority,
   type DataLayer, type Fill, type PaperWallet, type Position, type SwapQuote, type TradeExecutor, type TradeRecord,
-  type SignerPort, type StatusView, type PlanView, type ConfirmView, type LinkedWallet, type QuoteView,
+  type SignerPort, type StatusView, type PlanView, type ConfirmView, type LinkedWallet, type QuoteView, type LiveFillRow,
 } from '@dexterm/data';
 import type { SettledTx } from '@dexterm/tui';
 import {
@@ -699,6 +699,8 @@ export class PositionsLive implements PositionSource {
   private readonly now: () => number;
   /** mint → current price in SOL per whole token. */
   private marks = new Map<string, number>();
+  /** task-1407: when each mark was taken (ms), so a PnL card can print the mark's age. */
+  private markTimes = new Map<string, number>();
   private solPriceUsd: number | null = null;
   private loading = false;
   private heldMemo = new Map<string, { at: number; v: HeldPosition | null }>();
@@ -724,6 +726,11 @@ export class PositionsLive implements PositionSource {
   /** The last DexScreener mark for a mint (SOL per token), shared with the live positions source. */
   markOf(mint: string): number | null {
     return this.marks.get(mint) ?? null;
+  }
+
+  /** task-1407: when the mark for a mint was taken (ms), or null when there is none. */
+  markAt(mint: string): number | null {
+    return this.marks.has(mint) ? this.markTimes.get(mint) ?? null : null;
   }
 
   /**
@@ -770,7 +777,7 @@ export class PositionsLive implements PositionSource {
         for (const m of held) {
           if (m === SOL_MINT) { this.marks.set(m, 1); continue; }
           const usd = byMint.get(m)?.pair.priceUsd ?? null;
-          if (usd && usd > 0) this.marks.set(m, usd / this.solPriceUsd);
+          if (usd && usd > 0) { this.marks.set(m, usd / this.solPriceUsd); this.markTimes.set(m, this.now()); }
         }
       }
     } catch (e) {
@@ -865,6 +872,14 @@ export class LivePositions implements PositionSource {
     } catch { rows = []; }
     this.rowsMemo = { at: now, rows };
     return rows;
+  }
+
+  /** task-1407: the raw ledger rows (newest first, swaps only) with network + signature, for the LIVE PnL card. */
+  fills(mint: string, limit = 500): LiveFillRow[] {
+    try {
+      const l = new LiveLedger({ path: this.path, readOnly: true });
+      try { return l.trades(limit * 2).filter((r) => r.kind === 'swap' && r.mint === mint).slice(0, limit); } finally { l.close(); }
+    } catch { return []; }
   }
 
   /** Confirmed live fills (newest first) for the popup markers / history; probes excluded. */

@@ -14,7 +14,7 @@ import { shellBinaryPath } from '@dexterm/popup';
 import { detectColorDepth, type ColorDepth, protocolFromEnv } from '@dexterm/tui';
 import { resolveRpcUrl, defaultDbPath } from '@dexterm/data';
 import { XTokenStore } from '@dexterm/data';
-import { SayTts, voiceDoctor, resolveVoice, WHISPER_MODEL, resolvePiperBin, pickPlayer, PIPER_MODEL, type VoiceDoctorDeps } from '@dexterm/voice';
+import { SayTts, voiceDoctor, resolveVoice, WHISPER_MODEL, resolvePiperRuntime, pickPlayer, PIPER_MODEL, type VoiceDoctorDeps } from '@dexterm/voice';
 import type { MergedSet } from '@dexterm/mcp';
 import { loadConfig, dextermHome } from '@dexterm/custom';
 import { kbStore, skillStore } from './kb-skill-cmd.ts';
@@ -93,10 +93,11 @@ export async function defaultVoiceProbe(platform: NodeJS.Platform = process.plat
   const resolvedStt = swiftcPresent ? 'apple' : (whisperBinPresent && whisperModelPresent && micToolPresent) ? 'whisper' : null;
   // espeak-ng is the baseline portable speech-out engine off macOS.
   const espeakPresent = platform !== 'darwin' && (onPath('espeak-ng') || onPath('espeak'));
-  // Piper is the preferred neural speech-out engine off macOS (task-1408): binary + voice model + a player.
-  const piperPresent = platform !== 'darwin' && resolvePiperBin() !== null;
-  const piperVoicePresent = platform !== 'darwin' && existsSync(PIPER_MODEL);
-  const playerName = platform !== 'darwin' ? pickPlayer() : null;
+  // Piper is the preferred neural speech-out engine EVERYWHERE (task-1408, task-1416): a runtime (the
+  // prebuilt binary off macOS, the managed venv on macOS) + the voice model + a player (afplay on macOS).
+  const piperPresent = resolvePiperRuntime() !== null;
+  const piperVoicePresent = existsSync(PIPER_MODEL);
+  const playerName = pickPlayer();
   // task-1393: show which voice will actually speak, and why — never a silent system/novelty voice.
   const r = sayAvailable ? resolveVoice({ configured: configuredVoice, installed: voices }) : { voice: null, reason: '' };
   return {

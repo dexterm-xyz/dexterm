@@ -52,7 +52,7 @@ export interface TrackerStatus {
   alerts: number;
 }
 
-interface WalletState { primed: boolean; seen: Set<string>; trades: WalletTrade[]; txs: number; complete: boolean; lastSlot: number; error: string | null }
+interface WalletState { primed: boolean; seen: Set<string>; trades: WalletTrade[]; txs: number; complete: boolean; lastSlot: number; error: string | null; asOf: number | null }
 
 export const TRACKER_DEFAULTS = { pollMs: 15_000, pageLimit: 25, backfillLimit: 100, keep: 500 } as const;
 
@@ -108,7 +108,7 @@ export class WalletTracker {
   alerts(limit = 50): CopyAlert[] { return this.alertLog.slice(-limit).reverse(); }
   stats(addr: string): WalletStats {
     const w = this.wallets.get(addr);
-    return walletStats(addr, w?.trades ?? [], { solUsd: this.solUsd(), txs: w?.txs ?? 0, complete: w?.complete ?? false, earlyEntry: this.earlyEntry(addr) });
+    return walletStats(addr, w?.trades ?? [], { solUsd: this.solUsd(), txs: w?.txs ?? 0, complete: w?.complete ?? false, earlyEntry: this.earlyEntry(addr), asOf: w?.asOf ?? null });
   }
   /** Per-wallet poll error (shown on the row), null when the last poll was clean. */
   walletError(addr: string): string | null { return this.wallets.get(addr)?.error ?? null; }
@@ -130,9 +130,10 @@ export class WalletTracker {
     let anyError: string | null = null;
     for (const f of this.follows.list()) {
       let w = this.wallets.get(f.addr);
-      if (!w) { w = { primed: false, seen: new Set(), trades: [], txs: 0, complete: false, lastSlot: 0, error: null }; this.wallets.set(f.addr, w); }
+      if (!w) { w = { primed: false, seen: new Set(), trades: [], txs: 0, complete: false, lastSlot: 0, error: null, asOf: null }; this.wallets.set(f.addr, w); }
       try {
         const page = await this.history.transactions(f.addr, { limit: w.primed ? this.pageLimit : this.backfillLimit, sortOrder: 'desc' });
+        w.asOf = page.fetchedAt;
         const fresh = page.data.filter((tx) => { const s = tx.transaction?.signatures?.[0]; return !!s && !w!.seen.has(s); });
         for (const tx of fresh) w.seen.add(tx.transaction!.signatures![0]);
         w.txs += fresh.length;

@@ -46,8 +46,8 @@ export interface PopupRainConfig {
   density: number;
 }
 
-/** The in-app popup kinds (SPEC §8.5 / task-1290 scope; task-1340 adds the bubble map; task-1345 the agent roster; task-1358 pack widgets). */
-export type PopupKind = 'chart' | 'token' | 'feeds' | 'bubbles' | 'roster' | 'narrative' | 'plans' | 'widget';
+/** The in-app popup kinds (SPEC §8.5 / task-1290 scope; task-1340 adds the bubble map; task-1345 the agent roster; task-1358 pack widgets; task-1406 the spectator view). */
+export type PopupKind = 'chart' | 'token' | 'feeds' | 'bubbles' | 'roster' | 'narrative' | 'plans' | 'widget' | 'spectator';
 
 // ------------------------------------------------------------------ pack widgets (task-1358 Tier 5)
 /**
@@ -385,7 +385,31 @@ export interface PlansVM {
   updatedAt: number | null;
 }
 
-export type PopupVM = ChartVM | TokenDetailVM | FeedVM | BubbleVM | RosterVM | NarrativeBoardVM | PlansVM;
+// ------------------------------------------------------------------ spectator (task-1406, "watch the agent cook")
+// The read-only live view of an agent driving dexterm. The popup renders the REDACTED spectator view model
+// (wallet addresses/keys already masked TUI-side): the screen the agent moved to, the connected agents with
+// an 'agent' badge and status, and an activity feed with timing and data ages. The ONLY messages this page
+// may send are spectator.pause / resume / takeover / kill by agent name; it can never arm, sign or raise a
+// cap, and it never sees a key, a signer, a mandate or a trade capability (like the roster popup).
+export interface SpectatorScreenVM { screen: string; selectedMint: string | null; feed: string | null; filter: string | null; highlight: string | null }
+export interface SpectatorAgentVM { name: string; tier: string | null; status: 'active' | 'paused' | 'killed'; lastAt: number }
+export interface SpectatorActivityVM {
+  seq: number; t: number; phase: string; agent: string; tier: string | null;
+  tool: string | null; summary: string; ms: number | null; dataAgeSec: number | null; ok: boolean; refusal: string | null;
+}
+export interface SpectatorPopupVM {
+  title: string;
+  now: number;
+  /** Whether the stream was redacted (always true for a shared view; false only in local follow mode). */
+  redacted: boolean;
+  /** Who is driving: the agent, or the user after a take-over. */
+  control: 'agent' | 'user';
+  screen: SpectatorScreenVM;
+  agents: SpectatorAgentVM[];
+  activity: SpectatorActivityVM[];
+}
+
+export type PopupVM = ChartVM | TokenDetailVM | FeedVM | BubbleVM | RosterVM | NarrativeBoardVM | PlansVM | SpectatorPopupVM;
 
 // ------------------------------------------------------------------ TUI → POPUP (over the WebSocket)
 export type TuiToPopup =
@@ -419,6 +443,9 @@ export type PopupToTui =
   // its own live plan list before acting. This is the ONLY write the popup can make — it can never arm,
   // raise a cap, widen or arm a mandate, resume a paused plan, or sign; those have no event at all.
   | { type: 'event'; name: 'plan.cancel'; payload: { id: string } }
+  // task-1406 spectator: pause / resume / take over / kill an agent by name. The TUI maps these to the
+  // bus's user-side controls and re-validates the name; the page can never arm, sign, raise a cap or sign.
+  | { type: 'event'; name: 'spectator.pause' | 'spectator.resume' | 'spectator.takeover' | 'spectator.kill'; payload: { agent: string } }
   | { type: 'event'; name: 'popup.close-request' | 'popup.focus' | 'popup.drag'; payload: Record<string, never> };
 // Deliberately absent: anything that names a trade, a ticket, a mandate, a signer or a key. The TUI maps UI
 // events to its own actions and never executes a popup-provided command.

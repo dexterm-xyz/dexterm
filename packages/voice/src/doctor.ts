@@ -31,11 +31,12 @@ export interface VoiceDoctorDeps {
   resolvedStt: string | null;
   /** espeak-ng (or espeak) present — the portable Linux/Windows speech-out engine (task-1393 Part 2). */
   espeakPresent?: boolean;
-  /** Piper binary present — the preferred neural speech-out engine off macOS (task-1408). */
+  /** Piper runtime present — the preferred neural speech-out engine everywhere (binary off macOS, the
+   *  managed venv on macOS; task-1408, task-1416). */
   piperPresent?: boolean;
   /** The Piper voice model (en_GB-alan-medium) present on disk. */
   piperVoicePresent?: boolean;
-  /** The audio player that will play a Piper WAV (aplay/paplay/ffplay), or null when none is installed. */
+  /** The audio player that will play a Piper WAV (afplay on macOS; aplay/paplay/ffplay off), or null. */
   playerName?: string | null;
   /** The `say` voice that resolved as the default, or null when no safe voice is installed (task-1393). */
   resolvedVoice?: string | null;
@@ -105,24 +106,41 @@ export function voiceDoctor(deps: VoiceDoctorDeps): VoiceCheck[] {
     return checks;
   }
 
-  // Speech OUT — macOS say.
+  // Speech OUT — Piper neural (the default when set up, task-1416) → macOS `say` (fallback) → text.
+  const macPiperReady = !!deps.piperPresent && !!deps.piperVoicePresent && !!deps.playerName;
+  if (macPiperReady) {
+    checks.push({
+      name: 'Voice out (Piper)', status: 'pass',
+      detail: `neural British voice is the default — en_GB-alan-medium, plays via ${deps.playerName} (local, no key); fallback: macOS \`say\``,
+    });
+  }
   if (deps.sayAvailable) {
-    checks.push({ name: 'Voice out (say)', status: 'pass', detail: `macOS \`say\` ready · ${deps.voiceCount} voice${deps.voiceCount === 1 ? '' : 's'} (press the voice key, then cycle the voice)` });
-    // Which voice speaks, and why — so a machine can never silently use a novelty/odd system voice (task-1393).
+    const role = macPiperReady ? 'the fallback if Piper is removed' : 'the default — press the voice key, then cycle the voice';
+    checks.push({ name: macPiperReady ? 'Voice out (say, fallback)' : 'Voice out (say)', status: 'pass', detail: `macOS \`say\` ready · ${deps.voiceCount} voice${deps.voiceCount === 1 ? '' : 's'} · ${role}` });
+    // Which `say` voice speaks, and why — so a machine can never silently use a novelty/odd system voice (task-1393).
+    const voiceLabel = macPiperReady ? 'Fallback voice' : 'Default voice';
     if (deps.resolvedVoice) {
-      checks.push({ name: 'Default voice', status: 'pass', detail: `${deps.resolvedVoiceReason ?? deps.resolvedVoice} · , changes it` });
+      checks.push({ name: voiceLabel, status: 'pass', detail: `${deps.resolvedVoiceReason ?? deps.resolvedVoice} · , changes it` });
     } else if (deps.resolvedVoice === null) {
       checks.push({
-        name: 'Default voice', status: 'warn',
+        name: voiceLabel, status: 'warn',
         detail: deps.resolvedVoiceReason ?? 'no safe voice installed — spoken replies are off (text still works)',
         fix: 'Install a British male voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices (Daniel, English (UK)); the Enhanced/Premium download sounds best.',
       });
     }
-  } else {
+    // Offer the higher-quality neural voice when it is not set up yet (never silent; the user decides).
+    if (!macPiperReady) {
+      checks.push({
+        name: 'Neural voice (Piper)', status: 'warn',
+        detail: 'a higher-quality neural British voice is available but not set up; `say` is speaking for now',
+        fix: 'Run `dexterm voice setup` to install it (asks first; a private Python runtime + a ~61 MB checksum-verified model; runs offline after, `dexterm voice uninstall` removes it).',
+      });
+    }
+  } else if (!macPiperReady) {
     checks.push({
-      name: 'Voice out (say)', status: 'warn',
+      name: 'Voice out', status: 'warn',
       detail: 'macOS `say` not found; spoken replies are off, the analyst still answers in text',
-      fix: '`say` ships with macOS — if it is missing, reinstall the Command Line Tools (`xcode-select --install`).',
+      fix: '`say` ships with macOS — if it is missing, reinstall the Command Line Tools (`xcode-select --install`). Or set up the neural voice: `dexterm voice setup`.',
     });
   }
 

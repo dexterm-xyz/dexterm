@@ -57,6 +57,7 @@ export * from './intel/rules.ts';
 export * from './intel/holder-class.ts';
 export * from './intel/helius-history.ts';
 export * from './intel/scan.ts';
+export * from './intel/live-signals.ts';
 export * from './images/index.ts';
 // task-1330 (I-03): social / news / trending layer. `Provenance` and `Credibility`-style names are
 // namespaced under `Social*` where they would collide with the core model.

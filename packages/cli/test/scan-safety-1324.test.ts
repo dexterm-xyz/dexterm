@@ -196,8 +196,9 @@ test('MCP server: with a scan screen state every UI-action tool returns an error
 test('validator: types [] rejects all five actions; absent types keeps the task-1313 behaviour', () => {
   const mint = 'So11111111111111111111111111111111111111112';
   const allow = { mints: [mint], feeds: ['trending'], sortKeys: ['vol'] };
-  const raw = { open_token: { mint }, add_to_watchlist: { mint }, open_ticket: { mint, side: 'buy' }, switch_feed: { feed: 'trending' }, show_in_screener: { highlight: mint } } as const;
-  for (const t of ANALYST_ACTION_TYPES) {
+  const raw: Record<string, Record<string, unknown>> = { open_token: { mint }, add_to_watchlist: { mint }, open_ticket: { mint, side: 'buy' }, switch_feed: { feed: 'trending' }, show_in_screener: { highlight: mint } };
+  // The task-1313 navigation five (task-1413 added more action kinds, covered in actions-tiers-1413.test.ts).
+  for (const t of Object.keys(raw)) {
     assert.equal(validateAnalystAction({ type: t, ...raw[t] }, { ...allow, types: [] }).ok, false, `${t} rejected for a scan session`);
     assert.equal(validateAnalystAction({ type: t, ...raw[t] }, allow).ok, true, `${t} unchanged without types`);
   }

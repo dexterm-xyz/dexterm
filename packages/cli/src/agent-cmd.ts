@@ -18,6 +18,7 @@
 
 import {
   AgentRegistry, SqliteAuditLog, MemoryProposalStore, SqliteProposalStore, AgentBus, FixtureExecutor, FixtureFeed,
+  SpectatorHub, SpectatorServer, SpectatorRecorder, FollowController,
   TIERS, isTier, type AgentExecutor, type AgentSession, type ProposalStatus, type Tier,
 } from '@dexterm/agents';
 import { connectAgent } from '@dexterm/agents/sdk';
@@ -36,7 +37,7 @@ const USAGE = `dexterm agent <command>
   audit [--agent NAME] [--limit N]
   proposals [--agent NAME] [--status pending|confirmed|dismissed] [--limit N] [--db PATH]
   packs
-  serve [--fixtures|--live] [--roster] [--port N] [--db PATH]
+  serve [--fixtures|--live] [--roster] [--spectate] [--spectator-popup] [--record FILE] [--port N] [--db PATH]
   connect --name NAME [--port N] [--url ws://127.0.0.1:PORT] [--watch SECONDS]   (token via $DEXTERM_AGENT_TOKEN)`;
 
 export async function runAgent(rest: string[], io: Io): Promise<number> {
@@ -181,12 +182,32 @@ async function serve(rest: string[], io: Io, registry: AgentRegistry): Promise<n
   } else {
     executor = new FixtureExecutor();
   }
-  const bus = new AgentBus({ registry, audit, executor, proposals, feed, port, env: io.env });
+  // task-1406: the spectator hub observes every agent action; it feeds follow mode, the read-only stream
+  // and the save file. Created whenever any spectator surface is asked for (cheap; off otherwise).
+  const wantSpectate = has(rest, '--spectate');
+  const wantRecord = flag(rest, '--record');
+  const wantSpectatorPopup = has(rest, '--spectator-popup');
+  const hub = (wantSpectate || wantRecord || wantSpectatorPopup) ? new SpectatorHub() : undefined;
+  const bus = new AgentBus({ registry, audit, executor, proposals, feed, spectator: hub, port, env: io.env });
   const boundPort = await bus.start();
   feed.start(1500);
   io.stdout.write(`dexterm agent bus listening on ws://127.0.0.1:${boundPort} (${live ? 'live keyless reads' : 'fixtures'})\n`);
   io.stdout.write(`discovery: ${process.env.DEXTERM_HOME ?? '~/.dexterm'}/agent-bus.json · ${registry.list().length} registered agent(s)\n`);
   io.stdout.write('agents connect with their name + $DEXTERM_AGENT_TOKEN. Ctrl-C to stop.\n');
+
+  // --record FILE: save the session (redacted) for demos / bug reports; replay with `dexterm spectate --replay`.
+  let recorder: SpectatorRecorder | null = null;
+  if (hub && wantRecord) {
+    try { recorder = new SpectatorRecorder({ path: wantRecord, note: 'dexterm agent serve' }).attach(hub); io.stdout.write(`recording the session to ${wantRecord} (redacted).\n`); }
+    catch (e) { io.stderr.write(`could not record: ${(e as Error).message}\n`); }
+  }
+  // --spectate: start the read-only, loopback, token-gated spectator stream (SPECTATOR.md).
+  let stream: SpectatorServer | null = null;
+  if (hub && wantSpectate) {
+    stream = new SpectatorServer({ hub, env: io.env });
+    const sp = await stream.start();
+    io.stdout.write(`spectator stream (read-only) on ws://127.0.0.1:${sp} · token in ${process.env.DEXTERM_HOME ?? '~/.dexterm'}/spectator.json (0600) · redacts addresses/keys\n`);
+  }
 
   // --roster: open the agent roster popup and keep it live. The popup can only send pause/resume/kick.
   let roster: { shutdown: () => Promise<void>; timer: ReturnType<typeof setInterval> } | null = null;
@@ -206,8 +227,35 @@ async function serve(rest: string[], io: Io, registry: AgentRegistry): Promise<n
     } catch (e) { io.stderr.write(`roster popup unavailable: ${(e as Error).message}\n`); }
   }
 
+  // --spectator-popup: open the spectator popup ("watch the agent cook"), fed by a follow controller that
+  // folds the hub's events into the screen model + activity. It sends only spectator.* (pause/takeover/kill).
+  let spectatorPopup: { shutdown: () => Promise<void>; timer: ReturnType<typeof setInterval>; off: () => void } | null = null;
+  if (hub && wantSpectatorPopup) {
+    try {
+      const { createPopupManager } = await import('@dexterm/popup');
+      const { buildSpectatorVM, applySpectatorEvent } = await import('./agent-spectator.ts');
+      const { THEMES, DEFAULT_THEME } = await import('@dexterm/tui');
+      const { popupThemeFrom } = await import('./popup.ts');
+      const follow = new FollowController({ controls: bus, activityCap: 200 });
+      const off = hub.on((ev) => follow.apply(ev));
+      const mgr = createPopupManager({ theme: popupThemeFrom(THEMES[DEFAULT_THEME]), env: io.env, onWarn: (m) => io.stderr.write(`spectator popup: ${m}\n`),
+        onEvent: (ev) => { if (ev.ev === 'popup.event' && ev.name.startsWith('spectator.')) io.stdout.write(`spectator: ${applySpectatorEvent(follow, ev.name, String((ev.payload as { agent?: string }).agent))}\n`); } });
+      const handle = await mgr.open({ kind: 'spectator', title: 'watch the agent cook', data: buildSpectatorVM(follow) });
+      const timer = setInterval(() => { try { mgr.setData(handle.id, buildSpectatorVM(follow)); } catch { /* popup closed */ } }, 1000);
+      (timer as { unref?: () => void }).unref?.();
+      spectatorPopup = { shutdown: () => mgr.shutdown(), timer, off };
+      io.stdout.write(`spectator popup open (${mgr.native ? 'native window' : 'browser fallback'}).\n`);
+    } catch (e) { io.stderr.write(`spectator popup unavailable: ${(e as Error).message}\n`); }
+  }
+
   await new Promise<void>((resolve) => {
-    const stop = () => { if (roster) { clearInterval(roster.timer); void roster.shutdown(); } feed.stop(); audit.close(); proposals.close(); dataClose?.(); void bus.close().then(resolve); };
+    const stop = () => {
+      if (roster) { clearInterval(roster.timer); void roster.shutdown(); }
+      if (spectatorPopup) { clearInterval(spectatorPopup.timer); spectatorPopup.off(); void spectatorPopup.shutdown(); }
+      recorder?.stop();
+      feed.stop(); audit.close(); proposals.close(); dataClose?.();
+      void (stream ? stream.close() : Promise.resolve()).then(() => bus.close().then(resolve));
+    };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
   });
   return 0;

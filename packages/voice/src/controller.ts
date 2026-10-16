@@ -7,7 +7,14 @@
 import type { SttEngine, TtsEngine, SttSession, SpeakHandle, VoiceMode, VoiceProvenance, VoiceScreenState } from './types.ts';
 import { route, isSafe, type VoiceDecision } from './router.ts';
 import { spokenSummary, type SpokenSource } from './summary.ts';
+import { speakable } from './speakable.ts';
 import { isBannedVoice } from './tts/voices.ts';
+import { DEFAULT_RATE } from './tts/say.ts';
+
+/** Live rate-nudge bounds and step (task-1411, the < / > keys). Clamped so a voice stays intelligible. */
+export const RATE_MIN = 120;
+export const RATE_MAX = 320;
+export const RATE_STEP = 15;
 
 /** A measured key-release → first-spoken-word latency sample. */
 export interface LatencySample {
@@ -62,6 +69,11 @@ export interface VoiceControllerOpts {
    */
   onVoiceChange?: (voice: string) => void;
   /**
+   * Persist the user's speaking rate when they nudge it with the < / > keys (task-1411). The controller
+   * never writes config itself; the app wires this to the config journal (actor 'user').
+   */
+  onRateChange?: (rate: number) => void;
+  /**
    * Hard cap on how long the mic may stay live before it auto-stops (task-1282 rework D2). The mic is
    * only ever live in 'listening'; if the user walks away or forgets, this closes it. 0 disables it.
    */
@@ -114,7 +126,7 @@ export class VoiceController {
     this.tts = opts.tts;
     this.muted = opts.muted ?? false;
     this.voice = opts.voice ?? null;
-    this.rate = opts.rate ?? 190;
+    this.rate = opts.rate ?? DEFAULT_RATE;
     this.pitch = opts.pitch;
     this.now = opts.now ?? (() => Date.now());
     this.maxListenMs = opts.maxListenMs ?? 15_000;
@@ -165,6 +177,9 @@ export class VoiceController {
     this.message = this.stt ? null : 'voice-in unavailable on this machine — type questions; replies are still spoken';
     this.setMode('idle');
     void this.loadVoices();
+    // task-1416: pre-load the TTS engine (Piper loads its model into a standby process) so the first
+    // reply starts speaking quickly. A no-op for engines that stream from spawn (`say`).
+    try { this.tts?.warmup?.(this.rate); } catch { /* warm-up is best-effort; never break enabling voice */ }
   }
 
   disable(): void {
@@ -173,6 +188,7 @@ export class VoiceController {
     this.stopSpeaking();
     this.enabled = false;
     this.pendingLatency = null;
+    try { this.tts?.dispose?.(); } catch { /* best-effort cleanup */ }
     this.setMode('off');
   }
 
@@ -307,6 +323,9 @@ export class VoiceController {
 
   /** Low-level speak: stops any current reply, then reads `text`. Muted → skip audio but update state. */
   speak(text: string): void {
+    // Speak like a trader (task-1411): no digit-by-digit tiny prices, big numbers in human words,
+    // natural percents. Applied to EVERY spoken line so an ack or an analyst answer never reads raw.
+    text = speakable(text);
     this.lastSay = text;
     if (!this.tts || this.muted) {
       // Still resolve the latency sample (the "spoken word" is just suppressed) so the table is complete.
@@ -391,6 +410,23 @@ export class VoiceController {
 
   currentVoice(): string | null { return this.voice; }
   availableVoices(): string[] { return this.voices.slice(); }
+
+  /** The current speaking rate (words-per-minute-ish), for the status line / help. */
+  currentRate(): number { return this.rate; }
+
+  /**
+   * Nudge the speaking rate by `steps` × RATE_STEP (— for slower, + for faster), clamp it, persist it,
+   * and surface it on the status line (task-1411: the < / > keys). Takes effect on the next reply; it
+   * does not restart a line already in flight. A no-op when the rate is already at the clamp.
+   */
+  nudgeRate(steps: number): void {
+    const next = Math.max(RATE_MIN, Math.min(RATE_MAX, this.rate + steps * RATE_STEP));
+    if (next === this.rate) { this.message = `voice rate ${this.rate} wpm (${next <= RATE_MIN ? 'slowest' : 'fastest'})`; this.notify(); return; }
+    this.rate = next;
+    this.message = `voice rate ${this.rate} wpm`;
+    try { this.opts.onRateChange?.(this.rate); } catch { /* persistence is best-effort; never break the UI */ }
+    this.notify();
+  }
 
   /** A compact latency report for the handoff / `--latency` demo. */
   report(): { path: string; n: number; p50: number | null; min: number | null; max: number | null }[] {

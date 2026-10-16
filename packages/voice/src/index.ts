@@ -6,6 +6,7 @@
 export * from './types.ts';
 export { route, isSafe, type VoiceDecision } from './router.ts';
 export { spokenSummary, splitSentences, type SpokenSource } from './summary.ts';
+export { speakable, humanizeNumber, type SpeakableOpts } from './speakable.ts';
 export { VoiceController, type VoiceStatus, type VoiceControllerOpts, type LatencySample } from './controller.ts';
 export { selectStt, selectTts, resolveSayVoice, type SttChoice, type TtsChoice } from './engines.ts';
 export { voiceDoctor, type VoiceCheck, type VoiceCheckStatus, type VoiceDoctorDeps } from './doctor.ts';
@@ -16,7 +17,17 @@ export {
 } from './tts/voices.ts';
 export { SayTts, DEFAULT_RATE } from './tts/say.ts';
 export { EspeakTts, DEFAULT_ESPEAK_VOICE, resolveEspeakBin, espeakVoiceFor } from './tts/espeak.ts';
-export { PiperTts, DEFAULT_PIPER_VOICE, PIPER_MODEL, PIPER_PLAYERS, resolvePiperBin, pickPlayer } from './tts/piper.ts';
+export {
+  PiperTts, DEFAULT_PIPER_VOICE, PIPER_MODEL, PIPER_PLAYERS,
+  resolvePiperBin, resolvePiperRuntime, managedVenvPython, pickPlayer, type PiperRuntime,
+} from './tts/piper.ts';
+export {
+  setupPiperRuntime, uninstallPiperRuntime, piperRuntimeStatus, piperRuntimePaths, readRuntimeRecord,
+  detectPython, parsePythonVersion, pythonVersionOk, pythonFixLine,
+  PIPER_PYPI_VERSION, MIN_PYTHON, DEFAULT_PYTHON_CANDIDATES,
+  type SetupDeps, type SetupResult, type SetupStatus, type RunResult,
+  type PiperRuntimeRecord, type RuntimeStatus, type UninstallResult,
+} from './tts/piper-setup.ts';
 export { FakeTts } from './tts/fake.ts';
 export { WhisperStt, WHISPER_MODEL, WHISPER_MODEL_DIR, pickRecorder } from './stt/whisper.ts';
 export {

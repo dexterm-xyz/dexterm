@@ -10,6 +10,9 @@ export {
   type ContentEntry, type ContentKind, type MergedSet, type SkippedFile, type CheckResult, type BundledSource, type Origin,
 } from './user-content.ts';
 export { buildDossier, type DossierInput, type DossierAvailability } from './dossier.ts';
+// task-1406: the spectator sink the tool-call path writes to when launched with a spectator channel.
+export { recordForToolCall, maxAgeSec, fileSpectatorSinkFromEnv, type McpSpectatorRecord, type McpSpectatorSink } from './spectator-sink.ts';
+export { loadAppHelp, searchAppHelp, getAppHelp, APP_HELP_DIR, type AppHelpEntry } from './app-help.ts';
 
 /** Tool names served in v1 (SPEC §5.2 core + the task-1293 KB/case tools + the task-1314 dossier). */
 export const PLANNED_TOOLS = [

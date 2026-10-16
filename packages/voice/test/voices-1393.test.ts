@@ -181,8 +181,10 @@ test('a non-UK Eddy is NOT chosen as the British default', () => {
   assert.equal(resolveVoice({ installed }).voice, 'Daniel');
 });
 
-test('Eddy carries the default rate/pitch; other voices use the engine defaults', () => {
-  assert.deepEqual(voiceStyleDefaults('Eddy (English (UK))'), { rate: 168, pitch: 30 });
+test('no voice carries a per-voice style override — every voice uses the engine defaults (task-1411)', () => {
+  // task-1411: the old Eddy override (rate 168 + pbas 30) was "crazy bad" / "way too slow" and distorted;
+  // it is removed. Every voice now speaks at the brisk engine DEFAULT_RATE with no pitch shift.
+  assert.equal(voiceStyleDefaults('Eddy (English (UK))'), undefined);
   assert.equal(voiceStyleDefaults('Daniel'), undefined);
   assert.equal(voiceStyleDefaults(null), undefined);
 });

@@ -21,27 +21,91 @@ export const ACTION_FILE_ENV = 'DEXTERM_ACTION_FILE';
 /** Env var carrying the per-run random token that authenticates channel lines. */
 export const ACTION_TOKEN_ENV = 'DEXTERM_ACTION_TOKEN';
 
-/** The five non-financial UI actions the analyst may request. */
-export const ANALYST_ACTION_TYPES = ['open_token', 'show_in_screener', 'add_to_watchlist', 'switch_feed', 'open_ticket'] as const;
+/**
+ * The non-financial UI actions the analyst may request (task-1313, extended in task-1413).
+ *
+ * Two tiers (see `ACTION_TIER`):
+ *  - `view`   — local, reversible runtime changes applied immediately with an "analyst did X" note.
+ *  - `config` — a persisted change to `config.json`. It is NOT applied by the model; the consumer turns
+ *               it into a one-line PROPOSAL the user accepts with a keypress, then writes it through the
+ *               journaled config path (`applyAndJournal`, actor `analyst`, so `ctrl+z` undoes it).
+ *
+ * FORBIDDEN forever (task-1413 tier c): there is deliberately NO action kind that touches wallets, keys,
+ * credentials, alert-channel secrets, signing/arming/caps/mandates, trade tickets beyond the existing
+ * PAPER `open_ticket`, network/RPC settings, or software install/update. Such a request fails here as an
+ * "unknown action type". The journaled config paths a `config` action may write are a closed list
+ * (`CONFIG_ACTION_PATHS`), AND the consumer re-runs `policyCheck(..., non-user actor)` on the journal op, so
+ * no `config` action may ever write a `DENIED_FOR_MODELS` path — none of the paths below is denied or a
+ * money/secret path.
+ *
+ * NOTE (task-1413 r2): voice rate / voice name are NOT analyst actions. `/voice` is `DENIED_FOR_MODELS`
+ * ("only the keyboard sets it", schema.ts), and the gate stays the gate: a model may never write it, even
+ * behind a keypress proposal. The analyst still EXPLAINS how to change the voice (app-help: edit config.json
+ * or the `,` key); it just cannot write it. Re-enabling it would need a maintainer-approved DENIED_FOR_MODELS carve-out.
+ */
+export const ANALYST_ACTION_TYPES = [
+  // task-1313 (unchanged):
+  'open_token', 'show_in_screener', 'add_to_watchlist', 'switch_feed', 'open_ticket',
+  // task-1413 view-only:
+  'switch_screen', 'switch_workspace', 'chart_popup', 'toggle_calm', 'set_scan', 'export_view',
+  // task-1413 persisted config (user-confirmed, journaled; non-denied display paths only):
+  'set_theme', 'set_price_mode', 'set_intensity',
+] as const;
 export type AnalystActionType = (typeof ANALYST_ACTION_TYPES)[number];
 
+/** Tier of each action: `view` = immediate runtime, `config` = persisted via a user-confirmed journal write. */
+export const ACTION_TIER: Record<AnalystActionType, 'view' | 'config'> = {
+  open_token: 'view', show_in_screener: 'view', add_to_watchlist: 'view', switch_feed: 'view', open_ticket: 'view',
+  switch_screen: 'view', switch_workspace: 'view', chart_popup: 'view', toggle_calm: 'view', set_scan: 'view', export_view: 'view',
+  set_theme: 'config', set_price_mode: 'config', set_intensity: 'config',
+};
+
+/**
+ * The exact `config.json` JSON-Pointer each `config` action writes — a closed allow-list. Every path here
+ * is a local, reversible, non-financial DISPLAY setting and NONE is a `DENIED_FOR_MODELS` path (the journal
+ * write re-checks that with `policyCheck`). NOTHING here is matched by `DENIED_VALUE_KEYS` / the money-safety
+ * sections; the consumer additionally confirms each with a keypress.
+ */
+export const CONFIG_ACTION_PATHS: Record<string, string> = {
+  set_theme: '/theme/name',
+  set_price_mode: '/display/priceMode',
+  set_intensity: '/fx/intensity',
+};
+
 export type SortDir = 'asc' | 'desc';
+export type PriceMode = 'price' | 'mcap';
+export type Intensity = 'off' | 'normal' | 'fever';
 
 export type AnalystAction =
   | { type: 'open_token'; mint: string }
-  | { type: 'show_in_screener'; filter?: string; sort?: { key: string; dir: SortDir }; highlight?: string }
+  | { type: 'show_in_screener'; filter?: string; sort?: { key: string; dir: SortDir }; highlight?: string; preset?: string }
   | { type: 'add_to_watchlist'; mint: string }
   | { type: 'switch_feed'; feed: string }
-  | { type: 'open_ticket'; mint: string; side: 'buy' | 'sell' };
+  | { type: 'open_ticket'; mint: string; side: 'buy' | 'sell' }
+  | { type: 'switch_screen'; screen: string }
+  | { type: 'switch_workspace'; name: string }
+  | { type: 'chart_popup'; open: boolean }
+  | { type: 'toggle_calm'; on: boolean }
+  | { type: 'set_scan'; on: boolean }
+  | { type: 'export_view' }
+  | { type: 'set_theme'; name: string }
+  | { type: 'set_price_mode'; mode: PriceMode }
+  | { type: 'set_intensity'; intensity: Intensity };
 
-/** What the caller currently permits: the only mints/feeds/sorts an action may reference. */
+/** What the caller currently permits: the only mints/feeds/sorts/screens/etc. an action may reference. */
 export interface ActionAllow {
   /** Mints already on screen / watched / selected — the only mints an action may point at. */
   mints: readonly string[];
-  /** Feed ids `switch_feed` may select (the presets available right now). */
+  /** Feed ids `switch_feed` / `show_in_screener`'s preset may select (the presets available right now). */
   feeds: readonly string[];
   /** Sort keys `show_in_screener` may use. */
   sortKeys: readonly string[];
+  /** Screen keys `switch_screen` may select. */
+  screens?: readonly string[];
+  /** Workspace names `switch_workspace` may select. */
+  workspaces?: readonly string[];
+  /** Theme names `set_theme` may select (built-ins + the user's own). */
+  themes?: readonly string[];
   /**
    * Action types this session may request (task-1324). Absent = every type above (the task-1313
    * behaviour). AI scan mode passes `[]`: an observe-only session can request NO UI action at all —
@@ -60,6 +124,11 @@ const FILTER_MAX = 120;
 // `!` is included so tag negation (`!flag:mint`, `!launchpad:pump`) — a documented part of the grammar —
 // survives the boundary instead of being rejected as malformed (task-1313 part E).
 const FILTER_SAFE_RE = /^[\w\s<>=:.%$,+!\-|()]*$/;
+
+// task-1413 value shapes. The consumer re-validates against config schema (`validateConfig`) too.
+const THEME_NAME_RE = /^[a-z][a-z0-9-]{0,39}$/; // mirrors schema.ts NAME
+const PRICE_MODES: readonly string[] = ['price', 'mcap'];
+const INTENSITIES: readonly string[] = ['off', 'normal', 'fever'];
 
 function isObj(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -124,11 +193,84 @@ export function validateAnalystAction(raw: unknown, allow: ActionAllow): ActionR
         out.highlight = raw.highlight;
         bits.push(`highlight ${short(raw.highlight)}`);
       }
-      if (!bits.length) return { ok: false, error: 'show_in_screener: nothing to do (give filter, sort, or highlight)' };
+      if (raw.preset !== undefined && raw.preset !== null && raw.preset !== '') {
+        if (typeof raw.preset !== 'string' || !allow.feeds.includes(raw.preset)) {
+          return { ok: false, error: `show_in_screener: preset must be one of ${allow.feeds.join(', ') || '(none)'}` };
+        }
+        out.preset = raw.preset;
+        bits.push(`preset ${out.preset}`);
+      }
+      if (!bits.length) return { ok: false, error: 'show_in_screener: nothing to do (give filter, sort, preset, or highlight)' };
       return { ok: true, action: out, label: `showed the screener (${bits.join(', ')})` };
+    }
+    case 'switch_screen': {
+      const screens = allow.screens ?? [];
+      if (typeof raw.screen !== 'string' || !screens.includes(raw.screen)) {
+        return { ok: false, error: `switch_screen: screen must be one of ${screens.join(', ') || '(none)'}` };
+      }
+      return { ok: true, action: { type, screen: raw.screen }, label: `switched to the ${raw.screen} screen` };
+    }
+    case 'switch_workspace': {
+      const workspaces = allow.workspaces ?? [];
+      if (typeof raw.name !== 'string' || !workspaces.includes(raw.name)) {
+        return { ok: false, error: `switch_workspace: name must be one of ${workspaces.join(', ') || '(none)'}` };
+      }
+      return { ok: true, action: { type, name: raw.name }, label: `opened the "${raw.name}" workspace` };
+    }
+    case 'chart_popup': {
+      if (typeof raw.open !== 'boolean') return { ok: false, error: 'chart_popup: open must be true or false' };
+      return { ok: true, action: { type, open: raw.open }, label: raw.open ? 'opened the chart popup' : 'closed the chart popup' };
+    }
+    case 'toggle_calm': {
+      if (typeof raw.on !== 'boolean') return { ok: false, error: 'toggle_calm: on must be true or false' };
+      return { ok: true, action: { type, on: raw.on }, label: raw.on ? 'turned on calm mode' : 'turned off calm mode' };
+    }
+    case 'set_scan': {
+      if (typeof raw.on !== 'boolean') return { ok: false, error: 'set_scan: on must be true or false' };
+      return { ok: true, action: { type, on: raw.on }, label: raw.on ? 'turned scan mode on' : 'turned scan mode off' };
+    }
+    case 'export_view': {
+      return { ok: true, action: { type }, label: 'exported the current view' };
+    }
+    case 'set_theme': {
+      if (typeof raw.name !== 'string' || !THEME_NAME_RE.test(raw.name)) return { ok: false, error: 'set_theme: invalid theme name' };
+      const themes = allow.themes ?? [];
+      if (!themes.includes(raw.name)) return { ok: false, error: `set_theme: theme must be one of ${themes.join(', ') || '(none)'}` };
+      return { ok: true, action: { type, name: raw.name }, label: `set the theme to ${raw.name}` };
+    }
+    case 'set_price_mode': {
+      if (raw.mode !== 'price' && raw.mode !== 'mcap') return { ok: false, error: `set_price_mode: mode must be one of ${PRICE_MODES.join(', ')}` };
+      return { ok: true, action: { type, mode: raw.mode }, label: `set the price display to ${raw.mode === 'mcap' ? 'market cap' : 'price'}` };
+    }
+    case 'set_intensity': {
+      if (typeof raw.intensity !== 'string' || !INTENSITIES.includes(raw.intensity)) {
+        return { ok: false, error: `set_intensity: intensity must be one of ${INTENSITIES.join(', ')}` };
+      }
+      return { ok: true, action: { type, intensity: raw.intensity as Intensity }, label: `set the visual intensity to ${raw.intensity}` };
     }
     default:
       return { ok: false, error: `unknown action type ${type}` };
+  }
+}
+
+/**
+ * Map a validated `config`-tier action to a `{section, key, value}` descriptor of the `config.json`
+ * change it requests. Returns `null` for a `view`-tier action (nothing to persist). Pure and
+ * dependency-free: the consumer builds the actual `PatchOp` (creating the parent section when it is
+ * absent, exactly like the `dexterm display` / `,` voice handlers), runs the config schema validator,
+ * and writes through `applyAndJournal` (actor `analyst`). `section`/`key` are fixed, never taken from
+ * model input — only `value` comes from the (already-validated) action.
+ */
+export function configChangeForAction(action: AnalystAction): { section: string; key: string; value: unknown; path: string } | null {
+  const at = (path: string, value: unknown) => {
+    const [, section, key] = path.split('/');
+    return { section, key, value, path };
+  };
+  switch (action.type) {
+    case 'set_theme': return at(CONFIG_ACTION_PATHS.set_theme, action.name);
+    case 'set_price_mode': return at(CONFIG_ACTION_PATHS.set_price_mode, action.mode);
+    case 'set_intensity': return at(CONFIG_ACTION_PATHS.set_intensity, action.intensity);
+    default: return null;
   }
 }
 

@@ -30,6 +30,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { buildDossier } from './dossier.ts';
 import { firewall } from './firewall.ts';
 import { OverlayStore, dextermHome, KB_RULE, type ContentEntry, type SkippedFile, type MergedSet } from './user-content.ts';
+import { fileSpectatorSinkFromEnv, recordForToolCall } from './spectator-sink.ts';
+import { loadAppHelp, searchAppHelp, getAppHelp, type AppHelpEntry } from './app-help.ts';
 import { assembleTokenDossier, computeBoard, recentNarrativeRows, loadDefaultLexicon, summaryText, buildDigest, tokenRugScorer, h1Model, runBacktest, type BacktestKind } from '@dexterm/packs';
 import { exportRecorded, openHistoryReadOnly, type Label } from '@dexterm/recorder';
 
@@ -111,6 +113,17 @@ function kbSearch(q: string, limit = 5): Array<Record<string, unknown>> {
     return { e, score };
   }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
   return scored.map(({ e, score }) => ({ ...kbView(e, { full: false }), score }));
+}
+
+// ---------------------------------------------------------------------------
+// app-help KB (task-1413): a separate bundled set generated from the app's own keymap/overlay/tools/CLI
+// (packages/mcp/assets/kb/app-help/*.md). It teaches "how dexterm works" with the exact key/command; it
+// is first-party doc text (not firewalled) and carries structured keys/commands/flags/tools per entry.
+function appHelpView(e: AppHelpEntry): Record<string, unknown> {
+  return {
+    id: e.id, title: e.title, screen: e.screen, feature: e.feature || null, tags: e.tags,
+    keys: e.keys, commands: e.commands, flags: e.flags, tools: e.tools, text: e.body, origin: 'app-help',
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,10 +230,27 @@ export const TOOLS = [
   // tokens currently on screen (screen_state.actions) and applied by the running app, which shows
   // "analyst did X". None can size, confirm, sign, or send a trade.
   { name: 'open_token', description: "Open a token's detail screen in dexterm so the user can see it. `mint` must be one of the mints currently on screen (see screen_state). Use for \"put this/that coin on my screen\", \"show me $X\". Non-financial navigation; it never trades.", inputSchema: { type: 'object', properties: { mint: { type: 'string', description: 'base58 mint, must be on screen' } }, required: ['mint'], additionalProperties: false } },
-  { name: 'show_in_screener', description: 'Show the screener with an optional filter, sort, and a highlighted mint. Use for "rank these by volume", "filter to liq > 50k", "coins under 5M mcap". `filter` is dexterm\'s grammar: space-separated `field op value` clauses ANDed, e.g. `mcap < 5M liq > 100K h24 > 20`. Fields: vol24 vol6h vol1h vol5m liq mcap fdv price age holders buys sells org top10 dev lplocked bundled snipers m5 h1 h6 h24. Ops > >= < <= = !=. Money K/M/B; percents plain; age needs a unit (6h, 30m). Tags: launchpad:pump|dbc|raydium|meteora|bonk, flag:mint|freeze|top10|dev|bundle|lp|clean (negate with !, e.g. !flag:mint), verified:yes, sus:no, chain:solana. Invalid fields are rejected — only use the ones listed. `sort.key` must be one of screen_state.actions.sortKeys; `highlight` must be a mint on screen. When you build a filter from a plain-language request, also return `filter_applied` in your structured output.', inputSchema: { type: 'object', properties: { filter: { type: 'string' }, sort: { type: 'object', properties: { key: { type: 'string' }, dir: { type: 'string', enum: ['asc', 'desc'] } }, required: ['key'], additionalProperties: false }, highlight: { type: 'string' } }, additionalProperties: false } },
+  { name: 'show_in_screener', description: 'Show the screener with an optional filter, sort, and a highlighted mint. Use for "rank these by volume", "filter to liq > 50k", "coins under 5M mcap". `filter` is dexterm\'s grammar: space-separated `field op value` clauses ANDed, e.g. `mcap < 5M liq > 100K h24 > 20`. Fields: vol24 vol6h vol1h vol5m liq mcap fdv price age holders buys sells org top10 dev lplocked bundled snipers m5 h1 h6 h24. Ops > >= < <= = !=. Money K/M/B; percents plain; age needs a unit (6h, 30m). Tags: launchpad:pump|dbc|raydium|meteora|bonk, flag:mint|freeze|top10|dev|bundle|lp|clean (negate with !, e.g. !flag:mint), verified:yes, sus:no, chain:solana. Invalid fields are rejected — only use the ones listed. `sort.key` must be one of screen_state.actions.sortKeys; `highlight` must be a mint on screen. `preset`, when given, must be one of screen_state.actions.feeds. When you build a filter from a plain-language request, also return `filter_applied` in your structured output.', inputSchema: { type: 'object', properties: { filter: { type: 'string' }, sort: { type: 'object', properties: { key: { type: 'string' }, dir: { type: 'string', enum: ['asc', 'desc'] } }, required: ['key'], additionalProperties: false }, highlight: { type: 'string' }, preset: { type: 'string' } }, additionalProperties: false } },
   { name: 'add_to_watchlist', description: 'Add a token to the user\'s watchlist. `mint` must be one of the mints currently on screen. Non-financial.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'], additionalProperties: false } },
   { name: 'switch_feed', description: 'Switch the screener feed/preset. `feed` must be one of screen_state.actions.feeds.', inputSchema: { type: 'object', properties: { feed: { type: 'string' } }, required: ['feed'], additionalProperties: false } },
   { name: 'open_ticket', description: 'Open the PAPER trade ticket pre-filled for a mint and side. It ONLY opens the ticket (editing phase); it never sizes, confirms, signs, or sends — the user confirms every trade themselves. `mint` must be on screen; `side` is "buy" or "sell".', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, side: { type: 'string', enum: ['buy', 'sell'] } }, required: ['mint', 'side'], additionalProperties: false } },
+  // ---- app-help + app-state (task-1413). Read-only: how the app works, and what the user currently sees.
+  { name: 'app_help', description: 'Search the APP-HELP knowledge base: how dexterm itself works (what a screen shows, the exact key for a task, the CLI command, the MCP tools). For any "how do I …", "what key …", "what does this screen show" question, call this FIRST and answer with the exact key or command from the result — NEVER invent a key. If nothing matches, say "I don\'t see that in the app." Pass `query` to search, or `id` to fetch one entry. Each result carries structured `keys`, `commands`, `flags`, `tools` and the screen it is about.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, additionalProperties: false } },
+  { name: 'app_state', description: 'Read-only snapshot of what the user currently sees so an answer fits their screen: current screen, selected coin (mint+symbol), theme, price display mode, voice name/rate, whether scan and calm are on, and which alert channels are CONFIGURED (yes/no only). It never returns a key, token, webhook, secret or any credential. Use it to tailor a "how do I" answer to the user\'s actual state.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  // ---- more UI actions (task-1413). Tiered, non-financial. `view`: applied immediately with an "analyst did X"
+  // note. `config`: a one-line PROPOSAL the user accepts with a keypress, then written to config.json as actor
+  // 'analyst' (undo with ctrl+z). NONE can touch wallets/keys/alerts-secrets/signing/caps/network/software.
+  { name: 'switch_screen', description: 'Switch to a dexterm screen (view-only). `screen` must be one of screen_state.actions.screens.', inputSchema: { type: 'object', properties: { screen: { type: 'string' } }, required: ['screen'], additionalProperties: false } },
+  { name: 'switch_workspace', description: 'Open a saved workspace layout (view-only). `name` must be one of screen_state.actions.workspaces.', inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: false } },
+  { name: 'chart_popup', description: 'Open or close the chart popup window (view-only). `open`: true to open, false to close.', inputSchema: { type: 'object', properties: { open: { type: 'boolean' } }, required: ['open'], additionalProperties: false } },
+  { name: 'toggle_calm', description: 'Turn calm mode (effects off) on or off (view-only). `on`: true for calm, false to restore effects.', inputSchema: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'], additionalProperties: false } },
+  { name: 'set_scan', description: 'Turn the observe-only AI scan mode on or off (view-only). `on`: true/false.', inputSchema: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'], additionalProperties: false } },
+  { name: 'export_view', description: 'Export the current view to ~/.dexterm/exports (PNG + text report; view-only, nothing uploaded).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'set_theme', description: 'PROPOSE a theme change the user confirms with a keypress (persisted, undoable). `name` must be one of screen_state.actions.themes.', inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: false } },
+  { name: 'set_price_mode', description: 'PROPOSE the price display mode the user confirms with a keypress (persisted, undoable). `mode`: "price" or "mcap".', inputSchema: { type: 'object', properties: { mode: { type: 'string', enum: ['price', 'mcap'] } }, required: ['mode'], additionalProperties: false } },
+  { name: 'set_intensity', description: 'PROPOSE the visual intensity the user confirms with a keypress (persisted, undoable). `intensity`: "off", "normal" or "fever".', inputSchema: { type: 'object', properties: { intensity: { type: 'string', enum: ['off', 'normal', 'fever'] } }, required: ['intensity'], additionalProperties: false } },
+  // task-1413 r2: voice speed/name are NOT analyst actions. The `/voice` config path is DENIED_FOR_MODELS —
+  // only the keyboard (`<`/`>`, the voice picker) sets it. There is deliberately no set_voice_* tool here.
 ] as const;
 
 /** The read-only tool surface: every tool except the UI-action ones (task-1313). The only tools a skill may name (task-1377). */
@@ -234,7 +264,11 @@ export interface ActionChannel { token: string; append(line: string): void }
 function allowFrom(screenState: Record<string, unknown>): ActionAllow {
   const a = (screenState.actions ?? {}) as Record<string, unknown>;
   const list = (x: unknown): string[] => Array.isArray(x) ? x.filter((v): v is string => typeof v === 'string') : [];
-  const allow: ActionAllow = { mints: list(a.mints), feeds: list(a.feeds), sortKeys: list(a.sortKeys) };
+  const allow: ActionAllow = {
+    mints: list(a.mints), feeds: list(a.feeds), sortKeys: list(a.sortKeys),
+    // task-1413: screens/workspaces/themes an action may reference (empty/absent fails closed).
+    screens: list(a.screens), workspaces: list(a.workspaces), themes: list(a.themes),
+  };
   // task-1324: a session-level action-type list (AI scan mode sends []) narrows what this server will
   // write to the channel. Present-but-malformed fails closed (no types allowed).
   if (a.types !== undefined) allow.types = list(a.types).filter((t): t is AnalystActionType => (ANALYST_ACTION_TYPES as readonly string[]).includes(t));
@@ -289,6 +323,40 @@ export class McpTools {
     try { this.channel.append(serializeActionLine(this.channel.token, ++this.actionSeq, res.action as unknown as Record<string, unknown>)); }
     catch (e) { return { error: err(e) }; }
     return { ok: true, requested: res.label, note: 'The app applies this and shows "analyst did X". You cannot confirm, size, or send a trade.' };
+  }
+
+  /**
+   * task-1413: a read-only view of what the user currently sees. It only reflects the fields the CLI put in
+   * screen_state (screen, selected coin, and the `app` block of theme/priceMode/voice/scan/calm/alerts). The
+   * `alerts` map is booleans (configured yes/no); by construction this method never reads or returns a token,
+   * webhook, key or any secret. Degrades to `available:false` when there is no running app.
+   */
+  private appState(): Record<string, unknown> {
+    const s = this.screenState();
+    const app = (s.app && typeof s.app === 'object') ? (s.app as Record<string, unknown>) : null;
+    const sel = (s.selected && typeof s.selected === 'object') ? (s.selected as { mint?: unknown; symbol?: unknown }) : null;
+    // task-1413 residual: the selected symbol is an attacker-chosen token string (a coin can be named
+    // anything), so it is firewalled before it leaves in the snapshot an agent reads — exactly like the
+    // Jupiter symbol at tokenView(). The mint is a base58 address and is safe verbatim.
+    const selected = sel && typeof sel.mint === 'string'
+      ? { mint: sel.mint, symbol: typeof sel.symbol === 'string' ? (firewall(sel.symbol, 'app:selected:symbol', 'symbol', { keepAddresses: false }) ?? '') : '' }
+      : null;
+    if (!app) {
+      return { available: false, screen: (s.screen as string) ?? 'unknown', selected, note: 'no running dexterm app; launch it for live state. Never returns any secret.' };
+    }
+    return {
+      available: true,
+      screen: (s.screen as string) ?? 'unknown',
+      selected,
+      theme: app.theme ?? null,
+      priceMode: app.priceMode ?? null,
+      intensity: app.intensity ?? null,
+      calm: typeof app.calm === 'boolean' ? app.calm : null,
+      voice: app.voice ?? null,
+      scan: app.scan ?? null,
+      alerts: app.alerts ?? null, // { toast, desktop, telegram, discord } — booleans only, never a secret
+      note: 'Read-only. alerts shows whether each channel is configured (yes/no); it never reveals a token, webhook or key.',
+    };
   }
 
   /** Resolve a mint or symbol to one enriched row, or return candidates/error. */
@@ -618,6 +686,20 @@ export class McpTools {
         return c ?? { error: 'no such case' };
       }
 
+      case 'app_help': {
+        // task-1413: how dexterm itself works. Generated from the keymap/overlay/tools/CLI — the exact key
+        // or command for a task. Fetch one by id, or search; never a fact about a live token.
+        if (args.id) {
+          const e = getAppHelp(String(args.id));
+          if (!e) return { error: `no app-help entry ${String(args.id).slice(0, 64)}`, available: loadAppHelp().map((x) => x.id) };
+          return { ...appHelpView(e), rule: 'app-help explains how dexterm works. Answer with its exact key/command; never invent one.' };
+        }
+        const results = searchAppHelp(String(args.query ?? ''), Number(args.limit ?? 5)).map((e) => ({ ...appHelpView(e), score: e.score }));
+        return { query: String(args.query ?? '').slice(0, 200), results, rule: 'If nothing matches, tell the user "I don\'t see that in the app." Never invent a key or command.' };
+      }
+      case 'app_state':
+        return this.appState();
+
       case 'get_links': {
         const r = await this.linksFor((args.mint as string) ?? (args.symbol as string));
         if ('error' in r) return { error: r.error, candidates: r.candidates };
@@ -784,6 +866,11 @@ export async function runStdioServer(opts: { argv?: string[] } = {}): Promise<vo
     : null;
   const tools = new McpTools(data, screenStateFromEnv, channel, dbPathForHistory);
 
+  // task-1406: when the running dexterm launched us with a spectator channel, every tool call is emitted
+  // as a SpectatorEvent-shaped JSONL line the TUI tails into its hub (where redaction + the stream live).
+  const spectator = fileSpectatorSinkFromEnv(process.env);
+  let specSeq = 0;
+
   function appendTrace(rec: Record<string, unknown>): void {
     if (TRACE) { try { fs.appendFileSync(TRACE, JSON.stringify(rec) + '\n'); } catch { /* ignore */ } }
   }
@@ -804,7 +891,9 @@ export async function runStdioServer(opts: { argv?: string[] } = {}): Promise<vo
         let result: Record<string, unknown>;
         try { result = await tools.call(name, args); } catch (e) { result = { error: err(e) }; }
         const text = JSON.stringify(result);
-        appendTrace({ t: Date.now(), tool: name, args, ms: Date.now() - t0, bytes: Buffer.byteLength(text), isError: Boolean((result as { error?: unknown }).error) });
+        const ms = Date.now() - t0;
+        appendTrace({ t: Date.now(), tool: name, args, ms, bytes: Buffer.byteLength(text), isError: Boolean((result as { error?: unknown }).error) });
+        if (spectator) spectator.sink.record(recordForToolCall({ seq: ++specSeq, agent: spectator.agent, tool: name, args, result, ms, token: spectator.token }));
         return reply({ content: [{ type: 'text', text }], isError: false });
       }
       case 'resources/list': return reply({ resources: resourceList() });

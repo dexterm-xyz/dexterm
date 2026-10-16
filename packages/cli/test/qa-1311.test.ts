@@ -28,10 +28,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const BIN = resolve(here, '..', 'bin', 'dexterm.mjs');
 const SAMPLE = resolve(here, '..', '..', 'data', 'fixtures', 'live-sample.json');
 // task-1319: the QA driver is vendored into the repo (packages/cli/test/measure/drive.py) so a clean
-// checkout runs these instead of silently skipping; the original out-of-repo evidence path is a fallback.
-const DRIVE_VENDORED = resolve(here, 'measure', 'drive.py');
-const DRIVE_EVIDENCE = resolve(here, '..', '..', '..', '..', '..', 'expert-coder', 'handoffs', 'dexterm-v01-qa-evidence', 'tools', 'drive.py');
-const DRIVE = existsSync(DRIVE_VENDORED) ? DRIVE_VENDORED : DRIVE_EVIDENCE;
+// checkout runs these instead of silently skipping (task-1415 dropped the out-of-repo evidence fallback).
+const DRIVE = resolve(here, 'measure', 'drive.py');
 const hasDriver = (() => { try { execFileSync('python3', ['-c', 'import pty'], { stdio: 'ignore' }); return existsSync(DRIVE); } catch { return false; } })();
 const skip = hasDriver ? false : 'python3 pty + QA drive.py not present (archive copy)';
 

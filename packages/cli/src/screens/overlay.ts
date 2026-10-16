@@ -4,6 +4,7 @@
 // overlay; `?` toggles help.
 import { Canvas, DEFAULT_KEYMAP, mix, type Keymap, type AppAction, type Binding, type ScreenKey } from '@dexterm/tui';
 import type { AppState } from '../state.ts';
+import { renderPnlOverlay } from '../pnl-app.ts';
 
 /** Pretty single-key display for a keymap id ('enter' → '⏎', 'pagedown' → 'PgDn', 'ctrl+f' → '^F'). */
 function prettyKey(id: string): string {
@@ -219,6 +220,7 @@ export function renderOverlay(c: Canvas, state: AppState): void {
   if (state.overlay === 'welcome') renderWelcome(c, state);
   else if (state.overlay === 'help') renderHelp(c, state);
   else if (state.overlay === 'workspaces') renderWorkspaces(c, state);
+  else if (state.overlay === 'pnl') renderPnlOverlay(c, state);
   else if (state.overlay === 'links' && state.linkMenu) {
     const menu = state.linkMenu;
     const box = card(c, { w: 100, h: Math.min(24, menu.items.length * 2 + 6) }, 'ADVERTISED LINKS (UNTRUSTED)', 'j/k select · enter open · esc close');
