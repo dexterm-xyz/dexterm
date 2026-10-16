@@ -2,6 +2,10 @@
 
 The release pipeline publishes with provenance from GitHub Actions (`.github/workflows/publish.yml`, gated by the `NPM_PUBLISH` repository variable). It stays off until the switches below are flipped on purpose.
 
+## The package name is `dexterm-cli`
+
+npm refuses to publish the unscoped name `dexterm` (HTTP 403, "Package name too similar to existing package xterm"), so the package is `dexterm-cli`; the command it installs is `dexterm`. Things learned on the first publish (2026-10-15): a new package's first publish creates a `0.0.0-stage` placeholder and the real version shows "Validating" for several minutes before it is installable; a security-key-only account cannot supply a one-time password at publish time, so the first publish needs a granular token that bypasses 2FA (short-lived, then revoked); and `dexterm-cli@0.1.1` was published by hand, so it has no provenance. The next version should go through `publish.yml` once trusted publishing is configured for `dexterm-cli`.
+
 ## Why there is a build step
 
 dexterm runs its TypeScript sources directly from a checkout or the source tarball: `packages/cli/bin/dexterm.mjs` imports `../src/main.ts` and Node 22.18+ strips the types at load time (the installer symlinks the workspace packages into `node_modules/@dexterm/*`, and Node resolves them through the symlink to their real path under `packages/`).

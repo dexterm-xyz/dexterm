@@ -57,11 +57,11 @@ Without the trust step, `brew install dexterm` stops with "Refusing to load form
 ### With npm
 
 ```sh
-npm i -g dexterm
+npm i -g dexterm-cli
 dexterm doctor
 ```
 
-Published from this repository's release workflow with [build provenance](https://docs.npmjs.com/generating-provenance-statements); `npm audit signatures` verifies it against this repo and tag. The npm package ships compiled JavaScript, so it needs no build step.
+The package is called `dexterm-cli` because npm refuses the name `dexterm` as too similar to `xterm`; the command it installs is still `dexterm`. Version 0.1.1 was published by hand, so it has no build provenance yet; the GitHub release does. The npm package ships compiled JavaScript, so it needs no build step.
 
 ### Optional pieces
 
