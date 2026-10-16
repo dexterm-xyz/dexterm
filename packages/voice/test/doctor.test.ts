@@ -17,12 +17,78 @@ test('a healthy Mac with Apple Speech + say passes, no fix lines', () => {
   for (const c of cs) if (c.status === 'pass') assert.equal(c.fix, undefined);
 });
 
-test('non-darwin: one warn that voice is macOS-only, and the app still runs', () => {
-  const cs = voiceDoctor(deps({ platform: 'linux' }));
-  assert.equal(cs.length, 1);
-  assert.equal(cs[0].status, 'warn');
-  assert.match(cs[0].detail, /macOS-only/);
-  assert.ok(cs[0].fix);
+test('task-1393: a resolved voice shows a "Default voice" pass line with the reason', () => {
+  const cs = voiceDoctor(deps({ resolvedVoice: 'Daniel', resolvedVoiceReason: 'Daniel — deep British male (dexterm default)' }));
+  const dv = find(cs, /Default voice/)!;
+  assert.equal(dv.status, 'pass');
+  assert.match(dv.detail, /deep British male/);
+});
+
+test('task-1393: no safe voice (resolvedVoice null) warns with an install fix, never the system voice', () => {
+  const cs = voiceDoctor(deps({ resolvedVoice: null, resolvedVoiceReason: 'no safe voice installed — spoken replies are off (text still works)' }));
+  const dv = find(cs, /Default voice/)!;
+  assert.equal(dv.status, 'warn');
+  assert.match(dv.fix ?? '', /Manage Voices|System Settings/);
+  assert.ok(!cs.some((c) => c.status === 'fail'));
+});
+
+test('task-1393 Part 2 — Linux with espeak-ng + whisper: both pass, never a fail', () => {
+  const cs = voiceDoctor(deps({ platform: 'linux', espeakPresent: true, resolvedStt: 'whisper', whisperBinPresent: true, whisperModelPresent: true, micToolPresent: true }));
+  assert.equal(find(cs, /Voice out \(espeak/)?.status, 'pass');
+  assert.equal(find(cs, /Voice in \(whisper/)?.status, 'pass');
+  assert.ok(!cs.some((c) => c.status === 'fail'));
+});
+
+test('task-1393 Part 2 — Linux with nothing installed: warns with apt fixes, app still runs as text', () => {
+  const cs = voiceDoctor(deps({ platform: 'linux', espeakPresent: false, resolvedStt: null, whisperBinPresent: false, whisperModelPresent: false, micToolPresent: false }));
+  assert.equal(find(cs, /Voice out/)?.status, 'warn');
+  assert.match(find(cs, /Voice out/)?.fix ?? '', /espeak-ng/);
+  assert.equal(find(cs, /Voice in/)?.status, 'warn');
+  assert.ok(!cs.some((c) => c.status === 'fail'), 'voice missing must never fail the doctor');
+});
+
+test('task-1408 — Linux with Piper ready: a Piper pass line names the player; never a fail', () => {
+  const cs = voiceDoctor(deps({ platform: 'linux', piperPresent: true, piperVoicePresent: true, playerName: 'aplay', espeakPresent: true, resolvedStt: 'whisper', whisperBinPresent: true, whisperModelPresent: true, micToolPresent: true }));
+  const out = find(cs, /Voice out \(Piper\)/)!;
+  assert.equal(out.status, 'pass');
+  assert.match(out.detail, /neural/);
+  assert.match(out.detail, /aplay/);
+  assert.ok(!cs.some((c) => c.status === 'fail'));
+});
+
+test('task-1408 — Linux espeak present, Piper not: espeak passes with an upgrade hint, never says `apt install piper`', () => {
+  const cs = voiceDoctor(deps({ platform: 'linux', espeakPresent: true, piperPresent: false, piperVoicePresent: false, playerName: null, resolvedStt: 'whisper', whisperBinPresent: true, whisperModelPresent: true, micToolPresent: true }));
+  const out = find(cs, /Voice out \(espeak/)!;
+  assert.equal(out.status, 'pass');
+  assert.match(out.detail, /Piper/);
+  assert.match(out.detail, /dexterm voice download piper-voice/);
+  // `apt install piper` may appear ONLY as an explicit "NOT …" warning, never as a recommendation.
+  const recommendsApt = (s: string) => /(?<!NOT `)apt install piper/.test(s);
+  for (const c of cs) assert.ok(!recommendsApt(c.detail) && !recommendsApt(c.fix ?? ''), 'never recommend the unrelated apt piper');
+  assert.match(out.detail, /NOT `apt install piper`/);
+});
+
+test('task-1408 — Linux no engine: the fix warns AGAINST `apt install piper` and points to the prebuilt release', () => {
+  const cs = voiceDoctor(deps({ platform: 'linux', espeakPresent: false, piperPresent: false, piperVoicePresent: false, playerName: null, resolvedStt: null, whisperBinPresent: false, whisperModelPresent: false, micToolPresent: false }));
+  const fix = find(cs, /Voice out/)?.fix ?? '';
+  assert.match(fix, /Do NOT `apt install piper`/);
+  assert.match(fix, /rhasspy\/piper\/releases/);
+  assert.match(fix, /dexterm voice download piper-voice/);
+});
+
+test('task-1408 — Linux voice-in fix offers the checksum-verified download and the prebuilt whisper release (not Debian)', () => {
+  const cs = voiceDoctor(deps({ platform: 'linux', espeakPresent: true, resolvedStt: null, whisperBinPresent: false, whisperModelPresent: false, micToolPresent: false }));
+  const fix = find(cs, /Voice in/)?.fix ?? '';
+  assert.match(fix, /dexterm voice download whisper/);
+  assert.match(fix, /not in Debian/);
+  assert.match(fix, /whisper\.cpp\/releases/);
+});
+
+test('task-1393 Part 2 — Windows states espeak-ng is the path and SAPI is not wired (honest)', () => {
+  const cs = voiceDoctor(deps({ platform: 'win32', espeakPresent: false, resolvedStt: null }));
+  const w = find(cs, /Windows voice/)!;
+  assert.equal(w.status, 'warn');
+  assert.match(w.detail, /SAPI is not wired/);
 });
 
 test('no say: spoken replies warn with a reinstall fix, voice-in can still pass', () => {

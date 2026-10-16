@@ -35,6 +35,11 @@ export interface AgentSession {
   client: string;
   /** Live stream topics this session subscribed to. */
   topics: Set<string>;
+  /**
+   * Optional per-agent MANDATE (task-1405): when set, this session may call ONLY these tools (plus
+   * `agent_whoami`). It comes from the registry at hello, never the request; it only narrows the tier.
+   */
+  scope?: ReadonlySet<string> | null;
 }
 
 export interface GateLimits {
@@ -61,7 +66,7 @@ export const FLOOD_WINDOW_MS = 60_000;
 export const FLOOD_PAUSE_MS = 5 * 60_000;
 
 export type RefusalCode =
-  | 'session-closed' | 'agent-paused' | 'never' | 'unknown-tool' | 'tier' | 'spoof' | 'bad-args' | 'too-large'
+  | 'session-closed' | 'agent-paused' | 'never' | 'unknown-tool' | 'tier' | 'mandate' | 'spoof' | 'bad-args' | 'too-large'
   | 'rate-limited' | 'quota' | 'idempotency-key' | 'flood-paused';
 
 export type GateResult = { ok: true; tool: string; tier: Tier } | { ok: false; code: RefusalCode; error: string };
@@ -146,6 +151,8 @@ export class AgentGate {
     const need = tierFor(name);
     if (need === null) return refuse('unknown-tool', `unknown tool ${JSON.stringify(String(name).slice(0, 40))}`);
     if (!tierAtLeast(session.tier, need)) return refuse('tier', `${name} needs tier ${need}; this agent is ${session.tier}`);
+    // Per-agent mandate (task-1405): a scoped agent may call only its listed tools (+ agent_whoami). Narrow-only.
+    if (session.scope && name !== 'agent_whoami' && !session.scope.has(name)) return refuse('mandate', `${name} is outside this agent's mandate (allowed: ${[...session.scope].join(', ')})`);
     // spoofing: identity / capability fields in the arguments are never honoured
     const args = req.args === undefined ? {} : req.args;
     if (typeof args === 'object' && args !== null && !Array.isArray(args)) {

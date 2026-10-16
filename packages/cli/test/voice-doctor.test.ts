@@ -27,13 +27,13 @@ test('a healthy Mac voiceProbe adds passing voice checks and keeps the doctor ok
 test('no voice support anywhere is warn-only — the doctor still reports ok', async () => {
   const r = await runDoctor(deps({
     platform: 'linux',
-    voiceProbe: async () => ({ platform: 'linux', sayAvailable: false, voiceCount: 0, swiftcPresent: false, whisperBinPresent: false, whisperModelPresent: false, micToolPresent: false, resolvedStt: null }),
+    voiceProbe: async () => ({ platform: 'linux', sayAvailable: false, voiceCount: 0, swiftcPresent: false, whisperBinPresent: false, whisperModelPresent: false, micToolPresent: false, resolvedStt: null, espeakPresent: false }),
   }));
   assert.ok(r.ok, 'voice missing must never fail the doctor');
-  const voice = r.checks.find((c) => /Voice mode/.test(c.name));
-  assert.ok(voice && voice.status === 'warn');
-  // and it renders with a fix line
-  assert.match(renderDoctor(r), /macOS-only/);
+  const out = r.checks.find((c) => /Voice out/.test(c.name));
+  assert.ok(out && out.status === 'warn');
+  // and it renders with an espeak-ng install fix line
+  assert.match(renderDoctor(r), /espeak-ng/);
 });
 
 test('a voiceProbe that throws does not break the doctor', async () => {

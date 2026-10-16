@@ -54,6 +54,34 @@ test('fetch_page/check_domain/check_github reject non-http input without touchin
   }
 });
 
+// --- larp_check (task-1405): one-call LARP vet composing the LARP tools -------------------------
+test('larp_check is a registered read-only tool and validates its input', async () => {
+  const names = TOOLS.map((t) => String(t.name));
+  assert.ok(names.includes('larp_check'), 'larp_check registered');
+  const { READ_ONLY_TOOLS } = await import('../src/index.ts');
+  assert.ok((READ_ONLY_TOOLS as readonly string[]).includes('larp_check'), 'larp_check is read-only (not a UI action)');
+  const tools = new McpTools({} as never, () => ({}));
+  assert.match((await tools.call('larp_check', {})).error as string, /needs a mint, a symbol, or a url/);
+  assert.match((await tools.call('larp_check', { url: 'file:///etc/passwd' })).error as string, /http\(s\)/);
+});
+
+test('larp_check flags a coin with no advertised website/repo, offline', async () => {
+  const MINT = 'So11111111111111111111111111111111111111112';
+  // A token that advertises no links at all → larp_check makes NO network call (website is null).
+  const data = {
+    store: { enrich: async () => ({ rows: [{ mint: MINT, token: { symbol: 'NOLINK', name: 'No Links', launchpad: 'raydium', socials: { x: null, tg: null, web: null } } }], errors: [] }) },
+    dexscreener: { tokensRaw: async () => ({ pairs: [], fetchedAt: 0, latencyMs: 0 }) },
+    jupiter: { search: async () => [] },
+  };
+  const tools = new McpTools(data as never, () => ({}));
+  const r = await tools.call('larp_check', { mint: MINT });
+  assert.equal(r.website, null);
+  const flags = r.flags as string[];
+  assert.ok(flags.includes('no website advertised'), 'flags the missing website');
+  assert.ok(flags.includes('no GitHub repo advertised'), 'flags the missing repo');
+  assert.match(r.note as string, /not a verdict/i);
+});
+
 test('get_links classifies + firewalls advertised links and flags mismatch', async () => {
   const MINT = 'So11111111111111111111111111111111111111112';
   const data = {
@@ -83,6 +111,13 @@ test('get_links classifies + firewalls advertised links and flags mismatch', asy
   const mismatch = r.mismatch as string[];
   assert.ok(mismatch.some((m) => /website hosts/.test(m)), 'two website hosts flagged');
   assert.ok(mismatch.some((m) => /X accounts/.test(m)), 'two X accounts flagged');
+  // task-1401: the backtested links-only baseline, from the store's primary merge (Jupiter X first, DS site + TG)
+  const b = r.baseline as { rubric: string; grade: string; signals: string[]; measured: string; caveat: string };
+  assert.equal(b.rubric, 'larp-links-v1');
+  assert.equal(b.grade, 'EARLY_BUT_REAL', 'own domain naming the coin, an X account, a Telegram');
+  assert.deepEqual(b.signals, []);
+  assert.match(b.measured, /held-out test split .* went bad/);
+  assert.match(b.caveat, /risk flag, never a verdict/);
 });
 
 // End-to-end prompt-injection PAGE fixture (task-1315). fetch_page calls safeFetch(url) with no

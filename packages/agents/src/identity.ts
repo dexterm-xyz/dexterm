@@ -11,7 +11,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { isTier, type Tier } from './tiers.ts';
+import { isTier, TOOL_TIERS, type Tier } from './tiers.ts';
 
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,23}$/;
 export const TOKEN_PREFIX = 'dxa_';
@@ -41,8 +41,29 @@ export interface AgentRecord {
   /** Set by a rotate; the previous token stops working immediately. */
   rotatedAt: number | null;
   limits?: AgentLimits;
+  /**
+   * Optional per-agent MANDATE (task-1405): an allow-list of tool names this agent may call, on top of its
+   * tier. When set, the agent sees and may call ONLY these tools (plus `agent_whoami` to introspect); it can
+   * only NARROW the tier, never widen it, and never reaches a tool outside TOOL_TIERS (the never-list still
+   * runs first). Absent/empty = the full tier surface.
+   */
+  scope?: string[];
   /** Free text from the user (`--note`), shown in the roster. Never from the agent. */
   note?: string;
+}
+
+/** Validate + normalise a mandate scope: known tool names only, deduped; agent_whoami is implicit. Throws on an unknown tool. */
+export function sanitizeScope(tools: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tools) {
+    const t = String(raw).trim();
+    if (!t || t === 'agent_whoami') continue;
+    if (!Object.hasOwn(TOOL_TIERS, t)) throw new Error(`unknown tool "${t.slice(0, 40)}" — a mandate may only list agent tools (${Object.keys(TOOL_TIERS).join(', ')})`);
+    if (!seen.has(t)) { seen.add(t); out.push(t); }
+  }
+  if (!out.length) throw new Error('a mandate needs at least one tool (use --clear to remove a mandate)');
+  return out;
 }
 
 interface RegistryFile { version: 1; agents: AgentRecord[] }
@@ -90,7 +111,13 @@ export class AgentRegistry {
     const list = Array.isArray(f?.agents) ? f.agents : [];
     // Defensive re-validation: a hand-edited file cannot grant a tier outside the three or a bad name.
     this.agents = list.filter((a): a is AgentRecord => !!a && typeof a === 'object' && typeof a.id === 'string' && typeof a.name === 'string' && AGENT_NAME_RE.test(a.name)
-      && isTier(a.tier) && typeof a.tokenHash === 'string' && typeof a.salt === 'string').map((a) => ({ ...a, paused: a.paused === true, rotatedAt: typeof a.rotatedAt === 'number' ? a.rotatedAt : null }));
+      && isTier(a.tier) && typeof a.tokenHash === 'string' && typeof a.salt === 'string').map((a) => {
+        // A hand-edited scope is re-validated: keep only known tool names; an empty result drops the mandate.
+        const scope = Array.isArray(a.scope) ? a.scope.filter((t): t is string => typeof t === 'string' && Object.hasOwn(TOOL_TIERS, t)) : undefined;
+        const rec: AgentRecord = { ...a, paused: a.paused === true, rotatedAt: typeof a.rotatedAt === 'number' ? a.rotatedAt : null };
+        if (scope && scope.length) rec.scope = [...new Set(scope)]; else delete rec.scope;
+        return rec;
+      });
   }
 
   private save(): void {
@@ -163,6 +190,14 @@ export class AgentRegistry {
     const a = this.get(name);
     if (!a) throw new Error(`no agent "${name}"`);
     a.limits = sanitizeLimits(limits);
+    this.save();
+  }
+
+  /** Set (or clear, with null) the per-agent tool mandate. Throws on an unknown tool name. */
+  setScope(name: string, tools: string[] | null): void {
+    const a = this.get(name);
+    if (!a) throw new Error(`no agent "${name}"`);
+    if (tools === null) delete a.scope; else a.scope = sanitizeScope(tools);
     this.save();
   }
 

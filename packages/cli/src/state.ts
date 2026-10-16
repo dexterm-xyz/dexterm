@@ -100,6 +100,8 @@ export interface AppState {
   larpByMint?: Map<string, { verdict: string; confidence: number | null; at: number }>;
   /** A contract address the loop should copy to the OS clipboard and confirm (task-1311, QA B5). */
   pendingCopy?: string | null;
+  /** task-1401: `E` asked for an export of the current view; the loop renders + writes it (local files only). */
+  pendingExport?: boolean;
   /**
    * A website/social URL the loop should open in the OS browser (task-1315, LARP detector). Set by the
    * token screen's W/X/T keys; the loop re-validates the scheme (http/https only) before launching
@@ -113,6 +115,8 @@ export interface AppState {
    * the notice) instead of being wiped by the next feed redraw.
    */
   pendingToast?: string | null;
+  /** task-1397: "dexterm X is available" — shown once as a toast after the boot (update.ts startupCheck); null = none. */
+  updateNotice?: string | null;
   /**
    * The mint the cursor is on, on the New pairs screen (task-1311, QA M8). New creates insert at the
    * top of the list, so a row index drifts to a different coin; the highlight (and ⏎) follow this mint

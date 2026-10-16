@@ -35,7 +35,9 @@ const DRIVE = existsSync(DRIVE_VENDORED) ? DRIVE_VENDORED : DRIVE_EVIDENCE;
 const hasDriver = (() => { try { execFileSync('python3', ['-c', 'import pty'], { stdio: 'ignore' }); return existsSync(DRIVE); } catch { return false; } })();
 const skip = hasDriver ? false : 'python3 pty + QA drive.py not present (archive copy)';
 
-/** Run the real binary under the QA pty driver with a key script; return the captured frames + meta. */
+/** Run the real binary under the QA pty driver with a key script; return the captured frames + meta.
+ *  Every script opens with `WAIT:WELCOME_TO_DEXTERM` (task-1410): under parallel-suite load the first key
+ *  must not race the app's first paint; the driver then shifts the rest of the script by the wait. */
 function drive(name: string, keys: string, extraArgs: string[] = [], extraEnv: string[] = []): { frames: string; meta: string; snap: (label: string) => string } {
   const out = mkdtempSync(join(tmpdir(), `qa1311-${name}-`));
   const home = mkdtempSync(join(tmpdir(), `qa1311-home-${name}-`));
@@ -44,7 +46,7 @@ function drive(name: string, keys: string, extraArgs: string[] = [], extraEnv: s
     '--env', 'DEXTERM_OFFLINE=1', '--env', `DEXTERM_HOME=${home}`, '--env', 'COLORTERM=truecolor',
     ...extraEnv.flatMap((e) => ['--env', e]),
     '--keys', keys, '--', 'node', BIN, '--fixtures', '--no-boot', '--tz', 'UTC', ...extraArgs];
-  const r = spawnSync('python3', args, { encoding: 'utf8', timeout: 60_000 });
+  const r = spawnSync('python3', args, { encoding: 'utf8', timeout: 120_000 });
   assert.equal(r.status, 0, `pty driver failed: ${r.stderr}`);
   const frames = readFileSync(join(out, `${name}.frames.txt`), 'utf8');
   const meta = readFileSync(join(out, `${name}.meta.txt`), 'utf8');
@@ -94,7 +96,7 @@ test('QA B1: the Analyst tab is not a trap — number keys are not typed into th
   // Two WAITs: the first lands us on the analyst tab (header), the second waits for its footer to finish
   // painting (a single frame flush can arrive split across reads, so the header can be present a beat
   // before the `q  quit` footer) — both are asserted below, so the SNAP must hold for both.
-  const r = drive('b1', '0.6:SPACE,1.3:4,1.4:WAIT:✦_ANALYST,1.5:WAIT:q__quit,1.9:SNAP:analyst,2.4:q,4.0:SNAP:after-q');
+  const r = drive('b1', '0.3:WAIT:WELCOME_TO_DEXTERM@20,0.6:SPACE,1.3:4,1.4:WAIT:✦_ANALYST,1.5:WAIT:q__quit,1.9:SNAP:analyst,2.4:q,4.0:SNAP:after-q');
   assert.match(r.snap('analyst'), /✦ ANALYST/, 'the analyst tab opened');
   assert.match(r.snap('analyst'), /q {2}quit/, 'the unfocused tab offers `q quit` in the footer (q is a hotkey, not input)');
   assert.match(r.meta, /exit: 0/, 'q quit cleanly from the analyst tab (q was not typed into the box)');
@@ -106,7 +108,7 @@ test('QA B1: the Analyst tab is not a trap — number keys are not typed into th
 test('QA B3: typing a question on the Analyst tab fires no hotkeys — `a` does not launch a run', { skip }, () => {
   // repro: launch · space · 4 (analyst) · i (focus the input) · type "what is a rug" · snapshot.
   // The `a` in "a rug" must be typed, not launch a trench-scan; the whole question lands in the box.
-  const r = drive('b3', '0.6:SPACE,1.3:4,1.4:WAIT:✦_ANALYST,1.9:i,2.3:TYPE:what_is_a_rug,3.2:WAIT:what_is_a_rug,3.3:SNAP:typed,3.6:ESC,3.9:ESC,4.2:q');
+  const r = drive('b3', '0.3:WAIT:WELCOME_TO_DEXTERM@20,0.6:SPACE,1.3:4,1.4:WAIT:✦_ANALYST,1.9:i,2.3:TYPE:what_is_a_rug,3.2:WAIT:what_is_a_rug,3.3:SNAP:typed,3.6:ESC,3.9:ESC,4.2:q');
   assert.match(r.snap('typed'), /what is a rug/, 'the typed question (incl. the `a`) lands in the input, no hotkey fired');
   assert.match(r.meta, /exit: 0/, 'esc blurs then backs out and q quits');
 });
@@ -118,7 +120,7 @@ test('QA DEFECT 1: the FIRST free-text question on a fresh session spawns claude
   // turn that never began — 0 claude spawned, a permanent "queued: … will ask" banner. The fix must
   // SEND it: assert a real spawn happened AND the answer resolved (no stuck queue banner).
   const fake = makeFakeClaude('d1');
-  const r = drive('d1', '0.6:SPACE,1.3:4,1.4:WAIT:✦_ANALYST,1.9:i,2.3:TYPE:is_this_safe,3.2:ENTER,3.3:WAIT:RUGCHECKANSWER42@12,5.6:SNAP:answered,6.0:ESC,6.4:q',
+  const r = drive('d1', '0.3:WAIT:WELCOME_TO_DEXTERM@20,0.6:SPACE,1.3:4,1.4:WAIT:✦_ANALYST,1.9:i,2.3:TYPE:is_this_safe,3.2:ENTER,3.3:WAIT:RUGCHECKANSWER42@12,5.6:SNAP:answered,6.0:ESC,6.4:q',
     [], [fake.envPath, `DEXTERM_FAKE_LOG=${fake.logPath}`]);
   assert.ok(fake.sawSpawn(), 'the first question actually spawned claude (it was sent, not left queued)');
   const answered = r.snap('answered');
@@ -134,7 +136,7 @@ test('QA DEFECT 2: `4` on the welcome card dismisses it AND switches to the Anal
   // typed text fired `analyst.toggle` → a real paid rug-check run. The fix makes `4` dismiss AND
   // navigate in one keypress, landing on the Analyst tab where `a` only focuses the input.
   const fake = makeFakeClaude('d2');
-  const r = drive('d2', '0.8:4,0.9:WAIT:✦_ANALYST,1.4:SNAP:analyst,1.8:TYPE:what_is_a_rug,3.4:SNAP:typed,3.8:ESC,4.1:ESC,4.4:q',
+  const r = drive('d2', '0.3:WAIT:WELCOME_TO_DEXTERM@20,0.8:4,0.9:WAIT:✦_ANALYST,1.4:SNAP:analyst,1.8:TYPE:what_is_a_rug,3.4:SNAP:typed,3.8:ESC,4.1:ESC,4.4:q',
     [], [fake.envPath, `DEXTERM_FAKE_LOG=${fake.logPath}`]);
   assert.match(r.snap('analyst'), /✦ ANALYST/, '`4` on the welcome card switched to the Analyst tab in the same keypress');
   assert.ok(!fake.sawSpawn(), 'navigating + typing never launched a paid run — `a` on the analyst tab only focuses the input');

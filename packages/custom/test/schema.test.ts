@@ -71,6 +71,17 @@ test('policy: a non-user actor is refused on money/secret paths and money-shaped
   assert.ok(policyCheck(Array.from({ length: 21 }, () => ({ op: 'test', path: '/version', value: 3 })), 'user').some((e) => /more than 20/.test(e.msg)));
 });
 
+test('task-1393: the voice section validates, rejects bad shapes, and is user-only for models', () => {
+  // A valid voice preference passes.
+  assert.deepEqual(validateConfig({ ...defaultConfig(), voice: { name: 'Daniel', rate: 190 } }), []);
+  // Wrong types / out-of-range / unknown keys are refused.
+  assert.ok(validateConfig({ ...defaultConfig(), voice: { rate: 5000 } }).some((e) => e.path === '/voice/rate'));
+  assert.ok(validateConfig({ ...defaultConfig(), voice: { engine: 'x' } }).some((e) => e.path === '/voice/engine' && e.msg === 'unknown key'));
+  // Only the user may set the voice; a model actor (jarvis) is refused.
+  assert.ok(policyCheck([{ op: 'add', path: '/voice/name', value: 'Daniel' }], 'jarvis').some((e) => /refused/.test(e.msg)));
+  assert.deepEqual(policyCheck([{ op: 'add', path: '/voice/name', value: 'Daniel' }], 'user'), []);
+});
+
 test('migration v1 → v3 moves the key OUT of the config, converts alerts into rules and keeps unknown sections', () => {
   const v1 = { theme: 'ember', keys: { helius: 'hlx-secret-123' }, alerts: [{ kind: 'price', op: '>', value: 1, mint: 'So11111111111111111111111111111111111111112' }], custom: { a: 1 } };
   const m = migrate(v1);

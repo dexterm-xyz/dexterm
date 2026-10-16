@@ -61,7 +61,7 @@ npm i -g dexterm-cli
 dexterm doctor
 ```
 
-The package is called `dexterm-cli` because npm refuses the name `dexterm` as too similar to `xterm`; the command it installs is still `dexterm`. Version 0.1.1 was published by hand, so it has no build provenance yet; the GitHub release does. The npm package ships compiled JavaScript, so it needs no build step.
+The package is called `dexterm-cli` because npm refuses the name `dexterm` as too similar to `xterm`; the command it installs is still `dexterm`. The npm package ships compiled JavaScript, so it needs no build step. Every GitHub release also carries a Sigstore build-provenance attestation and `SHA256SUMS` you can verify (see [docs/verify-your-download.md](docs/verify-your-download.md)).
 
 ### Optional pieces
 

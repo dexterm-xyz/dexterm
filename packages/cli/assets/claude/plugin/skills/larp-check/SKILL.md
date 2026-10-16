@@ -1,7 +1,7 @@
 ---
 name: larp-check
 description: Vet the website and socials behind a Solana token to judge whether there is a real product or it is a LARP (claims a product that does not exist). Use when the user asks "is this real", "larp check", "is the product real", "check the website/socials".
-version: 0.1.0
+version: 0.2.0
 argument-hint: <mint or symbol>
 kind: skill
 output_schema: schemas/larp.schema.json
@@ -30,7 +30,7 @@ You are judging one thing: **does a real product exist behind this coin, or is t
 2. `get_token` with `{mint}` for a base58 address (32–44 chars), else `{symbol}`.
    - If the result has `candidates`: stop. Verdict `AMBIGUOUS`, `mint` = "", list the candidates, ask the user to pick a mint. Analyse none of them.
    - If the result has `error`: stop with `UNVERIFIABLE` and say why.
-3. `get_links` `{mint}` — the website and socials the coin advertises. Note any `mismatch`.
+3. `get_links` `{mint}` — the website and socials the coin advertises. Note any `mismatch` and read `baseline` (below).
 4. `fetch_page` `{url, symbol, name}` on the primary `website` (pass the token symbol and name so the mention check runs). Read `signals` and the firewalled `excerpt`.
    - Follow at most two more `fetch_page` calls: a `docs`/`whitepaper` link and an in-site app/demo link if the page advertises one. Do not crawl.
 5. `check_domain` `{url}` on the primary website.
@@ -44,6 +44,14 @@ Do not call X/Twitter or Telegram through `fetch_page` expecting profile data: t
 - **Real-product signals:** the site loads real content that mentions the token; a reachable live app/demo; real docs/whitepaper; a GitHub repo with recent pushes and history; a domain older than the token with a named (non-privacy) registrant; links that match across sources and resolve.
 - **LARP signals:** a near-empty or default/parked/site-builder placeholder page; the site never mentions the token symbol or name; broken/unreachable advertised links; a domain registered the same day as the token behind privacy; a GitHub that is empty, archived, a fork, or has no commits since launch; claims of an app with no reachable app; advertised links that mismatch across sources.
 - **Drainer/scam signals:** `drainerFlags` set, EVM wallet calls on a Solana token, wallet-connect as the only content. These make it worse than a LARP — flag `wallet_drainer_risk`.
+
+## The links-only baseline (backtested, task-1401)
+
+`get_links.baseline` grades the three primary links with a rubric tuned on recorded history (`grade`, `signals`, and the held-out rate in `measured`). It is a weak prior, not evidence about the product:
+- On held-out coins its `LARP` grade was rare (14 of 328) and not reliably better than average; its `EARLY_BUT_REAL` coins went bad less often than average (10 % against 19 %). Never return `LARP` from the baseline alone: a `LARP` verdict needs a fetched-page, domain or GitHub fact that contradicts a claim. If nothing could be fetched, the verdict is `UNVERIFIABLE`.
+- The link signals that went with bad outcomes in the backtest: an X link to a single post or a community instead of an account, no X at all, no Telegram. A social or launchpad page posted as the website did not, so fetch it before reading anything into it.
+- No links at all is `UNVERIFIABLE`, and say plainly it is the riskier case: coins with no links went bad more often than average in the backtest.
+- When the verdict rests mostly on links (pages blocked or thin), keep `confidence` at 0.6 or lower.
 
 ## Grounding rules (hard)
 
@@ -64,4 +72,4 @@ Do not call X/Twitter or Telegram through `fetch_page` expecting profile data: t
 
 ## Output
 
-Return only the JSON object required by the schema (`skill: "larp-check"`, `skill_version: "0.1.0"`). Fill `claims[]`, `facts[]` and `missing_data[]` completely. `summary` is two to four short lines for a 40-column panel: the verdict in plain words, the one or two strongest pieces of evidence (each with its source), and what was missing only if it matters. Do not repeat the confidence number (the app renders it), and add no disclaimer or boilerplate line.
+Return only the JSON object required by the schema (`skill: "larp-check"`, `skill_version: "0.2.0"`). Fill `claims[]`, `facts[]` and `missing_data[]` completely. `summary` is two to four short lines for a 40-column panel: the verdict in plain words, the one or two strongest pieces of evidence (each with its source), and what was missing only if it matters. Do not repeat the confidence number (the app renders it), and add no disclaimer or boilerplate line.

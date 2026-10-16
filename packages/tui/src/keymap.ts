@@ -235,7 +235,10 @@ export type AppAction =
   // task-1388 GO-TO prompt: `g` on the list and token screens opens a one-line input; paste or type a base58
   // mint (or a dexscreener/pump.fun/solscan URL) and ⏎ opens that coin's live token screen (read-only). Esc
   // cancels, bad input shows a notice. Per-screen so the global `g` (move to top) still has `home`.
-  | 'goto.open';
+  | 'goto.open'
+  // task-1401 EXPORT / SHARE: `E` (global, unused before) renders the current view to a PNG + a text report in
+  // ~/.dexterm/exports with its data ages and the LIVE / SAMPLE / REPLAY label. Local files only; nothing uploads.
+  | 'export.view';
 
 /** The prototype's key table (README of dexterm/prototype) plus the SPEC §4.1 screener keys. */
 export const DEFAULT_KEYMAP = new Keymap<AppAction>([
@@ -273,6 +276,8 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['p'], action: 'pause.toggle', label: 'pause' },
   // task-1366: `$` (unbound on every screen) toggles price ⇄ market cap on every screen + both charts; persisted.
   { keys: ['$'], action: 'display.priceMode', label: 'price ⇄ mcap' },
+  // task-1401: `E` exports the current view (PNG + text report, local only). Free on every screen.
+  { keys: ['E'], action: 'export.view', label: 'export PNG + report' },
   { keys: ['/'], action: 'filter.edit', label: 'filter', screen: 'screener' },
   { keys: ['\\'], action: 'filter.clear', label: 'clear filter', screen: 'screener' },
   { keys: ['s'], action: 'sort.menu', label: 'sort', screen: 'screener' },

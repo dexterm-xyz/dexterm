@@ -117,6 +117,24 @@ export class FixtureExecutor implements AgentExecutor {
         const [token, rug, trades] = await Promise.all([this.exec(session, 'get_token', { mint: r.mint }), this.exec(session, 'rugcheck', { mint: r.mint }), this.exec(session, 'get_trades', { mint: r.mint, window: 'h1' })]);
         return { mint: r.mint, interval: (args.interval as string) ?? '1h', token, rugcheck: rug, trades, availability: { market: true, security: true, tape: true, canVerdict: true } };
       }
+      case 'analyze_token': {
+        const r = byMint(args.mint) ?? FIXTURE_ROWS.find((x) => x.symbol.toUpperCase() === String(args.symbol ?? '').replace(/^\$/, '').toUpperCase());
+        if (!r) return { error: 'unknown token (fixtures)' };
+        // A deterministic verdict from the fixture row's audit (mirrors the real pack's rule flags).
+        const flags: string[] = [];
+        if (r.freeze) flags.push('freeze_authority');
+        if (r.mintAuth) flags.push('mint_authority');
+        if (r.lpLockedPct < 100) flags.push('lp_unlocked');
+        if (r.top10Pct > 40) flags.push('top10_concentrated');
+        if (r.organicScore < 40) flags.push('organic_below_40');
+        if (r.ageSec < 600) flags.push('under_10_minutes');
+        const verdict = r.rugScore >= 60 ? 'AVOID' : r.rugScore >= 25 ? 'SPECULATIVE' : 'WATCH';
+        return { pack: 'token-dossier', pack_version: 'fixtures', model_output: false, mint: r.mint, symbol: fw(r.symbol), deterministic_verdict: verdict, rug_probability: r.rugScore / 100, rug_model: 'H1-v0.1', flags, injection_suspected: false, note: 'Deterministic code stage (no model) on fixtures.', source: 'fixtures' };
+      }
+      case 'narrative_board':
+        return { pack: 'narrative-board', model_output: false, narratives: [], note: 'No recorded history on fixtures (the board needs a running recorder).' };
+      case 'rug_backtest':
+        return { pack: 'rug-backtest', model_output: false, note: 'No recorded history on fixtures (a backtest needs recorded t0 snapshots with labelled outcomes).' };
       case 'open_token': case 'show_in_screener': case 'switch_feed':
         this.navigation.push({ agent: session.agentName, tool, args });
         return { ok: true, note: 'The app applies this and shows "<agent> did X". You cannot confirm, size, or send a trade.' };

@@ -26,6 +26,8 @@ export interface RuleRow {
   holders?: number | null; org?: number | null; top10?: number | null; dev?: number | null;
   lpLocked?: number | null; bundled?: number | null; snipers?: number | null;
   cluster?: number | null;
+  /** LARP-detector grade (task-1398): higher = more real (REAL_PRODUCT 3 · EARLY_BUT_REAL 2 · UNVERIFIABLE 1 · LARP 0); null = no verdict yet. `larp.delta` detects a grade change. */
+  larp?: number | null;
   ageMin?: number | null;
   chg?: { m5?: number | null; h1?: number | null; h6?: number | null; h24?: number | null } | null;
   buys?: number | null; sells?: number | null; bonding?: number | null;
@@ -41,7 +43,7 @@ export const FIELDS: Record<string, FieldFn> = {
   vol5m: (r) => r.vol5m, vol1h: (r) => r.vol1h, vol24: (r) => r.vol24,
   holders: (r) => r.holders, org: (r) => r.org, top10: (r) => r.top10, dev: (r) => r.dev,
   lplocked: (r) => r.lpLocked, bundled: (r) => r.bundled, snipers: (r) => r.snipers,
-  cluster: (r) => r.cluster,
+  cluster: (r) => r.cluster, larp: (r) => r.larp,
   age: (r) => r.ageMin, m5: (r) => r.chg?.m5, h1: (r) => r.chg?.h1, h6: (r) => r.chg?.h6, h24: (r) => r.chg?.h24,
   buys: (r) => r.buys, sells: (r) => r.sells, bonding: (r) => r.bonding,
 };

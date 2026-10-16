@@ -13,6 +13,13 @@ import type { RawTx, RawTokenBalance } from './rules.ts';
 
 export const HISTORY_METHODS: ReadonlySet<string> = new Set(['getTransactionsForAddress']);
 
+/**
+ * Max transaction version we declare support for. Legacy and v0 are all Solana ships today, but Helius's
+ * enhanced history has returned a v1 tx in live launch windows (task-1394). We only read static account keys
+ * and per-balance owners, which are version-independent, so cap high rather than re-break on the next version.
+ */
+export const MAX_TX_VERSION = 128;
+
 export interface HistoryPage { data: RawTx[]; paginationToken: string | null; fetchedAt: number }
 
 export interface HistoryOptions {
@@ -47,7 +54,12 @@ export class HeliusHistory {
   async transactions(address: string, opts: HistoryOptions): Promise<HistoryPage> {
     const limit = Math.max(1, Math.min(1000, Math.floor(opts.limit)));
     const params: Record<string, unknown> = {
-      transactionDetails: 'full', sortOrder: opts.sortOrder ?? 'asc', limit, encoding: 'jsonParsed', maxSupportedTransactionVersion: 0,
+      // A single versioned tx in the page whose version exceeds this cap fails the WHOLE request with
+      // rpc -32015 ("Transaction version (N) is not supported … maxSupportedTransactionVersion"), which
+      // surfaced as "history failed" on live pump.fun launch windows (task-1394: a v1 tx in the first 100).
+      // The rules only read static accountKeys (signers are always static, never in a lookup table) and the
+      // per-balance owner/mint, so a high cap is safe and forward-compatible across tx versions.
+      transactionDetails: 'full', sortOrder: opts.sortOrder ?? 'asc', limit, encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_TX_VERSION,
       filters: { status: 'succeeded' },
     };
     if (opts.paginationToken) params.paginationToken = opts.paginationToken;

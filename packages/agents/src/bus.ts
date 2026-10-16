@@ -157,7 +157,7 @@ export class AgentBus {
     if (msg.method === 'hello') { void this.onHello(conn, id, params); return; }
     if (msg.method === 'ping') { this.reply(conn, id, { pong: true, t: this.now() }); return; }
     if (!conn.session) { this.fail(conn, id, -32001, 'say hello first (authenticate with your agent name + token)'); return; }
-    if (msg.method === 'tools/list') { this.reply(conn, id, { tools: toolsForTierList(conn.session.tier) }); return; }
+    if (msg.method === 'tools/list') { this.reply(conn, id, { tools: this.visibleToolDefs(conn.session) }); return; }
     if (msg.method === 'tools/call') { void this.onCall(conn, id, params); return; }
     this.fail(conn, id, -32601, `method not found: ${String(msg.method).slice(0, 40)}`);
   }
@@ -185,11 +185,12 @@ export class AgentBus {
     const client = firewallText(params.client, { max: 40 }).text.replace(/\s+/g, ' ').trim() || 'unknown';
     if (rec.paused) this.paused.add(rec.id);
     this.gate.setAgentLimits(rec.id, rec.limits);
-    const session: AgentSession = { id: `sess_${(++this.sessionSeq).toString(36)}`, agentId: rec.id, agentName: rec.name, tier, transport: 'bus', openedAt: this.now(), lastActivity: this.now(), closed: false, closedReason: null, client, topics: new Set() };
+    const scope = rec.scope && rec.scope.length ? new Set(rec.scope) : null;
+    const session: AgentSession = { id: `sess_${(++this.sessionSeq).toString(36)}`, agentId: rec.id, agentName: rec.name, tier, transport: 'bus', openedAt: this.now(), lastActivity: this.now(), closed: false, closedReason: null, client, topics: new Set(), scope };
     conn.session = session;
     if (conn.helloTimer) { clearTimeout(conn.helloTimer); conn.helloTimer = null; }
-    this.audit.append({ agentId: rec.id, agentName: rec.name, session: session.id, kind: 'connect', tool: '-', detail: `tier ${tier} · ${client} · ${conn.ws.remote}`, ok: true });
-    this.reply(conn, id, { protocol: BUS_PROTOCOL, agent: rec.name, tier, grantedTier: rec.tier, tools: toolsForTier(tier), paused: rec.paused });
+    this.audit.append({ agentId: rec.id, agentName: rec.name, session: session.id, kind: 'connect', tool: '-', detail: `tier ${tier}${scope ? ` · mandate[${[...scope].join(',')}]` : ''} · ${client} · ${conn.ws.remote}`, ok: true });
+    this.reply(conn, id, { protocol: BUS_PROTOCOL, agent: rec.name, tier, grantedTier: rec.tier, tools: this.visibleTools(session), mandate: scope ? [...scope] : null, paused: rec.paused });
   }
 
   private async onCall(conn: Conn, id: unknown, params: Record<string, unknown>): Promise<void> {
@@ -228,7 +229,21 @@ export class AgentBus {
   }
 
   private whoami(session: AgentSession): Record<string, unknown> {
-    return { agent: session.agentName, tier: session.tier, tools: toolsForTier(session.tier).map((t) => ({ name: t, tier: agentTool(t)?.tier })), usage: this.gate.usage(session.agentId), subscriptions: [...session.topics], note: 'Your identity and tier come from the server. You cannot change them.' };
+    return { agent: session.agentName, tier: session.tier, mandate: session.scope ? [...session.scope] : null, tools: this.visibleTools(session).map((t) => ({ name: t, tier: agentTool(t)?.tier })), usage: this.gate.usage(session.agentId), subscriptions: [...session.topics], note: 'Your identity, tier and mandate come from the server. You cannot change them.' };
+  }
+
+  /** Tool names this session may call: its tier surface, narrowed by a mandate (+ agent_whoami, always). */
+  private visibleTools(session: AgentSession): string[] {
+    const all = toolsForTier(session.tier);
+    if (!session.scope) return all;
+    return all.filter((t) => t === 'agent_whoami' || session.scope!.has(t));
+  }
+
+  /** The advertised tool DEFINITIONS for tools/list, narrowed the same way. */
+  private visibleToolDefs(session: AgentSession): ReturnType<typeof toolsForTierList> {
+    const defs = toolsForTierList(session.tier);
+    if (!session.scope) return defs;
+    return defs.filter((t) => t.name === 'agent_whoami' || session.scope!.has(t.name));
   }
 
   private subscribe(conn: Conn, args: Record<string, unknown>): Record<string, unknown> {

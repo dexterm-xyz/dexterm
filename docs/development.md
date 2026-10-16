@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at c289d90 and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 2324bb4 and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -126,6 +126,21 @@ Built on the two-stage analysis packs (deterministic ASSEMBLE, 0 tokens; the opt
   machine's app DB, so no accuracy figure exists yet. **Re-measured after the task-1361 recorder fix (same day):**
   the app DB now holds n = 401 observed 1 h outcomes, but still 0 LARP verdicts (a verdict is only written when
   you run the LARP check on a token), so the LARP figure is still n = 0 and `larp-quality` stays in progress.
+- **Skill backtest + tuning** (task-1401): `dexterm backtest --subject skills` replays the parts of the default
+  analyst skills that CAN be replayed on recorded history and reports per-grade precision/recall (95 % Wilson
+  intervals) on a train split and a held-out, later TEST split. The eval set (`packages/packs/eval/skills-eval.json`,
+  1054 coins from this machine's recorder, 72 h keyless-proxy labels, bad = rug ∪ dead) keeps only point-in-time link
+  evidence (a cached DexScreener/Jupiter record fetched within 1 h after t0; later records would leak the outcome)
+  and no URL, name or symbol. Tuning is a grid search on the train split only (the code throws on a test row).
+  **Held-out results (328 coins, 18.6 % bad):** the LARP check's links-only baseline is weak — MCC 0.039 before
+  tuning, 0.054 after; its tuned `LARP` grade caught 4 of 14 coins (too few to rate), `EARLY_BUT_REAL` coins went
+  bad 10.3 % of the time, coins with no website 29.2 %. The rug-check verdict rules went from MCC 0.043 to 0.159:
+  liquidity under $5k is the one strong signal (`SPECULATIVE` → 54.8 % bad, `WATCH` → 14.4 %); dev %, organic
+  score and top-10 % did not predict a worse 72 h outcome and now only lower confidence. The skills changed
+  accordingly (`larp-check` 0.2.0 reads the baseline from `get_links` as a weak prior and never calls `LARP` from
+  links alone; `rug-check` / `token-dossier` 0.3.0). **Not measured:** the LARP check's model stage (fetched pages,
+  RDAP, GitHub) — past pages cannot be re-fetched as they were; it is measured forward by `--subject larp` below.
+  Method, every number and the limits: `packages/packs/eval/README.md`. A grade is a risk flag, not a certificate.
 - **Recorder maintenance actually runs** (task-1361): the outcome sweeps and labels never fired in two days of
   use (0 `sweeps`, 0 `outcomes` rows) because the first maintenance pass waited 60 s after launch and nothing ran
   at quit, and every real run had been a ≤ 14 s smoke/capture run. Now the first pass runs 5 s after launch
@@ -135,6 +150,31 @@ Built on the two-stage analysis packs (deterministic ASSEMBLE, 0 tokens; the opt
   bonding-curve launch nearing graduation, labelled `approx` in the preset bar so the UI never implies the keyed
   bonding-% signal; it swaps to the real column when a launch source is keyed). **Smart money** stays gated on a
   top-traders key and says `needs key`, because a "smart money" preset without wallet-PnL data would mislead.
+
+### Export / share a view (task-1401)
+
+`E` on any screen writes the current view to **`~/.dexterm/exports/`** (`DEXTERM_HOME` overrides) as a PNG and a
+plain-text report: `dexterm-<screen>-<coin>-<YYYYMMDD-HHMMSS>.png|.txt`. Nothing is uploaded, posted or copied
+anywhere else; the toast names the file. The PNG is the frame rendered calm (no rain, glitch or scanlines, no toast,
+help card or prompt) with a header band (title) and a footer band (contract, data ages, export time), and both
+always carry the data label: **● LIVE DATA**, **◌ SAMPLE DATA · not real prices** (`--fixtures`) or **◌ REPLAY · recorded data**
+(`--replay`, ages on the replay clock). The footer and the report list the **age of every data panel** (market,
+candles, authorities, holders, rugcheck, goplus, trades on the token screen; `unavailable (reason)` / `needs key` when
+a panel has no data). The token report adds the numbers on screen, the authorities, RugCheck, the H1 p(rug) when the screener scored
+the coin and any LARP verdict, each labelled as a model output where it is one. One-shot: `--export [DIR]`. The PNG is pure
+TypeScript (a 5×9 bitmap font drawn for dexterm, procedural box drawing / blocks / braille, coin images when the
+terminal had pixel images); the exporter (`packages/cli/src/export.ts`: `ExportView` → `renderExportPng` /
+`renderExportText` / `writeExport`) takes any rendered canvas, so other views (PNL cards) can reuse it.
+
+### Paste a CA or a coin link anywhere (task-1401)
+
+A contract address, or a dexscreener / pump.fun / solscan / birdeye link, works wherever you can type one:
+the `g` go-to prompt (screener, new pairs, watchlist, token), **the analyst chat** (a CA or link alone opens that
+coin's token view; with a question, e.g. `is <CA> a rug?`, it opens the coin and asks the question about it), the
+screener's `/` line (opens the coin, leaves the filter alone), `--mint MINT|LINK`, and the MCP tools (an agent may
+pass a link as `mint`). A dexscreener.com/solana/<address> link usually names the **pool**, so it is resolved to its
+coin first (one keyless DexScreener call; if that fails the address is tried as the mint). Read-only navigation:
+nothing here trades. Parser: `packages/data/src/coin-target.ts`.
 
 ### Wallet intel, the bubble map and trade moments (task-1340)
 
@@ -293,7 +333,7 @@ npm run dexterm -- --screen newpairs --replay packages/data/fixtures/task-1298-s
 
 Keys: `1`–`4` screens, `tab` cycle, `j`/`k` or arrows move, `⏎` open (the analyst starts thinking,
 then its answer decrypts in), `esc` back, `a` analyst, `t` cycle theme (cyberspace → midnight →
-ember → paper), `c` toggle calm, `p` pause, `q` quit. Any key skips the boot sequence or a blink.
+ember → paper), `c` toggle calm, `p` pause, `E` export the view (PNG + report), `q` quit. Any key skips the boot sequence or a blink.
 Screener keys: `/` filter editor (`vol24 > 250K liq > 50K age < 30d org >= 60 launchpad:pump
 !flag:mint cat`; errors show inline with the column), `s` sort menu (enter on the current key
 flips direction), `[` `]` presets (Trending, Runners, Organic; Graduating ships keyless as an `approx`
@@ -385,8 +425,27 @@ The fixture clock is pinned to America/New_York so frames are identical on every
 ## Test
 
 ```sh
-npm test            # tsc typecheck + node:test (tui unit + fx tests, CLI tests, snapshots, fx practicality rules, contrast gate, boot state, loop)
+npm test            # tsc typecheck + node:test (tui unit + fx tests, CLI tests, snapshots, fx practicality rules, contrast gate, boot state, loop), then test:perf
+npm run test:perf   # the perf lane alone: packages/*/test/perf/*.test.ts, one file at a time
 ```
+
+`npm test` runs every `packages/*/test/*.test.ts` file **in parallel** (one process each), then the
+**perf lane** serially. The parallel glob does not reach `test/perf/`, so a timing assertion never
+measures ~150 neighbouring test processes. (task-1410: the 1330 p95 check used to sit in the parallel
+glob and read ~40 ms of scheduler noise on every full run, against ~3 ms alone.) Put any test whose
+assertion is a wall-clock budget in `packages/<pkg>/test/perf/`. `packages/cli/test/perf/render-1330.test.ts`
+has two guards for the trending, token + social and KOL screens at 176×48:
+- **frame budget**: p95 per tick under 16 ms (one 60 Hz frame).
+- **regression guard**: median render time ÷ median of a fixed reference workload, timed interleaved
+  frame by frame so machine speed and background load affect both the same way. It must stay under 2×
+  the ratio recorded in the test (`RATIO_BASELINE`). An injected 3× render slowdown (p95 ~8–10 ms,
+  still inside 16 ms) fails it at ratio ~7.0 against a limit of 4.7. After an intentional render change,
+  recalibrate `RATIO_BASELINE` from the printed `ratio` values and say so in the handoff.
+
+The pty tests (`qa-1311`, the `task-1313` pty cases) do not use fixed sleeps. Each step waits for the
+screen to show the expected content: `action-pty.py` waits on its own screen model, and `drive.py` has
+`WAIT:text[@secs]`, which also shifts the rest of the key script by the time it waited. A slow boot under
+load therefore delays the script instead of racing it.
 
 Snapshot goldens live in `packages/cli/test/snapshots/` and are the **calm** render of this
 renderer (`npm run snap:update` regenerates them after an intentional change; say so in the pull request).

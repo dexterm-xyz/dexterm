@@ -22,13 +22,23 @@ export const WHISPER_MODEL_DIR = join(homedir(), '.dexterm', 'models');
 
 type Recorder = { cmd: string; args: (wav: string) => string[]; stopSignal: NodeJS.Signals };
 
-/** Pick a mic-capture tool: sox (`rec`) first, then ffmpeg's avfoundation input. */
-function pickRecorder(): Recorder | null {
+/**
+ * Pick a mic-capture tool, best-first. sox (`rec`) is cross-platform; `arecord` (alsa-utils) is the
+ * native Linux capture tool (task-1408) and finalises its WAV header on SIGINT; ffmpeg is last and its
+ * input format is platform-specific (avfoundation on macOS, alsa on Linux). All write a 16 kHz mono
+ * 16-bit WAV, which is what whisper.cpp wants. Returns null when nothing is installed.
+ */
+export function pickRecorder(): Recorder | null {
   if (which('rec')) return { cmd: 'rec', args: (wav) => ['-q', '-c', '1', '-r', '16000', '-b', '16', wav], stopSignal: 'SIGINT' };
   if (which('sox')) return { cmd: 'sox', args: (wav) => ['-q', '-d', '-c', '1', '-r', '16000', '-b', '16', wav], stopSignal: 'SIGINT' };
+  if (process.platform !== 'darwin' && which('arecord')) {
+    return { cmd: 'arecord', args: (wav) => ['-q', '-f', 'S16_LE', '-c', '1', '-r', '16000', wav], stopSignal: 'SIGINT' };
+  }
   if (which('ffmpeg')) {
-    const dev = process.env.DEXTERM_FFMPEG_MIC || ':default';
-    return { cmd: 'ffmpeg', args: (wav) => ['-hide_banner', '-loglevel', 'error', '-f', 'avfoundation', '-i', dev, '-ac', '1', '-ar', '16000', '-y', wav], stopSignal: 'SIGINT' };
+    const linux = process.platform === 'linux';
+    const fmt = linux ? 'alsa' : 'avfoundation';
+    const dev = process.env.DEXTERM_FFMPEG_MIC || (linux ? 'default' : ':default');
+    return { cmd: 'ffmpeg', args: (wav) => ['-hide_banner', '-loglevel', 'error', '-f', fmt, '-i', dev, '-ac', '1', '-ar', '16000', '-y', wav], stopSignal: 'SIGINT' };
   }
   return null;
 }

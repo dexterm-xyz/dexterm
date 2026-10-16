@@ -15,6 +15,8 @@ import {
   RulesEngine, ruleToJson, ruleToText, slug, applyAndJournal, describeActions,
   type RuleJson, type RuleRow, type DryRunResult, type AlertLevel, type CompiledRule, type EvalResult,
 } from '@dexterm/custom';
+import { alertToDelivery, proposalToDelivery } from './alerts/format.ts';
+import type { AlertDelivery } from './alerts/types.ts';
 
 export const RULE_INPUT_MAX = 400;
 /** The engine observes/evaluates at most this often (the feed itself moves every 10 s; fixtures drift every tick). */
@@ -65,14 +67,20 @@ export interface RulesUi {
   nextId: number;
   /** Fires seen this session (all rules). */
   fires: number;
+  /** task-1398: alerts/proposal summaries queued for PUSH delivery (the loop drains them through the Notifier when a push channel is enabled). */
+  pendingDeliveries: AlertDelivery[];
 }
 
 export function newRulesUi(engine = new RulesEngine()): RulesUi {
   return {
     engine, errors: [], pane: 'rules', selected: 0, selectedProposal: 0, input: null, editingId: null, dry: null, notice: null,
     log: [], proposals: [], pending: { popups: [], bells: 0, ask: null, ticket: null }, lastTickAt: 0, nextId: 1, fires: 0,
+    pendingDeliveries: [],
   };
 }
+
+/** Cap on the push-delivery backlog (a long run with no notifier should never grow unbounded). */
+const MAX_DELIVERIES = 100;
 
 /**
  * Build the engine from `config.rules` plus the rules of installed packs (task-1358 Tier 4: a pack rule whose id the
@@ -95,7 +103,18 @@ export function rulesUiOf(state: AppState): RulesUi {
   return state.rulesUi;
 }
 
-/** The rows a rule can see: the screener feed (no skeletons) with the wallet-intel top-cluster share attached when the scan ran. */
+/**
+ * task-1398: LARP-detector grade as a number so a grade change is a rule (`larp.delta`). Higher = more real.
+ * The string verdict is only known here (cli); the engine sees the number. `null` for no verdict (clause false).
+ */
+export const LARP_GRADES: Record<string, number> = { REAL_PRODUCT: 3, EARLY_BUT_REAL: 2, UNVERIFIABLE: 1, LARP: 0 };
+export function larpGrade(verdict: string | null | undefined): number | null {
+  if (!verdict) return null;
+  const g = LARP_GRADES[verdict];
+  return g === undefined ? null : g;
+}
+
+/** The rows a rule can see: the screener feed (no skeletons) with the wallet-intel top-cluster share and the LARP grade attached. */
 export function ruleRowsOf(state: AppState): RuleRow[] {
   const out: RuleRow[] = [];
   const seen = new Set<string>();
@@ -108,7 +127,7 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
   for (const r of state.screener.rows as ScreenerRow[]) {
     if (!r.mint || r.skeleton || seen.has(r.mint)) continue;
     seen.add(r.mint);
-    out.push(Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint) }) as RuleRow);
+    out.push(Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict) }) as RuleRow);
   }
   return out;
 }
@@ -150,12 +169,14 @@ function applyOutputs(state: AppState, ui: RulesUi, res: EvalResult, rows: RuleR
       if (a.kind === 'alert') {
         push({ ...base, kind: 'alert', level: a.level, text: a.text });
         summary.alerts.push(`${f.symbol}: ${a.text}`);
+        if (ui.pendingDeliveries.length < MAX_DELIVERIES) ui.pendingDeliveries.push(alertToDelivery(a));
       } else if (a.kind === 'proposal') {
         const card: RuleProposalCard = a.type === 'ticket'
           ? { id: ui.nextId++, ...base, type: 'ticket', side: a.side, size: a.size, unit: a.unit, why: a.why, status: 'proposal', requiresKeypress: true, armedBy: null }
           : { id: ui.nextId++, ...base, type: 'ask', skill: a.skill, why: a.why, status: 'proposal', requiresKeypress: true, armedBy: null };
         ui.proposals.unshift(card);
         if (ui.proposals.length > MAX_PROPOSALS) ui.proposals.length = MAX_PROPOSALS;
+        if (ui.pendingDeliveries.length < MAX_DELIVERIES) ui.pendingDeliveries.push(proposalToDelivery(a));
         summary.proposals += 1;
         push({ ...base, kind: 'proposal', level: 'info', text: `PROPOSAL ${describeCard(card)} — ctrl+r, tab, ⏎ to act (you confirm there)` });
       } else if (a.kind === 'annotation') {

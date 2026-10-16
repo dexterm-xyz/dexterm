@@ -8,7 +8,9 @@ KEY: ENTER ESC TAB STAB UP DOWN LEFT RIGHT PGDN PGUP BS SPACE CTRLC CTRLU
      SNAP:label        dump a frame, send nothing
      WAIT:text[@secs]  block until the live frame contains text (use _ for space) or secs (default 8)
                        elapse, then continue — makes a following SNAP deterministic under CPU load
-                       (task-1319: fixed-offset SNAPs flaked when the app had not painted yet)
+                       (task-1319: fixed-offset SNAPs flaked when the app had not painted yet).
+                       Time a WAIT spends past its own offset shifts every later event by the same
+                       amount, so the gaps between later keys survive a slow paint (task-1410)
      TYPE:text         type text one char at a time (commas not allowed; use _ for space)
      RESIZE:WxH        TIOCSWINSZ + SIGWINCH
      SIGTERM / SIGHUP  signal the app
@@ -109,7 +111,7 @@ def frame_text():
 
 raw = open(os.path.join(out_dir, f'{name}.raw'), 'wb')
 frames = open(os.path.join(out_dir, f'{name}.frames.txt'), 'w', encoding='utf-8')
-total = 0; t0 = time.time(); ei = 0; alive = True
+total = 0; t0 = time.time(); ei = 0; alive = True; shift = 0.0
 cpu_samples = []; last_cpu = 0.0
 def drain(timeout):
     global total, alive
@@ -128,7 +130,7 @@ while alive:
             v = subprocess.run(['ps', '-o', '%cpu=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
             if v: cpu_samples.append((round(now, 1), float(v)))
         except Exception: pass
-    if ei < len(events) and now >= events[ei][0]:
+    if ei < len(events) and now >= events[ei][0] + shift:
         t, k = events[ei]; ei += 1
         frames.write(f'==== t={now:.1f}s before {k} ({cols}x{rows}) ====\n{frame_text()}\n\n')
         if k.startswith('SNAP:'): continue
@@ -140,6 +142,7 @@ while alive:
             deadline = time.time() + limit
             while alive and needle not in frame_text() and time.time() < deadline:
                 drain(0.05)
+            shift = max(shift, time.time() - t0 - t)
             continue
         if k.startswith('RESIZE:'):
             w, h = [int(x) for x in k[7:].split('x')]
@@ -160,9 +163,9 @@ while alive:
         try: os.write(fd, KEYS.get(k, k.encode()))
         except OSError: alive = False
         continue
-    nxt = (events[ei][0] - now) if ei < len(events) else 0.5
+    nxt = (events[ei][0] + shift - now) if ei < len(events) else 0.5
     drain(max(0.01, min(0.5, nxt)))
-    if ei >= len(events) and time.time() - t0 > (events[-1][0] if events else 0) + grace:
+    if ei >= len(events) and time.time() - t0 > (events[-1][0] if events else 0) + shift + grace:
         break
 killed = False
 if alive:

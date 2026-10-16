@@ -1,8 +1,8 @@
-# After a human publishes a draft release: (1) publish the compiled `dexterm` package to npm with provenance,
-# only when the repository variable NPM_PUBLISH is "true" (docs/npm-publish-shape.md: trusted publishing via
-# OIDC; the one-time NPM_TOKEN secret exists only for the package's very first version); (2) hand
-# scan-results.json to the website repo as a pull request, only when SITE_REPO is set. Both jobs are no-ops
-# until those switches are flipped on purpose.
+# After a human publishes a draft release: (1) publish the compiled `dexterm-cli` package to npm through npm
+# trusted publishing (GitHub OIDC: no npm token exists anywhere, and npm attaches a provenance attestation), only
+# when the repository variable NPM_PUBLISH is "true" (docs/npm-publish-shape.md); (2) hand scan-results.json to
+# the website repo as a pull request, only when SITE_REPO is set. Both jobs are no-ops until those switches are
+# flipped on purpose.
 name: publish
 
 on:
@@ -16,11 +16,11 @@ jobs:
   npm:
     name: npm publish (trusted publishing, provenance)
     if: vars.NPM_PUBLISH == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest   # trusted publishing accepts GitHub-hosted runners only
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write   # OIDC token for npm trusted publishing + provenance
+      id-token: write   # the OIDC token npm exchanges for a one-off publish credential + the provenance signature
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -28,21 +28,40 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: '22'
+          node-version: '22'   # trusted publishing needs Node >= 22.14
           registry-url: https://registry.npmjs.org
-      - name: npm >= 11.5.1 (required for trusted publishing)
-        run: npm install -g npm@latest && npm --version
+          package-manager-cache: false
+      - name: npm 11.21.1 (trusted publishing needs npm >= 11.5.1)
+        run: npm install -g npm@11.21.1 && npm --version
+      - name: the tag, the package name, the version and repository.url agree
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          read -r name version repo < <(node -p "const p=require('./packages/cli/package.json'); [p.name, p.version, p.repository?.url ?? '-'].join(' ')")
+          echo "package $name@$version · repository $repo · tag $TAG"
+          [ "$name" = dexterm-cli ] || { echo "::error::packages/cli is named $name, not dexterm-cli"; exit 1; }
+          [ "v$version" = "$TAG" ] || { echo "::error::tag $TAG does not match packages/cli version $version"; exit 1; }
+          # npm refuses a trusted publish (and its provenance) unless repository.url names exactly this repository
+          [ "$repo" = "git+https://github.com/$GITHUB_REPOSITORY.git" ] || { echo "::error::packages/cli repository.url is $repo, expected git+https://github.com/$GITHUB_REPOSITORY.git"; exit 1; }
+          if [ -n "$(npm view "$name@$version" version 2>/dev/null)" ]; then echo "::error::$name@$version is already on npm (a version number can never be reused)"; exit 1; fi
       - name: install + build the publishable package
         run: |
           npm ci
-          if ! node -e "process.exit(require('./packages/cli/package.json').scripts?.build ? 0 : 1)"; then
-            echo "::error::packages/cli has no build script yet (docs/npm-publish-shape.md). Not publishing."; exit 1
-          fi
           npm run build --workspace packages/cli
-      - name: "publish with provenance (OIDC trusted publisher; NPM_TOKEN only for the first version, then deleted)"
+      - name: publish (OIDC trusted publisher, provenance; no token)
+        working-directory: packages/cli
+        run: npm publish --provenance --access public
+      - name: the registry shows the version with its provenance
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --workspace packages/cli --provenance --access public
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          v="${TAG#v}"
+          for _ in $(seq 1 20); do
+            p="$(npm view "dexterm-cli@$v" dist.attestations.provenance.predicateType 2>/dev/null || true)"
+            if [ -n "$p" ]; then echo "dexterm-cli@$v provenance: $p"; exit 0; fi
+            sleep 15
+          done
+          echo "::error::dexterm-cli@$v has no provenance on the registry after 5 minutes (a new version can sit in 'Validating' for a few minutes; check npmjs.com)"; exit 1
 
   scan-results-to-site:
     name: hand scan-results.json to the website repo

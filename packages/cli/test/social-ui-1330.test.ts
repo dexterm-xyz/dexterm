@@ -1,7 +1,7 @@
 // task-1330 (lane I-03) UI: the TRENDING screen (T), the token SOCIAL panel (s) and the KOL screen (K) at
 // 176 / 120 / 90 columns on the fixture demo; keys through the real keymap + applyKey; the injection row is
 // visible to the human but never reaches the model window, the screen-state context or an analyst action;
-// p95 render under 16 ms per tick; the `dexterm kol` subcommand on a temp DB.
+// the `dexterm kol` subcommand on a temp DB. (The p95 render budget is in test/perf/render-1330.test.ts.)
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -300,46 +300,7 @@ test('KOL screen renders at 176/120/90; space toggles a list, m mutes, d removes
 });
 
 // ------------------------------------------------------------------ p95 render budget
-
-test('p95 render under 16 ms per tick for the trending screen, the token social panel and the KOL screen at 176×48', () => {
-  const p95 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))]; };
-  // Three runs of 150 frames; the reported p95 is the best run's (a loaded box — e.g. the full suite running
-  // alongside — adds scheduler noise that is not render cost; every run's p95 is printed for the record).
-  const measure = (mk: () => AppState, n = 150): { p50: number; p95: number; max: number; runs: number[] } => {
-    const state = mk();
-    socialOf(state);
-    renderFrame(state, 176, 48); // warm (lazy demo, memo)
-    let best: { p50: number; p95: number; max: number } | null = null;
-    const runs: number[] = [];
-    for (let r = 0; r < 3; r++) {
-      const times: number[] = [];
-      for (let i = 0; i < n; i++) {
-        state.now = new Date(state.now.getTime() + 500); // every tick moves the clock half a second (busts the 2 s memo every 4th frame)
-        const t0 = performance.now();
-        renderFrame(state, 176, 48);
-        times.push(performance.now() - t0);
-      }
-      const s = [...times].sort((a, b) => a - b);
-      const run = { p50: s[Math.floor(s.length / 2)], p95: p95(times), max: s[s.length - 1] };
-      runs.push(run.p95);
-      if (!best || run.p95 < best.p95) best = run;
-    }
-    return { ...best!, runs };
-  };
-  const trending = measure(() => makeFixtureState({ screen: 'trending', calm: true }));
-  const social = measure(() => { const s = makeFixtureState({ screen: 'token', calm: true }); s.tokenSocial = true; return s; });
-  const kol = measure(() => makeFixtureState({ screen: 'kol', calm: true }));
-  for (const [name, m] of Object.entries({ trending, social, kol })) {
-    assert.ok(m.p95 < 16, `${name} p95 ${m.p95.toFixed(2)} ms (p50 ${m.p50.toFixed(2)}, max ${m.max.toFixed(2)}; runs ${m.runs.map((x) => x.toFixed(1)).join('/')}) must be under 16 ms`);
-  }
-  // the engine's own board recompute (memo busted every call) also fits the tick budget
-  const state = makeFixtureState({ screen: 'trending', calm: true });
-  const feed = socialOf(state)!;
-  const times: number[] = [];
-  for (let i = 0; i < 100; i++) { feed.invalidate(); const t0 = performance.now(); feed.trendRows(); times.push(performance.now() - t0); }
-  assert.ok(p95(times) < 16, `trendRows() recompute p95 ${p95(times).toFixed(2)} ms`);
-  process.stderr.write(`  render p95 ms · trending ${trending.p95.toFixed(2)} (runs ${trending.runs.map((x) => x.toFixed(1)).join('/')}) · token+social ${social.p95.toFixed(2)} (${social.runs.map((x) => x.toFixed(1)).join('/')}) · kol ${kol.p95.toFixed(2)} (${kol.runs.map((x) => x.toFixed(1)).join('/')}) · trendRows() recompute ${p95(times).toFixed(2)}\n`);
-});
+// Lives in the serial perf lane (task-1410): packages/cli/test/perf/render-1330.test.ts (`npm run test:perf`).
 
 // ------------------------------------------------------------------ `dexterm kol` subcommand
 

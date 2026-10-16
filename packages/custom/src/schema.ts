@@ -184,6 +184,9 @@ export const SCHEMAS: Record<string, SchemaNode> = {
     token: { type: 'object', additional: false, props: { tape: { type: 'boolean' }, social: { type: 'boolean' }, analyst: { type: 'boolean' } } },
   } },
   screenLayout: { oneOf: ['layoutNode', { type: 'object', additional: false, props: { wide: 'layoutNode', standard: 'layoutNode', compact: 'layoutNode' } }] },
+  /** task-1398: one alert-delivery channel. A `levels` filter (subset of up|down|info|warn); absent = every level. */
+  alertLevels: { type: 'array', max: 4, items: { type: 'string', enum: ['up', 'down', 'info', 'warn'] } },
+  alertChannel: { type: 'object', additional: false, props: { enabled: { type: 'boolean' }, levels: 'alertLevels' } },
   ruleJson: { type: 'object', additional: false, required: ['id', 'when', 'then'], props: {
     id: { type: 'string', pattern: NAME },
     name: { type: 'string', max: 80 },
@@ -243,6 +246,26 @@ export const SCHEMAS: Record<string, SchemaNode> = {
       /** Reserved: the trading gate is NOT here (signer policy owns it); listed so a proposal that tries gets a precise refusal. */
       gate: { type: 'string', enum: ['keypress'] },
     } },
+    /** task-1393: voice-out preferences. `/voice` is user-only (DENIED_FOR_MODELS), so only the keyboard sets it. */
+    voice: { type: 'object', additional: false, props: {
+      name: { type: 'string', max: 64 },
+      rate: { type: 'number', int: true, min: 80, max: 400 },
+      pitch: { type: 'number', int: true, min: 0, max: 100 },
+    } },
+    /**
+     * task-1398: alert delivery routing. Enable flags + a per-channel `levels` filter ONLY; NO credentials here
+     * (bot tokens / webhook URLs live in ~/.dexterm/telegram.json and discord.json, 0600, like every other key).
+     * `/alerts` is user-only (DENIED_FOR_MODELS) so a model can never redirect your alerts to its own channel.
+     */
+    alerts: { type: 'object', additional: false, props: {
+      channels: { type: 'object', additional: false, props: {
+        toast: 'alertChannel', desktop: 'alertChannel',
+        telegram: { type: 'object', additional: false, props: { enabled: { type: 'boolean' }, levels: 'alertLevels', chatId: { type: 'string', pattern: '^-?[0-9]{1,19}$' } } },
+        discord: 'alertChannel',
+      } },
+      /** Deliver a one-line summary of ticket/ask PROPOSALS too (never the ticket itself; off by default). */
+      proposals: { type: 'boolean' },
+    } },
     scan: { type: 'object', additional: true },
     popups: { type: 'object', additional: false, props: { rain: { type: 'object', additional: false, props: { enabled: { type: 'boolean' }, speedScale: { type: 'number', min: 0, max: 4 }, density: { type: 'number', min: 0, max: 1 } } } } },
     /** Forward-compat bag: unknown sections from a newer dexterm survive a downgrade here. */
@@ -290,6 +313,17 @@ export interface RuleJson {
   scope?: string; cooldown?: string; maxPerHour?: number; window?: string; source?: string;
 }
 export interface PackRecord { name: string; version: string; source?: string; hash: string; trust: 'reviewed' | 'signed' | 'unsigned'; publisher?: string; installedAt?: number }
+export type AlertDeliveryLevel = 'up' | 'down' | 'info' | 'warn';
+export interface AlertChannelConfig { enabled?: boolean; levels?: AlertDeliveryLevel[] }
+export interface AlertsConfig {
+  channels?: {
+    toast?: AlertChannelConfig;
+    desktop?: AlertChannelConfig;
+    telegram?: AlertChannelConfig & { chatId?: string };
+    discord?: AlertChannelConfig;
+  };
+  proposals?: boolean;
+}
 export interface DextermConfig {
   version: number;
   theme?: { name?: string; overrides?: Record<string, Hex | Hex[]>; user?: Record<string, UserTheme> };
@@ -301,6 +335,10 @@ export interface DextermConfig {
   plugins?: Record<string, { enabled?: boolean; capabilities?: string[]; settings?: Record<string, unknown> }>;
   packs?: PackRecord[];
   jarvis?: { configAssistant?: boolean; proposalTtlS?: number; gate?: 'keypress' };
+  /** JARVIS voice-out preferences (task-1393). `name` is a `say` voice; the resolver falls back safely if it is missing. */
+  voice?: { name?: string; rate?: number; pitch?: number };
+  /** Alert delivery routing (task-1398). Enable flags + per-channel `levels` filter only; credentials live in ~/.dexterm/*.json. */
+  alerts?: AlertsConfig;
   scan?: Record<string, unknown>;
   popups?: { rain?: { enabled?: boolean; speedScale?: number; density?: number } };
   'x-unknown'?: Record<string, unknown>;
@@ -393,7 +431,7 @@ export function applyOps<T>(doc: T, ops: PatchOp[]): { doc: T; inverse: PatchOp[
 export const DENIED_FOR_MODELS: RegExp[] = [
   /^\/signer(\/|$)/, /^\/trading(\/|$)/, /^\/keys(\/|$)/, /^\/caps(\/|$)/, /^\/mandates?(\/|$)/, /^\/wallet(\/|$)/,
   /^\/packs(\/|$)/, /^\/plugins\/[^/]+\/(capabilities|enabled)(\/|$)/, /^\/plugins\/[^/]+$/, /^\/plugins$/,
-  /^\/jarvis\/gate(\/|$)/, /^\/jarvis\/configAssistant$/, /^\/voice(\/|$)/, /^\/agents(\/|$)/, /^\/version$/,
+  /^\/jarvis\/gate(\/|$)/, /^\/jarvis\/configAssistant$/, /^\/voice(\/|$)/, /^\/alerts(\/|$)/, /^\/agents(\/|$)/, /^\/version$/,
   /^\/rules\/(\d+|-)\/then\/(\d+|-)\/args\/(arm|armed|auto|autoArm|confirm|execute|sign|send)(\/|$)/,
 ];
 /** Keys a model-authored VALUE may never contain at any depth (money/secret-shaped), whatever the path. */
