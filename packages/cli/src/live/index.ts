@@ -136,6 +136,8 @@ export class LiveContext {
   private started = false;
   private fastLaneStarted = false;
   private closed = false;
+  /** task-1401: true once close() ran (an async coin-link resolution must not open a token after quit). */
+  get isClosed(): boolean { return this.closed; }
   /** Latest SOL/USD, fed from the screener feed each refresh; the fast lane turns on-chain SOL into USD. */
   private solUsd: number | null = null;
   private lastSolFetch = 0;

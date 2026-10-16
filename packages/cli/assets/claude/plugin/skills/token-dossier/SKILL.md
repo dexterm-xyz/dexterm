@@ -1,7 +1,7 @@
 ---
 name: token-dossier
 description: Full read-only dossier on one Solana token (market, holders, creator, risk, tape) with a WATCH/SPECULATIVE/AVOID verdict. Use when the user asks "what is this", "dossier", "look at $X".
-version: 0.2.0
+version: 0.3.0
 argument-hint: <mint or symbol>
 kind: skill
 output_schema: schemas/verdict.schema.json
@@ -39,7 +39,7 @@ Read `availability` first: `present` lists the sections you have, `missing` the 
 Judge with what you have. Missing sections lower `confidence`; they do not block a verdict.
 
 - `AVOID` when any disqualifier is present: freeze authority enabled, mint authority enabled, Token-2022 honeypot extension, LP locked below 100 % on a non-pump pair with top-10 ex-LP above 50 %, or wash tape (`tape.top2WalletVolumeSharePct` above 60 with `buyUsd ≈ sellUsd`).
-- `SPECULATIVE` when there is no disqualifier but a material risk (dev above 10 %, serial creator, organic score below 40, top-10 ex-LP above 50 %, or a thin/young market).
+- `SPECULATIVE` when there is no disqualifier but a material risk: liquidity under $5,000 (the strongest signal in the task-1401 backtest), a serial creator, or top-10 ex-LP above 50 %. Dev above 10 % and organic score below 40 did not go with a worse 72 h outcome in that backtest: name them as risks and lower `confidence`, but they alone do not make a coin `SPECULATIVE`.
 - `WATCH` otherwise.
 - `INSUFFICIENT_DATA` **only** when `availability.canVerdict` is false — i.e. no price and no liquidity from any source. A null creator history, missing holders, no candles or no tape is NOT insufficient data on its own: produce a verdict from the rest and note what was missing.
 - `missing_data`: copy every entry of `availability.missing` and `availability.knownUnavailable` here. The keyless creator-history Tier-1 gap belongs here every time, not in the verdict.
@@ -56,7 +56,7 @@ Judge with what you have. Missing sections lower `confidence`; they do not block
 
 ## Output
 
-Return only the JSON object required by the schema (`skill: "token-dossier"`, `skill_version: "0.2.0"`). Fill every structured field completely (`bias`, `setup_quality`, `key_levels`, `invalidation`, `size_hint`, `facts`, `missing_data`). Brevity applies to the prose only:
+Return only the JSON object required by the schema (`skill: "token-dossier"`, `skill_version: "0.3.0"`). Fill every structured field completely (`bias`, `setup_quality`, `key_levels`, `invalidation`, `size_hint`, `facts`, `missing_data`). Brevity applies to the prose only:
 
 - `summary` is two to four short lines for a 40-column panel: line 1 is the call in plain words (bias plus the one-clause reason), line 2 is the one or two facts that decide it, each with its source field. Add a short `missing:` line only when a gap changes the call.
 - Do not repeat the verdict, bias, setup, key levels, invalidation or size in `summary`. The app renders those fields right beside it. Do not restate numbers the user already sees on the screener row (price, % change, liquidity, volume).

@@ -11,10 +11,16 @@ to install and voice **degrades to text** — it never crashes.
   watchlist, or OPEN a PAPER ticket in its editing phase). It can **never** confirm, sign, or execute
   a trade. `isSafe()` + its test assert this for every utterance.
 - `stt/` — speech-in engines: `apple` (on-device `SFSpeechRecognizer` via a Swift helper compiled with
-  `swiftc`, no key, streaming), `whisper` (whisper.cpp `base.en`, local, no key — never
-  `large-v3-turbo` on a CPU-only Mac: ~55–93 s/clip), and `fake` (scripted, for headless tests).
-- `tts/` — speech-out engines: `say` (built-in macOS `say`, no key, interruptible, voice picker) and
-  `fake`.
+  `swiftc`, no key, streaming, macOS only), `whisper` (whisper.cpp `base.en`, local, no key — the
+  DEFAULT voice-in off macOS; never `large-v3-turbo` on a CPU-only Mac: ~55–93 s/clip; mic capture via
+  `rec`/`sox`, `arecord` on Linux, or `ffmpeg`), and `fake` (scripted, for headless tests).
+- `tts/` — speech-out engines: `say` (built-in macOS `say`, no key, interruptible, voice picker),
+  `piper` (Piper neural voice, local, no key — the PREFERRED engine off macOS; synthesises a WAV that
+  plays through `aplay`/`paplay`/`ffplay`), `espeak` (espeak-ng, the portable last-resort baseline off
+  macOS), and `fake`. Every engine shares one contract: untrusted text is sanitised, delivered on stdin,
+  one speak queue (never two voices), and a macOS voice name is never passed verbatim to a Linux engine.
+- `download.ts` — the checksum-verified, confirmation-gated downloader for the two optional models
+  (whisper `base.en`, the Piper voice). Nothing is fetched without an explicit yes.
 - `summary.ts` — the first ~2 sentences of an analyst answer, for the spoken reply.
 - `controller.ts` — the push-to-talk state machine (toggle; terminals have no key-up). The mic is live
   ONLY in the `listening` mode — the single place `listen()` is called — so the on-screen indicator can
@@ -27,6 +33,16 @@ to install and voice **degrades to text** — it never crashes.
 - `v` — push-to-talk (press to talk, press to send; auto-enables voice on first use).
 - `m` — mute · `,` — change voice · `esc` — stop speaking / cancel listening.
 - A red `● LISTENING` badge on the band under the header whenever the mic is live.
+
+## Models (off macOS)
+
+whisper `base.en` and the Piper voice are not shipped (free-forever: no bundled large binaries, no keys).
+`dexterm doctor` reports each engine's real status and how to install it, and `dexterm voice download
+<whisper|piper-voice>` fetches a model from the official source — only after an explicit yes, and only
+if it matches the checksum pinned in `download.ts`. On Debian, do NOT `apt install piper` (that is an
+unrelated gaming-mouse tool); the Piper TTS binary is the rhasspy/piper prebuilt release, and whisper.cpp
+is not packaged either — use its prebuilt release. Real speaker/mic I/O on Linux is not covered by the
+test suite; synthesis-to-WAV and whisper transcription are verified in Docker (see the task-1408 handoff).
 
 ## Latency
 

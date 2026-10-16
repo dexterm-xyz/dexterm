@@ -19,3 +19,4 @@ export * from './rug-model.ts';
 export * from './backtest.ts';
 // task-1359: LARP eval (recorded product verdicts vs outcome labels; counts only below n = 50).
 export * from './larp-eval.ts';
+export * from './skill-backtest.ts';

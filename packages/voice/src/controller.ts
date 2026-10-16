@@ -7,6 +7,7 @@
 import type { SttEngine, TtsEngine, SttSession, SpeakHandle, VoiceMode, VoiceProvenance, VoiceScreenState } from './types.ts';
 import { route, isSafe, type VoiceDecision } from './router.ts';
 import { spokenSummary, type SpokenSource } from './summary.ts';
+import { isBannedVoice } from './tts/voices.ts';
 
 /** A measured key-release → first-spoken-word latency sample. */
 export interface LatencySample {
@@ -39,6 +40,8 @@ export interface VoiceControllerOpts {
   tts: TtsEngine | null;
   voice?: string;
   rate?: number;
+  /** Trusted pitch baseline (say `[[pbas N]]`, lower = deeper) applied to every spoken reply. */
+  pitch?: number;
   muted?: boolean;
   /** Called whenever the status/indicator changes, so the UI can redraw. */
   onState?: (s: VoiceStatus) => void;
@@ -53,6 +56,11 @@ export interface VoiceControllerOpts {
   getScreenState?: () => VoiceScreenState;
   /** Injectable clock (ms) for deterministic latency tests. */
   now?: () => number;
+  /**
+   * Persist the user's voice choice when they cycle it with the `,` key (task-1393). The controller
+   * never writes config itself; the app wires this to the config journal (actor 'user').
+   */
+  onVoiceChange?: (voice: string) => void;
   /**
    * Hard cap on how long the mic may stay live before it auto-stops (task-1282 rework D2). The mic is
    * only ever live in 'listening'; if the user walks away or forgets, this closes it. 0 disables it.
@@ -74,6 +82,7 @@ export class VoiceController {
   private muted: boolean;
   private voice: string | null;
   private rate: number;
+  private pitch: number | undefined;
   private voices: string[] = [];
   private lastTranscript: string | null = null;
   private lastSay: string | null = null;
@@ -106,6 +115,7 @@ export class VoiceController {
     this.muted = opts.muted ?? false;
     this.voice = opts.voice ?? null;
     this.rate = opts.rate ?? 190;
+    this.pitch = opts.pitch;
     this.now = opts.now ?? (() => Date.now());
     this.maxListenMs = opts.maxListenMs ?? 15_000;
     this.setTimer = opts.setTimer ?? ((fn, ms) => { const h = setTimeout(fn, ms); (h as { unref?: () => void }).unref?.(); return h; });
@@ -135,10 +145,17 @@ export class VoiceController {
   /** The mic is live OR about to be (listen() in flight): the states a key must cancel. */
   get micEngaged(): boolean { return this.mode === 'listening' || this.starting; }
 
-  /** Load the voice list lazily (used by cycleVoice and the status line). */
+  /**
+   * Load the voice list lazily (used by cycleVoice and the status line). Novelty voices on the ban-list
+   * are filtered OUT so the user can never cycle into "Zarvox" / "Bad News" and so a null starting voice
+   * is seeded to a safe one, never the machine's (possibly novelty) system voice (task-1393).
+   */
   async loadVoices(): Promise<void> {
     if (!this.tts) return;
-    try { this.voices = await this.tts.listVoices(); if (!this.voice && this.voices.length) this.voice = this.voices[0]; } catch { this.voices = []; }
+    try {
+      this.voices = (await this.tts.listVoices()).filter((n) => !isBannedVoice(n));
+      if (!this.voice && this.voices.length) this.voice = this.voices[0];
+    } catch { this.voices = []; }
   }
 
   /** Turn voice mode on/off. Enabling with no STT engine still works for spoken replies to typed Qs. */
@@ -303,6 +320,7 @@ export class VoiceController {
     const handle = this.tts.speak(text, {
       voice: this.voice ?? undefined,
       rate: this.rate,
+      pitch: this.pitch,
       onFirstAudio: () => this.recordFirstAudio(),
     });
     this.speaking = handle;
@@ -362,11 +380,12 @@ export class VoiceController {
   toggleMute(): void { this.setMuted(!this.muted); }
   get isMuted(): boolean { return this.muted; }
 
-  /** Cycle to the next installed voice (macOS voices). No-op when there are none. */
+  /** Cycle to the next installed (safe) voice and persist the choice. No-op when there are none. */
   cycleVoice(): void {
     if (!this.voices.length) { this.notify(); return; }
     const i = this.voice ? this.voices.indexOf(this.voice) : -1;
     this.voice = this.voices[(i + 1) % this.voices.length];
+    try { this.opts.onVoiceChange?.(this.voice); } catch { /* persistence is best-effort; never break the UI */ }
     this.notify();
   }
 

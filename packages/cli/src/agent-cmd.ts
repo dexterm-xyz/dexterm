@@ -32,6 +32,7 @@ function intFlag(rest: string[], name: string): number | undefined { const v = f
 const USAGE = `dexterm agent <command>
   add <name> --tier observe|annotate|propose [--note T] [--reads N] [--proposals N] [--connections N]
   list | rotate <name> | remove <name> | tier <name> <tier> | pause <name> | resume <name>
+  mandate <name> --tools a,b,c | mandate <name> --clear   (narrow an agent to a named set of tools)
   audit [--agent NAME] [--limit N]
   proposals [--agent NAME] [--status pending|confirmed|dismissed] [--limit N] [--db PATH]
   packs
@@ -64,8 +65,12 @@ export async function runAgent(rest: string[], io: Io): Promise<number> {
     case 'list': {
       const list = registry.list();
       if (!list.length) { out('no agents registered. Add one: dexterm agent add <name> --tier observe'); return 0; }
-      out('name                     tier      paused  created              note');
-      for (const a of list) out(`${a.name.padEnd(24)} ${a.tier.padEnd(9)} ${(a.paused ? 'yes' : 'no').padEnd(7)} ${new Date(a.createdAt).toISOString().slice(0, 19)}  ${a.note ?? ''}`);
+      out('name                     tier      paused  created              mandate / note');
+      for (const a of list) {
+        const mandate = a.scope && a.scope.length ? `mandate: ${a.scope.join(',')}` : '';
+        const tail = [mandate, a.note ?? ''].filter(Boolean).join(' · ');
+        out(`${a.name.padEnd(24)} ${a.tier.padEnd(9)} ${(a.paused ? 'yes' : 'no').padEnd(7)} ${new Date(a.createdAt).toISOString().slice(0, 19)}  ${tail}`);
+      }
       return 0;
     }
     case 'rotate': {
@@ -88,6 +93,21 @@ export async function runAgent(rest: string[], io: Io): Promise<number> {
       const name = rest[1]; if (!name) { errOut(`usage: dexterm agent ${cmd} <name>`); return 2; }
       try { registry.setPaused(name, cmd === 'pause'); out(`"${name}" ${cmd === 'pause' ? 'paused' : 'resumed'} (persisted; a running dexterm applies it on the agent's next connection).`); return 0; }
       catch (e) { errOut(`dexterm agent ${cmd}: ${(e as Error).message}`); return 1; }
+    }
+    case 'mandate': {
+      const name = rest[1];
+      if (!name) { errOut('usage: dexterm agent mandate <name> --tools a,b,c | --clear'); return 2; }
+      try {
+        if (has(rest, '--clear')) { registry.setScope(name, null); out(`cleared the mandate for "${name}" (it may now use its full tier surface).`); return 0; }
+        const tools = flag(rest, '--tools');
+        if (!tools) { errOut('usage: dexterm agent mandate <name> --tools a,b,c | --clear'); return 2; }
+        const list = tools.split(',').map((t) => t.trim()).filter(Boolean);
+        registry.setScope(name, list);
+        const rec = registry.get(name)!;
+        out(`"${name}" is now mandated to: ${rec.scope!.join(', ')}.`);
+        out('the agent can call only these tools (plus agent_whoami); a mandate only narrows the tier, never widens it.');
+        return 0;
+      } catch (e) { errOut(`dexterm agent mandate: ${(e as Error).message}`); return 1; }
     }
     case 'audit': {
       const dbPath = flag(rest, '--db') || defaultDbPath(io.env);

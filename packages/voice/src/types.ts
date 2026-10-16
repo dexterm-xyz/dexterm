@@ -54,6 +54,12 @@ export interface SpeakOptions {
   voice?: string;
   /** Words per minute-ish rate passed to the engine (macOS `say -r`). */
   rate?: number;
+  /**
+   * Pitch baseline for a deeper/higher voice (macOS `say` `[[pbas N]]`, ~0-100, lower = deeper). This is
+   * a TRUSTED, app-supplied setting applied as a prefix AFTER the untrusted text is sanitised, so it can
+   * never be injected by token names or analyst output. Omitted = the voice's own default pitch.
+   */
+  pitch?: number;
   /** Fired as close to the first audible sample as the engine allows (used for latency timing). */
   onFirstAudio?: () => void;
 }

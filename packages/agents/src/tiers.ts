@@ -49,6 +49,11 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   get_candles: 'observe',
   rugcheck: 'observe',
   get_dev_history: 'observe',
+  // deterministic analysis packs (task-1356): read-only, no model, no token cost. Exposed to external
+  // agents in task-1405 so a bring-your-own-agent gets the same code-stage analysis the built-in analyst does.
+  analyze_token: 'observe',
+  narrative_board: 'observe',
+  rug_backtest: 'observe',
   kb_lookup: 'observe',
   kb_search: 'observe',
   case_lookup: 'observe',

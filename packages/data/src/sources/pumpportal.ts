@@ -299,7 +299,12 @@ export class PumpPortalClient {
       if (this.stopped) break;
       if (speed > 0 && m.tMs > last) await this.clock.sleep((m.tMs - last) / speed);
       last = m.tMs;
-      this.handle(m.text, this.clock.now());
+      // Anchor each message's receive time to the recording's own `tMs` offset, not `clock.now()`. Reading the
+      // live clock per message makes `receivedAt` (and the row's `createdAt`) depend on where real-time
+      // millisecond boundaries happen to fall inside this synchronous loop, so the newest-first row order
+      // flipped between runs — a Node-22 CI flake in the new-pairs replay test (task-1394). Offsets from one
+      // clock read are monotonic and deterministic, so replay now sorts identically on every run and engine.
+      this.handle(m.text, this.startedAt + m.tMs);
     }
     return rec.messages.length;
   }

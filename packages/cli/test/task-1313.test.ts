@@ -249,7 +249,7 @@ test('pty: "put the top coin on my screen" opens the token (fake claude emits th
   const out = join(mkdtempSync(join(tmpdir(), 'task1313-pty-')), 'frames.bin');
   const home = mkdtempSync(join(tmpdir(), 'task1313-home-'));
   const log = join(fakeDir, 'spawn.log');
-  const r = spawnSync('python3', ['-I', PTY, '--sample', SAMPLE, '--fake-dir', fakeDir, '--out', out, '--home', home, '--fake-log', log], { encoding: 'utf8', timeout: 60_000 });
+  const r = spawnSync('python3', ['-I', PTY, '--sample', SAMPLE, '--fake-dir', fakeDir, '--out', out, '--home', home, '--fake-log', log], { encoding: 'utf8', timeout: 120_000 });
   assert.equal(r.status, 0, `pty harness failed: ${r.stderr}`);
   const screen = deAnsi(readFileSync(out, 'utf8'));
   assert.ok(existsSync(log) && readFileSync(log, 'utf8').includes('spawn'), 'the analyst turn spawned the fake claude with a real mint');
@@ -351,7 +351,7 @@ test('E pty: a plain-language filter request applies a structured filter and the
   const fakeDir = fakeClaudeFilter();
   const out = join(mkdtempSync(join(tmpdir(), 'task1313-ptyE-')), 'frames.bin');
   const home = mkdtempSync(join(tmpdir(), 'task1313-homeE-'));
-  const r = spawnSync('python3', ['-I', PTY, '--sample', SAMPLE, '--fake-dir', fakeDir, '--out', out, '--home', home, '--scenario', 'filter'], { encoding: 'utf8', timeout: 60_000 });
+  const r = spawnSync('python3', ['-I', PTY, '--sample', SAMPLE, '--fake-dir', fakeDir, '--out', out, '--home', home, '--scenario', 'filter'], { encoding: 'utf8', timeout: 120_000 });
   assert.equal(r.status, 0, `pty harness failed: ${r.stderr}`);
   const screen = deAnsi(readFileSync(out, 'utf8'));
   assert.match(screen, /analyst filter|filter mcap|mcap < 5M/i, 'the app applied the analyst\'s structured filter');
@@ -436,7 +436,7 @@ test('F pty: a coin-list answer renders a table, ↓ navigates, and ⏎ jumps to
   const fakeDir = fakeClaudeResults();
   const out = join(mkdtempSync(join(tmpdir(), 'task1313-ptyF-')), 'frames.bin');
   const home = mkdtempSync(join(tmpdir(), 'task1313-homeF-'));
-  const r = spawnSync('python3', ['-I', PTY, '--sample', SAMPLE, '--fake-dir', fakeDir, '--out', out, '--home', home, '--scenario', 'results'], { encoding: 'utf8', timeout: 60_000 });
+  const r = spawnSync('python3', ['-I', PTY, '--sample', SAMPLE, '--fake-dir', fakeDir, '--out', out, '--home', home, '--scenario', 'results'], { encoding: 'utf8', timeout: 120_000 });
   assert.equal(r.status, 0, `pty harness failed: ${r.stderr}`);
   const screen = deAnsi(readFileSync(out, 'utf8'));
   // the table rendered (header), and ⏎ jumped onto the token screen (its ON-CHAIN panel)

@@ -17,6 +17,9 @@
 import { writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { writeExport, exportViewFor } from './export.ts';
+import { parseMintTarget, parseCoinTarget, resolveCoinTarget, isBareOpen, type CoinTarget } from './coin-target.ts';
 import {
   THEMES, isThemeName, DEFAULT_THEME, THEME_NAMES, Flusher, ENTER_SCREEN, LEAVE_SCREEN, DEFAULT_KEYMAP, Keymap, nextTheme, parseKeys, keyId,
   detectColorDepth, parseColorDepth, blinkFrame, blinkFrames, stepVfx, pulse, isCalm, fxBusy, blendActivity,
@@ -47,6 +50,7 @@ import { TokenPopups, tokenDetailVMFromView } from './popup.ts';
 import { widgetPage, widgetEnabled, syncWidgetPopups } from './widgets.ts';
 import { recordLarpVerdict } from './larp-record.ts';
 import { rulesUiOf, rulesTick, rulesMove, beginRuleInput, saveRuleInput, dryRunNow, removeSelectedRule, toggleSelectedRule, dismissSelectedProposal, actOnSelectedProposal, RULE_INPUT_MAX } from './rules.ts';
+import { buildNotifier, hasPushChannel } from './alerts/notifier.ts';
 import { launchIntelCells, launchRetryable } from './live/intel.ts';
 import { AnalystSession } from './analyst/session.ts';
 import type { AnalystDeps } from './analyst/backend.ts';
@@ -60,15 +64,16 @@ import type { ScanConfig, ScanDecision, ScanEngine } from './scan/engine.ts';
 import { cleanText } from './screener/rows.ts';
 import { resolveImagesConfig } from './images-config.ts';
 import { popupImagePath } from './screens/coin.ts';
-import { VoiceController, selectStt, selectTts, type VoiceDecision, type VoiceScreenState } from '@dexterm/voice';
+import { VoiceController, selectStt, selectTts, SayTts, voiceStyleDefaults, type VoiceDecision, type VoiceScreenState } from '@dexterm/voice';
 import { LivePlanExecutor, defaultPlansJournalPath } from '@dexterm/data/plans';
 import type { PlanInput } from '@dexterm/data/plans';
 import { isWalletAddress, shortAddr, buildMirror, leaderSoldSince, autoSizeCap, type MirrorMarket, type MirrorResult } from '@dexterm/data/copy';
 import { FOLLOW_INPUT_MAX } from './screens/follows.ts';
 import type { VoiceHud } from './voice-hud.ts';
 import { isPriceMode, configPriceMode, togglePriceMode, priceModeOf, planLevels, type PriceMode } from './display.ts';
+import { VERSION } from './version.ts';
 import { initCustom, planWorkspace, planPopupOpens, findWorkspace, nextWorkspaceName, workspaceSlots, saveWorkspace, themeFor, themeByName, cycleTheme, themeNames, CHORD_TTL_MS, MAX_WORKSPACE_NAME, type WorkspacePlan } from './custom.ts';
-import { DEFAULT_WORKSPACE, MORNING_HUD } from '@dexterm/custom';
+import { DEFAULT_WORKSPACE, MORNING_HUD, applyAndJournal } from '@dexterm/custom';
 
 /** A compact, firewalled view of one visible pool row for the analyst context (task-1313). */
 interface VisibleRow { mint: string; symbol: string; priceUsd: number | null; chg1h: number | null; chg24h: number | null; liq: number | null; vol24: number | null }
@@ -190,6 +195,10 @@ export interface CliArgs {
   width: number | null;
   height: number | null;
   html: string | null;
+  /** task-1401: where `--mint` came from (a dexscreener link is resolved pool → coin before the token opens). */
+  mintVia?: CoinTarget['via'];
+  /** task-1401: one-shot `--export [DIR]`: write the PNG + text report ('' = the default ~/.dexterm/exports). */
+  export: string | null;
   theme: string;
   selected: number;
   seed: number;
@@ -301,10 +310,13 @@ export function shouldDrawFrame(g: FrameGate): boolean {
   return g.frame % g.idleEvery === 0;
 }
 
-export const HELP = `dexterm 0.1.1 (live: screener, token, new pairs, watchlist · analyst = your local claude CLI · cyberspace look)
+export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watchlist · analyst = your local claude CLI · cyberspace look)
 
   dexterm                                     interactive, live data (needs a TTY)
   dexterm doctor                              check this machine is ready (Node, colour, claude, network, Helius key)
+  dexterm voice [status|download <model>]     voice engines on this machine; download whisper/piper models (asks first, checksum-verified)
+  dexterm update [--off|--on]                 check npm + GitHub for a newer version and print the upgrade command;
+                                              --off/--on toggles the once-a-day startup notice (no telemetry)
   dexterm recorder stats|label|prune|export   the history recorder's tables (no network; 'dexterm recorder help')
   dexterm kb list|show|new|edit|check|reset|path     your knowledge-base entries (~/.dexterm/kb/entries) over the bundled 17
   dexterm skill list|show|new|edit|check|reset|path  your analyst skills (~/.dexterm/skills) over the bundled ones (read tools only)
@@ -314,6 +326,9 @@ export const HELP = `dexterm 0.1.1 (live: screener, token, new pairs, watchlist 
   dexterm plan propose|list|arm|cancel|journal     conditional order plans (entry/ladder/take-profit/moon bag/stop); arming needs a physical keypress
   dexterm mandate draft|list|arm|revoke            standing capped mandates (fast wallet); arming needs a physical keypress — voice/agents can never arm
   dexterm follow add|remove|list|stats|trades|purge  copy trading tier 1: follow a wallet (your list, local labels), its decoded swaps + FIFO PnL; alerts in the app
+  dexterm mcp [install <client>|doctor]            read-only MCP server for your own agent; 'install' writes the config for claude-code|claude-desktop|cursor|codex|openclaw|generic (asks first, idempotent, backs up); 'doctor' verifies the connection
+  dexterm alerts status|enable|disable|set-telegram|set-discord|test  where rule alerts are delivered (desktop / your Telegram / Discord; creds stay local, never logged)
+  dexterm watch [--interval S] [--once] [--replay FILE]  run your rules headless and push alerts when the terminal is closed (no signer, proposals only)
   dexterm --fixtures                          interactive demo on seeded fixtures
   dexterm --screen <name>                     one-shot frame to stdout (live)
   dexterm --screen <name> --fixtures          one-shot frame from fixtures
@@ -328,7 +343,7 @@ export const HELP = `dexterm 0.1.1 (live: screener, token, new pairs, watchlist 
   --record FILE             save every live response (and the PumpPortal session) to FILE (replay it with --replay)
   --max-requests N          hard cap on live requests for this run (default: none)
   --max-credits N           hard cap on Helius credits for this run (default: 5000)
-  --mint MINT               token to open on the token screen
+  --mint MINT|LINK          token to open on the token screen (a CA or a dexscreener / pump.fun / solscan / birdeye link)
   --interval IV             candle interval for the token screen: ${INTERVALS.join(' | ')} (default 1h)
   --listen SECONDS          one-shot new pairs: how long to listen to PumpPortal (default 20)
   --db PATH                 SQLite path for cache, watchlist, credit meter and history (default: ~/.local/share/dexterm/dexterm.db; ':memory:' for none)
@@ -392,6 +407,7 @@ ${X_HELP}
   --plain                   monochrome text (snapshot surface)
   --ansi                    ANSI output even when stdout is not a TTY (24-bit unless --color / NO_COLOR)
   --html FILE               write a standalone HTML page (for screenshots); --fit WxH --font PX for video frames
+  --export [DIR]            write the frame as a PNG + a text report with data ages (default ~/.dexterm/exports; local only)
   --color DEPTH             truecolor | 256 | none (default: detected; NO_COLOR honoured)
   --tz ZONE                 header clock zone (default America/New_York, the prototype's; 'local' = machine zone)
   --title TEXT              HTML page title
@@ -417,13 +433,15 @@ ${X_HELP}
   priced from live Jupiter quotes. LIVE (L on a ticket, /wallet link first): a separate signer process
   quotes, builds, decodes, simulates and enforces the caps; Phantom signs in your browser; dexterm never
   holds a key. The analyst, voice and scan mode can never open, confirm or sign a live trade.
-  RPC: DEXTERM_RPC_URL, else ~/.dexterm/helius.key (Helius, metered with a credit meter), else the public RPC.`;
+  RPC: DEXTERM_RPC_URL, else ~/.dexterm/helius.key (Helius, metered with a credit meter), else the public RPC.
+  Updates: at most once a day a live run asks npm + GitHub for the newest version (two anonymous GETs, no telemetry)
+  and shows one toast if there is one; DEXTERM_NO_UPDATE_CHECK=1 or 'dexterm update --off' turns that off.`;
 
 export function parseArgs(argv: string[]): CliArgs {
   const a: CliArgs = {
     screen: null, fixtures: false, replay: null, record: null, filter: null, sort: null, preset: null, maxRequests: 0, maxCredits: 0, db: null,
     mint: null, interval: '1h', listen: 20, verbose: false,
-    width: null, height: null, html: null, theme: DEFAULT_THEME, selected: 0, seed: 7,
+    width: null, height: null, html: null, export: null, theme: DEFAULT_THEME, selected: 0, seed: 7,
     noAi: false, title: null, plain: false, ansi: false, color: null, tz: null,
     calm: false, intensity: null, fps: null, frame: 0, t: 1, event: null, ai: null, mood: null, activity: null, noBoot: false, fit: null, fontPx: null, asciiRain: false, noImages: false,
     scan: false, scanConfig: {},
@@ -452,7 +470,13 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--preset') { const p = presetSpec(str()); if (!p) throw new Error(`unknown preset ${v} (expected ${PRESETS.map((x) => x.id).join('|')})`); a.preset = p.id; }
     else if (k === '--max-requests') a.maxRequests = num();
     else if (k === '--max-credits') a.maxCredits = num();
-    else if (k === '--mint') { const m = str(); if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m)) throw new Error(`--mint expects a base58 Solana address, got ${JSON.stringify(m.slice(0, 20))}`); a.mint = m; }
+    else if (k === '--mint') {
+      // task-1401: a bare mint, or a dexscreener / pump.fun / solscan / birdeye link (a dexscreener pool is resolved to its coin at open)
+      const m = str();
+      const t = parseCoinTarget(m);
+      if (!t || (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m.trim()) && t.via === 'address')) throw new Error(`--mint expects a base58 Solana address or a coin link, got ${JSON.stringify(m.slice(0, 20))}`);
+      a.mint = t.address; a.mintVia = t.via;
+    }
     else if (k === '--interval') { const iv = str(); if (!(INTERVALS as string[]).includes(iv)) throw new Error(`unknown interval ${iv} (expected ${INTERVALS.join('|')})`); a.interval = iv as CandleInterval; }
     else if (k === '--listen') a.listen = Math.max(0, Math.min(120, num()));
     else if (k === '--db') a.db = str();
@@ -460,6 +484,7 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--width') a.width = num();
     else if (k === '--height') a.height = num();
     else if (k === '--html') a.html = str();
+    else if (k === '--export') a.export = argv[i + 1] && !argv[i + 1].startsWith('--') ? str() : '';
     else if (k === '--theme') a.theme = str();
     else if (k === '--selected') a.selected = num();
     else if (k === '--seed') a.seed = num();
@@ -648,11 +673,11 @@ export function fastLaneEndpoints(rpc: RpcConfig): FastLaneEndpoint[] {
 }
 
 export async function main(argv: string[], io: Io = process as unknown as Io, proc: GuardProcess = process): Promise<number> {
-  // `dexterm mcp` → the standalone read-only MCP server on stdio (SPEC §5.1; `claude mcp add dexterm -- dexterm mcp`).
+  // `dexterm mcp` → the read-only MCP server on stdio (SPEC §5.1; `claude mcp add dexterm -- dexterm mcp`),
+  // plus `dexterm mcp install <client>` (one-command setup) and `dexterm mcp doctor` (verify the connection).
   if (argv[0] === 'mcp') {
-    const { runStdioServer } = await import('@dexterm/mcp');
-    await runStdioServer({ argv: argv.slice(1) });
-    return 0;
+    const { runMcp } = await import('./mcp-cmd.ts');
+    return runMcp(argv.slice(1), io);
   }
   // `dexterm agent <cmd>` → bring-your-own-agent registry + loopback bus (task-1345): add/list/rotate/
   // remove/tier/pause/resume/kick/audit/packs, `serve` (a standalone bus on fixtures) and `connect`.
@@ -714,6 +739,18 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { rulesCommand } = await import('./rules-cmd.ts');
     return rulesCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
+  // `dexterm alerts status|enable|disable|levels|proposals|set-telegram|set-discord|test` → where rule alerts
+  // are delivered (task-1398). Credentials live in ~/.dexterm/*.json (0600), never config.json/argv/logs.
+  if (argv[0] === 'alerts') {
+    const { alertsCommand } = await import('./alerts-cmd.ts');
+    return alertsCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin as unknown as NodeJS.ReadStream });
+  }
+  // `dexterm watch [--interval S] [--once|--ticks N] [--replay FILE]` → run the rules engine headless and
+  // PUSH alerts to the enabled channels so they reach you when the terminal is closed (task-1398). No signer.
+  if (argv[0] === 'watch') {
+    const { watchCommand } = await import('./watch-cmd.ts');
+    return watchCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
   // `dexterm pack list|verify|add|remove|export|lock|sign|trust|signers|keymap|widget` → shareable packs (task-1358 Tier 4):
   // plain files + sha256 lock + optional ssh signature. No network, no model; a pack never runs code (widgets land
   // disabled, unsigned rules load disabled, a keymap merges only on the explicit command).
@@ -741,6 +778,18 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
   if (argv[0] === 'follow') {
     const { runFollow } = await import('./follow-cmd.ts');
     return runFollow(argv.slice(1), io);
+  }
+  // `dexterm update [--off|--on]` → is there a newer version, and the exact upgrade command for this install (task-1397).
+  // Two anonymous GETs (npm registry, GitHub releases); never upgrades anything itself.
+  if (argv[0] === 'update') {
+    const { updateCommand } = await import('./update.ts');
+    return updateCommand(argv.slice(1), io);
+  }
+  // `dexterm voice [status|download <model>]` → inspect the voice engines and download the optional
+  // voice models (whisper base.en, Piper voice). Downloads ask first and are checksum-verified (task-1408).
+  if (argv[0] === 'voice') {
+    const { voiceCommand } = await import('./voice-cmd.ts');
+    return voiceCommand(argv.slice(1), { stdin: io.stdin, stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm doctor` → a pre-flight that says whether dexterm will run here and how to fix what won't (task-1305).
   if (argv[0] === 'doctor') {
@@ -785,7 +834,7 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     return 2;
   }
   if (args.help) { io.stdout.write(HELP + '\n'); return 0; }
-  if (args.version) { io.stdout.write('0.1.1\n'); return 0; }
+  if (args.version) { io.stdout.write(`${VERSION}\n`); return 0; }
   if (args.unknown.length) { io.stderr.write(`dexterm: unknown option ${args.unknown[0]}\n${HELP}\n`); return 2; }
   if (!args.screen && (!io.stdout.isTTY || !io.stdin.isTTY)) {
     io.stderr.write('dexterm: interactive mode needs a TTY; use --screen for one-shot output\n');
@@ -870,6 +919,7 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
       if (liveCtx) feed.extraMints = () => [...liveCtx.newpairs.rows.keys()];
       applyScreenerArgs(state, args);
       if (args.mint) {
+        if (args.mintVia === 'dexscreener') args.mint = (await resolveCoinTarget({ address: args.mint, via: 'dexscreener', rest: '' }, ctx.dl)).mint;
         ctx.openToken({ mint: args.mint, symbol: args.mint.slice(0, 4) + '…', name: '', launchpad: 'unknown' });
         if (args.screen === null) state.screen = 'token';
       }
@@ -971,7 +1021,12 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     }
     const c = renderFrame(state, w, h);
     ctx?.newpairs.markDrawn();
-    if (args.html) {
+    if (args.export !== null) {
+      // task-1401: `--export [DIR]` writes the same PNG + text report the `E` key does (default ~/.dexterm/exports).
+      const now = Date.now();
+      const r = writeExport(exportViewFor(state, w, h, now), { now, env: io.env, dir: args.export || undefined });
+      io.stderr.write(`wrote ${r.png} (${r.bytes} bytes) and ${r.txt}\n`);
+    } else if (args.html) {
       // task-1326: `--html … --color 256` renders through the xterm palette (a Terminal.app-faithful proof)
       writeFileSync(args.html, c.toHtml({ title: args.title || `dexterm — ${args.screen} — ${state.theme.name}`, fit: args.fit, fontPx: args.fontPx ?? 15, depth: args.color ?? 'truecolor' }));
       io.stderr.write(`wrote ${args.html} (${w}×${h})\n`);
@@ -987,7 +1042,18 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     feed?.close();
     return 0;
   }
-  return interactive(state, io, depth, args, proc);
+  // task-1397: live interactive runs only: the cached "new version" notice (no network) plus, at most once a day,
+  // a background refresh that never blocks the start. Off with DEXTERM_NO_UPDATE_CHECK=1 / `dexterm update --off`.
+  const update = live ? (await import('./update.ts')).startupCheck(io.env) : null;
+  if (update) {
+    state.updateNotice = update.notice;
+    void update.refresh?.then((n) => { if (n) state.updateNotice = n; });
+  }
+  try {
+    return await interactive(state, io, depth, args, proc);
+  } finally {
+    update?.cancel();
+  }
 }
 
 const SCREEN_ORDER: ScreenKey[] = ['screener', 'newpairs', 'watchlist', 'analyst'];
@@ -1714,6 +1780,8 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     // task-1388 GO-TO prompt: open the one-line "paste a contract address to open any coin" input. The loop
     // captures keys into it (applyKey) and ⏎ opens the token screen; nothing here loads or trades.
     case 'goto.open': state.goto = { input: '', notice: null }; break;
+    // task-1401 EXPORT: the loop renders the current view calm and writes the PNG + report (local files only).
+    case 'export.view': state.pendingExport = true; break;
     case 'display.priceMode': state.pendingToast = togglePriceMode(state); break; // task-1366: display only, persisted
     case 'theme.next': state.theme = state.custom ? cycleTheme(state.custom, state.theme) : nextTheme(state.theme); break; // task-1358: user themes join the cycle
     // task-1358 workspaces. Every case is a UI action: navigate / re-theme / open read-only popups via the
@@ -1908,22 +1976,57 @@ function seedForMint(state: AppState, live: LiveContext, mint: string, symbol?: 
 // task-1388 GO-TO prompt: the longest input we keep (a bare base58 mint is ≤ 44; the longest coin URL we
 // accept is well under this), so a huge paste can never balloon the buffer.
 const GOTO_INPUT_MAX = 120;
-/** A full base58 Solana mint: 32–44 chars, no 0/O/I/l. Same shape `--mint` validates (main.ts parseArgs). */
-const GOTO_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+// task-1388's parser now lives in coin-target.ts (shared with the analyst chat, the filter line and --mint).
+export { parseMintTarget };
 
 /**
- * task-1388: turn a pasted/typed go-to target into a mint, or null when there is none. Accepts a bare base58
- * mint, or a dexscreener / pump.fun / solscan URL (or any text) by pulling the first base58 run of mint length.
- * Base58 excludes 0, O, I and l, so splitting on every non-base58 character also splits on them and on the URL
- * punctuation (/, :, ., ?, =, &), leaving each path/query segment as its own token; a real mint is never cut.
- * Pure and total: it only ever returns a validated mint string or null, and never throws. Exported for tests.
+ * task-1401: open a pasted coin target (a CA, or a dexscreener / pump.fun / solscan / birdeye link) on the LIVE token
+ * screen — the same read-only path `--screen token --mint` and the analyst's open_token use. A mint opens at once; a
+ * dexscreener link is first resolved to its coin (its address is usually the pool) and opens when that answers.
+ * `onOpened` runs after the open either way (the chat uses it to ask its question about the coin). Returns a notice
+ * when it cannot open (fixtures mode), else null. Never trades, never signs.
  */
-export function parseMintTarget(raw: string): string | null {
-  const s = raw.trim();
-  if (!s) return null;
-  if (GOTO_MINT_RE.test(s)) return s;
-  for (const tok of s.split(/[^1-9A-HJ-NP-Za-km-z]+/)) if (GOTO_MINT_RE.test(tok)) return tok;
+export function openCoinTarget(state: AppState, stack: ScreenKey[], t: CoinTarget, onOpened?: (mint: string) => void): string | null {
+  const live = state.live && state.screener.source !== 'fixtures' ? state.live : null;
+  if (!live) return 'opening a coin by address needs live mode (not --fixtures)';
+  const open = (mint: string): void => {
+    if (!(state.screen === 'token' && live.token?.view.mint === mint)) live.openToken(seedForMint(state, live, mint)); // already open: keep its loaded view
+    if (state.screen !== 'token') { stack.push(state.screen); state.screen = 'token'; }
+    onOpened?.(mint);
+  };
+  if (t.via !== 'dexscreener') { open(t.address); return null; }
+  live.notice = 'resolving the dexscreener link…';
+  void resolveCoinTarget(t, live.dl).then(({ mint, fromPair }) => {
+    if (live.isClosed) return;
+    live.notice = fromPair ? `dexscreener pool → coin ${mint.slice(0, 4)}…${mint.slice(-4)}` : null;
+    open(mint);
+    state.aiFocused = false;
+    syncAnalyst(state);
+    live.onChange('goto');
+  });
   return null;
+}
+
+/**
+ * task-1401: the analyst chat's ⏎. When the typed text names a coin (a CA or a coin link), open that coin's token
+ * view and, if a question came with it ("is <CA> a rug?"), ask it about THAT coin; returns true when it handled
+ * the input. Plain questions return false and go to the analyst as before.
+ */
+export function chatOpenCoin(state: AppState, stack: ScreenKey[], q: string, hooks: { ask: (question: string) => void; say: (msg: string, level: 'info' | 'warn', secs?: number) => void }): boolean {
+  const ct = q ? parseCoinTarget(q) : null;
+  if (!ct) return false;
+  state.aiInput = '';
+  const question = isBareOpen(ct.rest) ? '' : ct.rest;
+  const notice = openCoinTarget(state, stack, ct, (mint) => {
+    syncAnalyst(state);
+    if (question) {
+      state.aiOpen = true;
+      try { hooks.ask(question); } catch (e) { state.screener.notice = `⚠ ask failed: ${describeError(e)}`; }
+    } else { state.aiFocused = false; hooks.say(`opened ${mint.slice(0, 4)}…${mint.slice(-4)} from the chat`, 'info', 4); }
+  });
+  if (notice) hooks.say(notice, 'warn', 5);
+  return true;
 }
 
 /**
@@ -1931,6 +2034,7 @@ export function parseMintTarget(raw: string): string | null {
  * path `--screen token --mint` and the analyst's open_token use: live.openToken(seedForMint(...)), which seeds
  * an unknown-launchpad stub when the mint is not already on a screen). Bad input keeps the prompt open with a
  * one-line notice and changes nothing; a good open closes the prompt and pushes the current screen on the stack.
+ * task-1401: a dexscreener link is resolved pool → coin first (openCoinTarget).
  */
 function openGotoTarget(state: AppState, stack: ScreenKey[]): void {
   const g = state.goto;
@@ -1939,11 +2043,10 @@ function openGotoTarget(state: AppState, stack: ScreenKey[]): void {
   if (!raw) { state.goto = null; return; } // ⏎ on an empty prompt just closes it
   const mint = parseMintTarget(raw);
   if (!mint) { g.notice = 'not a contract address or a dexscreener / pump.fun / solscan link'; return; }
-  const live = state.live && state.screener.source !== 'fixtures' ? state.live : null;
-  if (!live) { g.notice = 'opening a coin by address needs live mode (not --fixtures)'; return; }
-  live.openToken(seedForMint(state, live, mint));
+  const t = parseCoinTarget(raw) ?? { address: mint, via: 'address' as const, rest: '' };
+  const notice = openCoinTarget(state, stack, t);
+  if (notice) { g.notice = notice; return; }
   state.goto = null;
-  if (state.screen !== 'token') { stack.push(state.screen); state.screen = 'token'; }
 }
 
 /**
@@ -2172,6 +2275,17 @@ export function applyKey(state: AppState, key: Key, stack: ScreenKey[]): Effect 
         sc.edit.text = sc.query ?? '';
         sc.edit.error = null;
         state.pendingToast = typeof cmd === 'object' ? cmd.error : scanCommand(state, cmd, stack);
+        return;
+      }
+      // task-1401: a pasted CA or coin link on the `/` line opens that coin (no filter field is a 32-44 char base58
+      // run); the editor closes and the previous filter stays applied.
+      const ct = parseCoinTarget(sc.edit.text);
+      if (ct && isBareOpen(ct.rest)) {
+        sc.mode = 'table';
+        sc.edit.text = sc.query ?? '';
+        sc.edit.error = null;
+        const notice = openCoinTarget(state, stack, ct);
+        if (notice) state.pendingToast = notice;
         return;
       }
       // task-1328: `/wallet …` is a command too (the loop performs it: link opens a browser, probe opens a ticket).
@@ -3025,6 +3139,21 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       if (plan.skipped.length) say(`skipped ${plan.skipped.map((s) => `${s.kind} (${s.why})`).join(', ')}`, 'info', 5);
       scheduleDraw();
     };
+    // task-1398: PUSH delivery while the TUI is open. Built only when the user enabled a push channel
+    // (desktop/telegram/discord); otherwise null and there is no behaviour change. The in-app toast is
+    // still state.pendingToast, so the Notifier's toast sink is a no-op here (routing may still include it,
+    // harmlessly). Delivery is fire-and-forget: a slow channel never blocks the frame.
+    const alertNotifier = state.custom && hasPushChannel(state.custom.config.alerts)
+      ? buildNotifier(state.custom.home, state.custom.config.alerts, { toastSink: () => {} })
+      : null;
+    const drainDeliveries = (): void => {
+      const ui = state.rulesUi;
+      if (!ui || !ui.pendingDeliveries.length) return;
+      const ds = ui.pendingDeliveries;
+      ui.pendingDeliveries = [];
+      if (!alertNotifier) return;
+      for (const d of ds) void alertNotifier.deliver(d).catch(() => { /* never crash the loop on a channel failure */ });
+    };
     // task-1358 Tier 3: perform what the rules engine / an accepted proposal queued. A ticket proposal opens the
     // PAPER ticket in its editing phase (the user sizes + confirms there; signer caps apply) — never a live ticket,
     // never a confirm. An ask proposal is a question to the analyst. Popups are the same read-only windows the keys
@@ -3264,18 +3393,39 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       // 'thinking' (task-1282 rework D3).
       else voice.abortTurn(session.status === 'error' ? "Sorry — the analyst hit an error. Try again." : "Okay, stopped.");
     };
+    // task-1393: persist the `,` voice choice to config.voice.name (actor 'user', journaled → undo works).
+    // Best-effort: a persistence failure keeps the voice for this run and never breaks the UI.
+    const persistVoiceChoice = (voiceName: string): void => {
+      const ui = state.custom;
+      if (!ui) return;
+      try {
+        const op = ui.config.voice
+          ? { op: 'add' as const, path: '/voice/name', value: voiceName }
+          : { op: 'add' as const, path: '/voice', value: { name: voiceName } };
+        const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `, voice ${voiceName}`, now: state.now.getTime() });
+        ui.config = config;
+      } catch { /* keep the voice for this run; nothing to surface */ }
+    };
     const initVoice = async (): Promise<void> => {
       if (voiceInitStarted) return;
       voiceInitStarted = true;
       state.voice = { enabled: true, mode: 'idle', muted: false, voice: null, transcript: null, say: null, message: 'preparing voice…' };
       scheduleDraw();
+      // task-1393: the user's saved voice/rate (if any). A missing/banned name is resolved to a safe
+      // deep British male by selectTts — it never falls back to the machine's system voice.
+      const cfgVoice = state.custom?.config.voice;
       let stt = null, tts = null;
-      try { [stt, tts] = await Promise.all([selectStt(), selectTts()]); } catch { /* both null → degrade to text */ }
+      try { [stt, tts] = await Promise.all([selectStt(), selectTts(undefined, cfgVoice?.name ?? null)]); } catch { /* both null → degrade to text */ }
       if (done) return;
+      // Seed the controller with the ENGINE's resolved voice so its cycle/status start on the British male,
+      // not on voices[0] (which could be a novelty voice like "Albert").
+      const resolvedVoice = tts instanceof SayTts ? tts.voiceName : undefined;
+      const style = voiceStyleDefaults(resolvedVoice); // the picked voice's own rate/pitch, unless the user saved theirs
       voice = new VoiceController({
-        stt, tts, getScreenState: voiceScreenState,
+        stt, tts, voice: resolvedVoice, rate: cfgVoice?.rate ?? style?.rate, pitch: cfgVoice?.pitch ?? style?.pitch, getScreenState: voiceScreenState,
         onState: () => { if (!done && voice) { state.voice = toHud(); scheduleDraw(); } },
         onDecision: handleVoiceDecision,
+        onVoiceChange: persistVoiceChoice,
       });
       voice.enable();
       await voice.toggleTalk(); // the first `v` press both enables and starts listening
@@ -3594,6 +3744,14 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
               draw();
               continue;
             }
+            // task-1401: a CA or a dexscreener / pump.fun / solscan / birdeye link in the chat opens that coin's token
+            // view (read-only, the go-to path); any question typed with it is then asked about THAT coin.
+            const before = state.screen;
+            if (chatOpenCoin(state, stack, q, { ask: sendChat, say })) {
+              if (state.screen !== before) { try { startTransition(); } catch { transition = null; } }
+              draw();
+              continue;
+            }
             if (q) { state.aiInput = ''; try { sendChat(q); } catch (e) { state.screener.notice = `⚠ ask failed: ${describeError(e)}`; } }
             draw();
             continue;
@@ -3722,6 +3880,16 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         copyToClipboard(m);
         say(`copied CA  ${m.slice(0, 4)}…${m.slice(-4)}`, 'info');
       }
+      if (state.pendingExport) {
+        // task-1401: one key → PNG + text report of the current view in ~/.dexterm/exports. Nothing is uploaded.
+        state.pendingExport = false;
+        try {
+          const [ew, eh] = size();
+          const now = Date.now();
+          const r = writeExport(exportViewFor(state, ew, eh, now), { now, env: io.env });
+          say(`exported PNG + report → ${r.png.replace(homedir(), '~')} · local only, nothing uploaded`, 'info', 8);
+        } catch (e) { say(`export failed: ${describeError(e)}`, 'warn', 6); }
+      }
       if (state.pendingToast) {
         // task-1315: surface the link list / "no link" reply as a durable toast. Drained BEFORE
         // pendingOpen so that on a successful open the "opened <url>" toast overwrites the "open <url>" one.
@@ -3771,6 +3939,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           if (v.frame >= bootFrames + bootHold) endBoot();
         }
         if (v.frame % tickEvery === 0) {
+          // task-1397: the "new version available" toast, once, after the boot and never over the welcome card.
+          if (state.updateNotice && state.screen !== 'boot' && !state.overlay) { say(state.updateNotice, 'info', 8); state.updateNotice = null; }
           if (feed) {
             if (!state.paused && Date.now() - lastRefresh >= LIVE_REFRESH_MS) refresh();
             // live screens keep their own cadence (task-1298): token / watchlist every 10 s, new pairs recompute ages/rows at the 2 Hz tick
@@ -3787,7 +3957,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
               // task-1324: AI scan tick (self-throttled to SCAN_TICK_MS; no requests, no draws of its own).
               if (state.scan?.engine.on) { try { scanTick(); } catch (e) { state.screener.notice = `⚠ scan tick failed: ${describeError(e)}`; } }
               // task-1358 Tier 3: rules engine tick (self-throttled, pure; outputs are toasts, the log, PROPOSAL cards, pending UI).
-              if (state.rulesUi) { try { if (rulesTick(state, Date.now())) flusher.invalidate(); drainRulesPending(); } catch (e) { state.screener.notice = `⚠ rules tick failed: ${describeError(e)}`; } }
+              if (state.rulesUi) { try { if (rulesTick(state, Date.now())) flusher.invalidate(); drainRulesPending(); drainDeliveries(); } catch (e) { state.screener.notice = `⚠ rules tick failed: ${describeError(e)}`; } }
               // task-1329: recorder maintenance (outcome sweeps at low limiter priority, labels, retention). It never
               // throws and never draws; the sweep is the only request path and it is budgeted inside maintain().
               if (live.recorder && recorderSchedule.due(Date.now())) void live.recorder.maintain(live.dl);
@@ -3802,7 +3972,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             state.screener.rows.forEach((r) => { if (r.fixture) Object.assign(r, { price: r.fixture.price, mcap: r.fixture.mcap, vol24: r.fixture.vol24, buys: r.fixture.buys, sells: r.fixture.sells, spark: r.fixture.spark }); });
             state.refreshedAgo = `${Math.floor(rnd() * 4) + 1}s`;
             // task-1358 Tier 3: rules run on the drifting fixture rows too (demo / fixtures mode).
-            if (state.rulesUi) { try { if (rulesTick(state, Date.now())) flusher.invalidate(); drainRulesPending(); } catch (e) { state.screener.notice = `⚠ rules tick failed: ${describeError(e)}`; } }
+            if (state.rulesUi) { try { if (rulesTick(state, Date.now())) flusher.invalidate(); drainRulesPending(); drainDeliveries(); } catch (e) { state.screener.notice = `⚠ rules tick failed: ${describeError(e)}`; } }
           }
           // market → rain: EMA on activity every tick, mood from the data every 4 s unless an event holds it
           blendActivity(v, activityFor(state), v.frame % (tickEvery * 8) === 0 && v.frame >= moodHoldUntil);

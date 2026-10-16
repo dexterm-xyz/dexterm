@@ -14,8 +14,9 @@ import { shellBinaryPath } from '@dexterm/popup';
 import { detectColorDepth, type ColorDepth, protocolFromEnv } from '@dexterm/tui';
 import { resolveRpcUrl, defaultDbPath } from '@dexterm/data';
 import { XTokenStore } from '@dexterm/data';
-import { SayTts, voiceDoctor, WHISPER_MODEL, type VoiceDoctorDeps } from '@dexterm/voice';
+import { SayTts, voiceDoctor, resolveVoice, WHISPER_MODEL, resolvePiperBin, pickPlayer, PIPER_MODEL, type VoiceDoctorDeps } from '@dexterm/voice';
 import type { MergedSet } from '@dexterm/mcp';
+import { loadConfig, dextermHome } from '@dexterm/custom';
 import { kbStore, skillStore } from './kb-skill-cmd.ts';
 
 /** The minimum Node that runs dexterm (type-stripping of the .ts entry needs 22.18). */
@@ -80,16 +81,29 @@ function onPath(bin: string): boolean {
  * Default voice probe. Deliberately cheap and non-blocking: it never compiles the Swift helper (that
  * is left to the first real `v` press), so resolvedStt is inferred from swiftc / whisper presence.
  */
-export async function defaultVoiceProbe(platform: NodeJS.Platform = process.platform): Promise<VoiceDoctorDeps> {
+export async function defaultVoiceProbe(platform: NodeJS.Platform = process.platform, configuredVoice?: string | null): Promise<VoiceDoctorDeps> {
   const say = new SayTts();
   const sayAvailable = platform === 'darwin' ? await say.available() : false;
-  const voices = sayAvailable ? await say.listVoices() : [];
+  const voices = sayAvailable ? await say.listVoicesDetailed() : [];
   const swiftcPresent = platform === 'darwin' && onPath('swiftc');
   const whisperBinPresent = onPath('whisper-cli');
   const whisperModelPresent = existsSync(WHISPER_MODEL);
-  const micToolPresent = onPath('sox') || onPath('rec') || onPath('ffmpeg');
+  const micToolPresent = onPath('sox') || onPath('rec') || onPath('ffmpeg') || onPath('arecord');
+  // Apple Speech is macOS-only; everywhere else whisper.cpp is the default voice-in (task-1393 Part 2).
   const resolvedStt = swiftcPresent ? 'apple' : (whisperBinPresent && whisperModelPresent && micToolPresent) ? 'whisper' : null;
-  return { platform, sayAvailable, voiceCount: voices.length, swiftcPresent, whisperBinPresent, whisperModelPresent, micToolPresent, resolvedStt };
+  // espeak-ng is the baseline portable speech-out engine off macOS.
+  const espeakPresent = platform !== 'darwin' && (onPath('espeak-ng') || onPath('espeak'));
+  // Piper is the preferred neural speech-out engine off macOS (task-1408): binary + voice model + a player.
+  const piperPresent = platform !== 'darwin' && resolvePiperBin() !== null;
+  const piperVoicePresent = platform !== 'darwin' && existsSync(PIPER_MODEL);
+  const playerName = platform !== 'darwin' ? pickPlayer() : null;
+  // task-1393: show which voice will actually speak, and why — never a silent system/novelty voice.
+  const r = sayAvailable ? resolveVoice({ configured: configuredVoice, installed: voices }) : { voice: null, reason: '' };
+  return {
+    platform, sayAvailable, voiceCount: voices.length, swiftcPresent, whisperBinPresent, whisperModelPresent, micToolPresent, resolvedStt,
+    espeakPresent, piperPresent, piperVoicePresent, playerName,
+    resolvedVoice: sayAvailable ? r.voice : undefined, resolvedVoiceReason: r.reason,
+  };
 }
 
 /** The keyless data sources the live app depends on, with a cheap reachability URL for each. */
@@ -180,7 +194,7 @@ export function defaultDeps(env: NodeJS.ProcessEnv = process.env, isTTY = proces
       const cargo = spawnSync('cargo', ['--version'], { stdio: 'ignore', timeout: 3000 }).status === 0;
       return { path, built: existsSync(path), cargo };
     },
-    voiceProbe: () => defaultVoiceProbe(process.platform),
+    voiceProbe: () => defaultVoiceProbe(process.platform, loadConfig(dextermHome(env)).config.voice?.name ?? null),
     content: () => ({ kb: kbStore(env).get(), skills: skillStore(env).get() }),
   };
 }

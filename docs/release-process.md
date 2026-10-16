@@ -8,10 +8,10 @@ Repository → Settings:
 
 - **Actions → General**: workflow permissions "Read repository contents and packages permissions" (the workflows request what they need per job). Fork PRs cannot access secrets by default; keep it that way.
 - **Secrets**: `VT_API_KEY` (VirusTotal public API key; optional — without it the VirusTotal entries are `pending`). `SITE_REPO_TOKEN` only if `SITE_REPO` is set (a fine-grained token with contents + pull-requests write on the site repo only).
-- **Variables**: `LICENSE_SPDX` (e.g. `AGPL-3.0-only`) so scan-results.json carries it; `NPM_PUBLISH` = `true` only after [npm-publish-shape.md](npm-publish-shape.md) is done; `SITE_REPO` = `owner/site-repo` to have the pipeline open a PR with `scan-results.json`.
+- **Variables**: `LICENSE_SPDX` (e.g. `AGPL-3.0-only`) so scan-results.json carries it; `NPM_PUBLISH` = `true` once the npm trusted publisher is set up ([npm-publish-shape.md](npm-publish-shape.md)); no npm token secret is needed; `SITE_REPO` = `owner/site-repo` to have the pipeline open a PR with `scan-results.json`.
 - **Rulesets**: protect `main` (PR required, CI required, no force push) and protect tags `v*` (only maintainers create). OpenSSF Scorecard reads rulesets with the default token.
 - **Security**: enable private vulnerability reporting, Dependabot alerts, Dependabot security updates. Code scanning: the scorecard workflow uploads SARIF.
-- **npmjs.com** (later): the trusted publisher for `dexterm` → GitHub Actions, this repo, `publish.yml`, direct `npm publish` allowed; the first version needs the one-time `NPM_TOKEN` path in `docs/npm-publish-shape.md`.
+- **npmjs.com**: the trusted publisher for `dexterm-cli` → GitHub Actions, `dexterm-xyz` / `dexterm`, `publish.yml`, no environment, direct `npm publish` allowed; then Publishing access → "Require two-factor authentication and disallow tokens" ([npm-publish-shape.md](npm-publish-shape.md)).
 
 ## Cutting a release
 
@@ -25,7 +25,7 @@ Repository → Settings:
 4. `release.yml` runs: clean checkout → `npm ci` → typecheck → tests (offline) → `build.mjs` (reproducible tarball) → `sbom.mjs` → `checksums.mjs` → build-provenance attestation over `SHA256SUMS` → SBOM attestation → `supply-chain.mjs` → `virustotal.mjs` (live if the key is set) → `scan-results.mjs` → draft release with the tarball, `SHA256SUMS`, the SBOM and `scan-results.json`.
 5. Open the draft release. Check: the checksums in the notes match the assets; `gh attestation verify dexterm-0.1.0-src.tar.gz --owner dexterm-xyz` passes; `scan-results.json` says what you expect (a `flagged` entry is not a reason to hide the release; see [false-positives.md](false-positives.md)). Edit the notes.
 6. **Publish** the draft. This is the only step that makes anything public, and a person does it.
-7. `publish.yml` then runs the gated jobs: npm (if `NPM_PUBLISH`), site PR (if `SITE_REPO`).
+7. `publish.yml` then runs the gated jobs: npm through trusted publishing with provenance (if `NPM_PUBLISH`), site PR (if `SITE_REPO`).
 8. `rescan.yml` re-scans the latest published release every Sunday 06:00 UTC and replaces its `scan-results.json`; the site picks it up through the next PR or at build time.
 
 ## Local dry run

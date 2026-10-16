@@ -13,3 +13,7 @@ export * from './sound.ts';
 export * from './bubbles.ts';
 export * from './chrome.ts';
 export * from './images/index.ts';
+
+// task-1401: rasterize a canvas to RGBA for the export/share PNG (bitmap font + procedural box/blocks/braille).
+export * from './raster.ts';
+export { glyphBits, fontChars, FONT_W, FONT_H } from './raster-font.ts';

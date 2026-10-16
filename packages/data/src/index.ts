@@ -49,6 +49,9 @@ export { parseSignerArgs, buildSignerService, type SignerArgs } from './trade/si
 export * from './larp/links.ts';
 export * from './larp/safe-fetch.ts';
 export * from './larp/evidence.ts';
+export * from './larp/link-baseline.ts';
+// task-1401: parse a CA / coin link from any input (go-to, analyst chat, filter line, --mint, MCP refs).
+export * from './coin-target.ts';
 export * from './analyst-actions.ts';
 export * from './intel/rules.ts';
 export * from './intel/holder-class.ts';

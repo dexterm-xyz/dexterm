@@ -189,6 +189,20 @@ export class DexScreener {
     return out;
   }
 
+  /**
+   * task-1401: the coin a pair (pool) trades. A dexscreener.com/solana/<address> link usually names the POOL, not
+   * the mint, so a pasted link is resolved here before the token screen opens. Null when DexScreener has no Solana
+   * pair at that address (the caller then treats it as a mint). The side that is not wrapped SOL wins.
+   */
+  async pairCoin(pairAddress: string): Promise<string | null> {
+    const r = await this.http.getJson<{ pairs?: DsRawPair[] | null; pair?: DsRawPair | null }>(`${this.base}/latest/dex/pairs/${CHAIN}/${encodeURIComponent(pairAddress)}`, FAST);
+    const list = r.data?.pairs ?? (r.data?.pair ? [r.data.pair] : []);
+    const p = (Array.isArray(list) ? list : []).find((x) => x?.chainId === CHAIN && x.pairAddress === pairAddress);
+    if (!p) return null;
+    const WSOL = 'So11111111111111111111111111111111111111112';
+    return p.baseToken?.address === WSOL && p.quoteToken?.address ? p.quoteToken.address : p.baseToken?.address ?? null;
+  }
+
   async tokenPairs(mint: string): Promise<Pair[]> {
     const r = await this.http.getJson<DsRawPair[]>(`${this.base}/token-pairs/v1/${CHAIN}/${mint}`, FAST);
     return (Array.isArray(r.data) ? r.data : []).filter((p) => p.chainId === CHAIN).map((p) => normalizePair(p, r.fetchedAt));

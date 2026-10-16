@@ -25,10 +25,22 @@ export interface VoiceDoctorDeps {
   whisperBinPresent: boolean;
   /** whisper base.en model present on disk. */
   whisperModelPresent: boolean;
-  /** A mic-capture tool (sox/rec or ffmpeg) present — needed by the whisper path. */
+  /** A mic-capture tool (sox/rec or ffmpeg, or arecord on Linux) present — needed by the whisper path. */
   micToolPresent: boolean;
   /** The STT engine that resolved for this machine, or null when voice-in is unavailable. */
   resolvedStt: string | null;
+  /** espeak-ng (or espeak) present — the portable Linux/Windows speech-out engine (task-1393 Part 2). */
+  espeakPresent?: boolean;
+  /** Piper binary present — the preferred neural speech-out engine off macOS (task-1408). */
+  piperPresent?: boolean;
+  /** The Piper voice model (en_GB-alan-medium) present on disk. */
+  piperVoicePresent?: boolean;
+  /** The audio player that will play a Piper WAV (aplay/paplay/ffplay), or null when none is installed. */
+  playerName?: string | null;
+  /** The `say` voice that resolved as the default, or null when no safe voice is installed (task-1393). */
+  resolvedVoice?: string | null;
+  /** Why that voice was chosen (for the "default voice" line). */
+  resolvedVoiceReason?: string;
 }
 
 /** Produce the voice checks. Never throws. */
@@ -36,17 +48,76 @@ export function voiceDoctor(deps: VoiceDoctorDeps): VoiceCheck[] {
   const checks: VoiceCheck[] = [];
 
   if (deps.platform !== 'darwin') {
-    checks.push({
-      name: 'Voice mode', status: 'warn',
-      detail: `voice mode is macOS-only for now (speech uses the built-in \`say\` and Apple Speech); on ${deps.platform} it stays off and dexterm runs as text`,
-      fix: 'Use dexterm on macOS for voice, or just use the keyboard — every voice action has a key.',
-    });
+    const win = deps.platform === 'win32';
+    // Speech OUT off macOS: Piper (neural, preferred) → espeak-ng (baseline) → warn (task-1408).
+    // NOTE: `apt install piper` on Debian is an UNRELATED gaming-mouse tool — never suggest it; the
+    // Piper TTS binary comes from the rhasspy/piper prebuilt release, the voice from `dexterm voice download`.
+    const piperRelease = 'github.com/rhasspy/piper/releases';
+    const whisperRelease = 'github.com/ggml-org/whisper.cpp/releases';
+    const piperReady = !!deps.piperPresent && !!deps.piperVoicePresent && !!deps.playerName;
+    // What Piper is still missing (for an upgrade hint / the no-voice fix).
+    const piperBits: string[] = [];
+    if (!deps.piperPresent) piperBits.push(`the Piper binary (prebuilt from ${piperRelease} into \`~/.dexterm/piper/\`, NOT \`apt install piper\`)`);
+    if (!deps.piperVoicePresent) piperBits.push('the voice model (`dexterm voice download piper-voice` — asks first, checksum-verified)');
+    if (!deps.playerName) piperBits.push(win ? 'an audio player (ffplay from ffmpeg)' : 'an audio player (`sudo apt install alsa-utils` for aplay, or pulseaudio-utils for paplay)');
+
+    if (piperReady) {
+      checks.push({ name: 'Voice out (Piper)', status: 'pass', detail: `Piper neural voice ready — en_GB-alan-medium, plays via ${deps.playerName} (local, no key)` });
+    } else if (deps.espeakPresent) {
+      checks.push({
+        name: 'Voice out (espeak-ng)', status: 'pass',
+        detail: `espeak-ng ready — British male default (local, no key). For a higher-quality neural voice, add Piper: ${piperBits.join('; ')}`,
+      });
+    } else {
+      checks.push({
+        name: 'Voice out', status: 'warn',
+        detail: `spoken replies are off on ${deps.platform} until a speech engine is installed; the analyst still answers in text`,
+        fix: win
+          ? 'Install espeak-ng (`choco install espeak` or the espeak-ng release). For a neural voice, add Piper (prebuilt from '
+            + `${piperRelease}) + \`dexterm voice download piper-voice\` + ffplay.`
+          : 'Fastest: `sudo apt install espeak-ng`. Better (neural): install the Piper prebuilt binary from '
+            + `${piperRelease} into \`~/.dexterm/piper/\`, run \`dexterm voice download piper-voice\`, and \`sudo apt install alsa-utils\` for a player. `
+            + 'Do NOT `apt install piper` — on Debian that is an unrelated mouse tool.',
+      });
+    }
+    // Speech IN — whisper.cpp (the default off macOS). Not in Debian: use the prebuilt release.
+    if (deps.resolvedStt === 'whisper' || (deps.whisperBinPresent && deps.whisperModelPresent && deps.micToolPresent)) {
+      checks.push({ name: 'Voice in (whisper)', status: 'pass', detail: 'whisper.cpp base.en + a mic tool (local, no key)' });
+    } else {
+      const bits: string[] = [];
+      if (!deps.whisperBinPresent) bits.push('no whisper-cli');
+      else if (!deps.whisperModelPresent) bits.push('no base.en model');
+      if (!deps.micToolPresent) bits.push('no mic tool (arecord/sox/ffmpeg)');
+      checks.push({
+        name: 'Voice in', status: 'warn',
+        detail: `speech-to-text is off (${bits.join(', ') || 'whisper not set up'}); you can still type questions — voice degrades to text`,
+        fix: `Install whisper.cpp (not in Debian — use the prebuilt release from ${whisperRelease}) + a mic tool `
+          + '(`sudo apt install alsa-utils` for arecord, or sox), then `dexterm voice download whisper` (asks first, checksum-verified).',
+      });
+    }
+    if (win) {
+      checks.push({
+        name: 'Windows voice', status: 'warn',
+        detail: 'espeak-ng (or Piper) is the supported Windows speech-out path; native SAPI is not wired in this build',
+        fix: 'Use espeak-ng or Piper on Windows for now. (SAPI support is a later enhancement.)',
+      });
+    }
     return checks;
   }
 
   // Speech OUT — macOS say.
   if (deps.sayAvailable) {
     checks.push({ name: 'Voice out (say)', status: 'pass', detail: `macOS \`say\` ready · ${deps.voiceCount} voice${deps.voiceCount === 1 ? '' : 's'} (press the voice key, then cycle the voice)` });
+    // Which voice speaks, and why — so a machine can never silently use a novelty/odd system voice (task-1393).
+    if (deps.resolvedVoice) {
+      checks.push({ name: 'Default voice', status: 'pass', detail: `${deps.resolvedVoiceReason ?? deps.resolvedVoice} · , changes it` });
+    } else if (deps.resolvedVoice === null) {
+      checks.push({
+        name: 'Default voice', status: 'warn',
+        detail: deps.resolvedVoiceReason ?? 'no safe voice installed — spoken replies are off (text still works)',
+        fix: 'Install a British male voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices (Daniel, English (UK)); the Enhanced/Premium download sounds best.',
+      });
+    }
   } else {
     checks.push({
       name: 'Voice out (say)', status: 'warn',
@@ -71,8 +142,8 @@ export function voiceDoctor(deps: VoiceDoctorDeps): VoiceCheck[] {
       name: 'Voice in', status: 'warn',
       detail: `speech-to-text is off (${bits.join(', ')}); you can still type questions — voice degrades to text`,
       fix: 'Fastest free path: install Xcode command line tools for Apple Speech (`xcode-select --install`). '
-        + 'Or whisper: `brew install whisper-cpp sox`, then download base.en to '
-        + '`~/.dexterm/models/ggml-base.en.bin` (from the whisper.cpp model repo). Never use large-v3-turbo on a CPU-only Mac — it is unusably slow.',
+        + 'Or whisper: `brew install whisper-cpp sox`, then `dexterm voice download whisper` (asks first, checksum-verified, writes '
+        + '`~/.dexterm/models/ggml-base.en.bin`). Never use large-v3-turbo on a CPU-only Mac — it is unusably slow.',
     });
   }
 

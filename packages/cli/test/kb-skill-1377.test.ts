@@ -80,7 +80,9 @@ test('skill: edit copies the bundled analyst skill, the analyst turn gets a merg
     assert.equal(analystPluginDir(tmp0, env), PLUGIN_DIR);
     const e = io(env, editWith((t) => t.replace('## Reading order', '## My extra check\n\n- Weigh the dev wallet first.\n\n## Reading order')));
     assert.equal(await kbSkillCommand('skill', ['edit', 'rug-check'], e), 0, e.out + e.err);
-    assert.match(fs.readFileSync(path.join(dir, 'skills', 'rug-check.md'), 'utf8'), /version: 0\.2\.0/, 'the copy is the analyst plugin\'s current skill');
+    // task-1401: compare with the bundled skill's own version (it moves when the default skills are re-tuned)
+    const bundledVersion = /^version: (.+)$/m.exec(fs.readFileSync(path.join(PLUGIN_DIR, 'skills', 'rug-check', 'SKILL.md'), 'utf8'))![1];
+    assert.match(fs.readFileSync(path.join(dir, 'skills', 'rug-check.md'), 'utf8'), new RegExp(`^version: ${bundledVersion.replace(/\./g, '\\.')}$`, 'm'), 'the copy is the analyst plugin\'s current skill');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dexterm-turn-'));
     const plugin = analystPluginDir(tmp, env);
     assert.equal(plugin, path.join(tmp, 'plugin'));

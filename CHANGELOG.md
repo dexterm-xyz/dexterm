@@ -2,6 +2,31 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.2] - 2026-10-16
+
+A reliability and reach release: a sensible default voice, a fix for the "history failed" error on the token screen, a built-in update check, headless alerts, one-step agent setup, early Linux voice support, and a way to export and share what you see. Trading is still experimental.
+
+### Added
+
+- **`dexterm update`**: checks for a newer release and updates an npm or source install in place; `dexterm update --off` turns off the once-a-day startup notice (so does `DEXTERM_NO_UPDATE_CHECK=1`). The check is two anonymous GETs to `registry.npmjs.org` and `api.github.com` and sends no telemetry.
+- **Push alerts and `dexterm watch`**: run your rules headless, with the terminal closed, and have alerts pushed to your desktop, your own Telegram bot or a Discord webhook. Delivery is opt-in and off by default; dexterm connects to Telegram or Discord only after you enable and configure it, and your tokens stay local and are never logged. `watch` has no signer and only ever raises proposals.
+- **One-step agent setup**: `dexterm mcp install <client>` writes the MCP config for `claude-code`, `claude-desktop`, `cursor`, `codex`, `openclaw` or a generic agent — it shows the exact change, asks first, is idempotent and backs the file up — and `dexterm mcp doctor` connects to the server and lists its tools. The read-only MCP server now exposes 25 tools, including a one-call `larp_check`, and agents have per-agent capability tiers and standing mandates.
+- **Export and share a view**: press `E` (or run with `--export`) to save the current screen as a PNG and a plain-text report under `~/.dexterm/exports` (local only). Paste a contract address or a token link anywhere a prompt accepts one to jump straight to that coin.
+- **Linux voice (beta)**: optional Piper (text-to-speech) and whisper.cpp (speech-to-text) engines, with `dexterm voice` to download the models from Hugging Face when you ask for them. Real speaker and microphone I/O on Linux is not yet verified on hardware; treat it as beta.
+- **LARP and skill backtests**: the LARP detector's links/domain/activity check now has a measured accuracy from a held-out backtest, reported honestly — on its own it is a weak signal, not a verdict — and saved skills can be backtested against held-out history the same way.
+
+### Changed
+
+- **A sensible default voice.** Voice output now defaults to an explicit deep British voice (Eddy, with Daniel as the fallback) instead of the machine's system voice, which varied by machine and could be a novelty voice. A novelty voice can never be auto-selected. Speech is sanitised before it is spoken and queued so lines do not overlap, and `voice.name`, `voice.rate` and `voice.pitch` are configurable.
+
+### Fixed
+
+- **"History failed" on the token screen.** Holder and transaction history now loads: a Helius request could reject a whole page of results when a single older transaction did not fit a version limit; that is fixed, and the pump.fun replay used in tests is now deterministic.
+
+### Known issues
+
+- **Trading is still experimental.** Paper trading and the live (wallet-signed) path still have bugs; do not rely on either for anything that matters.
+
 ## [0.1.1] - 2026-10-15
 
 The first release published to npm. `npm i -g dexterm-cli` now installs it (npm refuses the name `dexterm` as too similar to `xterm`; the command is still `dexterm`). This upload was published by hand, so it has no build provenance yet. The GitHub release tarball and the Homebrew tap are unchanged.

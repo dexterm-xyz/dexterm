@@ -9,6 +9,11 @@ puts the coin on screen: the app consumes the channel, applies the action, and
 shows an "analyst opened …" note. Captures all pty output to --out.
 
 Usage: python3 -I action-pty.py --sample FILE --fake-dir DIR --out FILE --home DIR
+
+Each step waits for the screen to show the expected content (task-1410: fixed sleeps flaked under
+parallel-suite CPU load — a slow boot or a slow fake `claude` spawn meant the next key landed before
+the app was ready). A wait that times out just continues; the test's own assertions then fail.
+Wait outcomes go to OUT.waits.txt.
 """
 from __future__ import annotations
 
@@ -18,6 +23,7 @@ import os
 import struct
 import termios
 import time
+import re
 import select
 import subprocess
 import pty
@@ -26,6 +32,79 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.abspath(os.path.join(HERE, "..", "..", "bin", "dexterm.mjs"))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 COLS, ROWS = 140, 40
+
+
+CSI = re.compile(rb"\x1b\[([?0-9;]*)([A-Za-z@])")
+
+
+class Grid:
+    """The minimal screen model drive.py uses (cursor moves, clears, text) — enough to read the live frame."""
+
+    def __init__(self, cols: int, rows: int) -> None:
+        self.cols, self.rows = cols, rows
+        self.cells = [[" "] * cols for _ in range(rows)]
+        self.r = self.c = 0
+        self.pending = b""
+
+    def feed(self, data: bytes) -> None:
+        buf = self.pending + data
+        i = 0
+        while i < len(buf):
+            b = buf[i]
+            if b == 0x1B:
+                m = CSI.match(buf, i)
+                if m:
+                    params, final = m.group(1).decode(), m.group(2).decode()
+                    if final in "Hf":
+                        p = [int(x) if x else 1 for x in params.split(";")] if params else [1, 1]
+                        self.r = max(0, min(self.rows - 1, (p[0] if p else 1) - 1))
+                        self.c = max(0, min(self.cols - 1, (p[1] if len(p) > 1 else 1) - 1))
+                    elif final == "J" and params in ("", "2"):
+                        self.cells = [[" "] * self.cols for _ in range(self.rows)]
+                    elif final == "K":
+                        for c in range(self.c, self.cols):
+                            self.cells[self.r][c] = " "
+                    i = m.end()
+                    continue
+                if i + 1 >= len(buf) or buf[i + 1:i + 2] == b"[":
+                    self.pending = buf[i:]
+                    return
+                if buf[i + 1:i + 2] == b"]":  # OSC ... BEL/ST
+                    ends = [x for x in (buf.find(b"\x07", i), buf.find(b"\x1b\\", i)) if x >= 0]
+                    if not ends:
+                        self.pending = buf[i:]
+                        return
+                    e = min(ends)
+                    i = e + (1 if buf[e] == 0x07 else 2)
+                    continue
+                i += 2
+                continue
+            if b == 0x0D:
+                self.c = 0
+                i += 1
+                continue
+            if b == 0x0A:
+                self.r = min(self.rows - 1, self.r + 1)
+                i += 1
+                continue
+            if b < 0x20:
+                i += 1
+                continue
+            n = 1 if b < 0x80 else 2 if b < 0xE0 else 3 if b < 0xF0 else 4
+            if i + n > len(buf):
+                self.pending = buf[i:]
+                return
+            ch = buf[i:i + n].decode("utf-8", errors="replace")
+            i += n
+            if ch in "\u200b\ufe0f" or (len(ch) == 1 and 0x300 <= ord(ch) <= 0x36F):
+                continue
+            if self.c < self.cols:
+                self.cells[self.r][self.c] = ch
+            self.c += 1
+        self.pending = b""
+
+    def text(self) -> str:
+        return "\n".join("".join(row).rstrip() for row in self.cells)
 
 
 def main() -> int:
@@ -58,6 +137,9 @@ def main() -> int:
     os.close(slave)
 
     buf = bytearray()
+    grid = Grid(COLS, ROWS)
+    waits: list[str] = []
+    t_start = time.time()
 
     def drain(seconds: float) -> None:
         end = time.time() + seconds
@@ -71,6 +153,19 @@ def main() -> int:
                 if not chunk:
                     return
                 buf.extend(chunk)
+                grid.feed(chunk)
+
+    def wait_for(pattern: str, limit: float, settle: float = 0.2) -> None:
+        """Drain until the live frame matches `pattern` (regex) or `limit` seconds pass, then `settle`."""
+        rx = re.compile(pattern, re.I)
+        t0 = time.time()
+        while time.time() - t0 < limit and not rx.search(grid.text()):
+            drain(0.05)
+            if proc.poll() is not None:
+                break
+        hit = bool(rx.search(grid.text()))
+        waits.append(f"t={time.time() - t_start:.1f}s {'ok' if hit else 'TIMEOUT'} {time.time() - t0:.1f}s {pattern}")
+        drain(settle)
 
     def send(data: bytes) -> None:
         os.write(master, data)
@@ -80,22 +175,27 @@ def main() -> int:
         "filter": b"show me coins under 5M mcap with over 100k liquidity, up on the day, not rugs",
         "results": b"what are the best setups right now",
     }
-    drain(2.8)              # let the replay feed fill
+    answered = {
+        "open": r"analyst opened",
+        "filter": r"analyst filter|filter mcap|mcap < 5M",
+        "results": r"setup reason 1",
+    }
+    wait_for(r"SCREENER[─ ]+[1-9]\d* tokens", 30, settle=0.5)  # the replay feed filled the screener
     send(b"4")              # Analyst tab
-    drain(0.6)
+    wait_for(r"✦ ANALYST", 15)
     send(b"i")              # focus the chat input
     drain(0.4)
     send(prompts[args.scenario])
-    drain(0.3)
+    wait_for(re.escape(prompts[args.scenario][:16].decode()), 10)
     send(b"\r")             # send the question → spawns the fake claude → writes the action
-    drain(4.5)              # the app consumes the channel and applies the UI action
+    wait_for(answered[args.scenario], 30, settle=0.5)  # the app consumed the channel / rendered the answer
     if args.scenario == "results":
         send(b"\x1b")       # blur the input so the results table takes the arrows
         drain(0.3)
         send(b"\x1b[B")     # ↓ activate + move the results cursor
         drain(0.3)
         send(b"\r")         # ⏎ jump to the selected coin's token screen
-        drain(1.2)
+        wait_for(r"ON-CHAIN", 15)
     send(b"q")              # quit
     # keep draining until exit
     t0 = time.time()
@@ -112,6 +212,8 @@ def main() -> int:
 
     with open(args.out, "wb") as f:
         f.write(bytes(buf))
+    with open(args.out + ".waits.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(waits) + "\n")
     return 0
 
 
