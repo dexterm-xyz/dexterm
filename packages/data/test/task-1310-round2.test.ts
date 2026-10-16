@@ -1,4 +1,4 @@
-// task-1310 ROUND 2 — regressions for the HEAVY re-verification defects (internal QA evidence, not published: 
+// task-1310 ROUND 2 — regressions for the HEAVY re-verification defects (internal QA evidence, not published:
 // task-1310-reverify-heavy.md). Each test is written so that the executor at 9363f12 would FILL (or
 // crash) where the hardened executor REFUSES. Fakes only: real Solana wire-format transactions signed
 // by throwaway in-memory Ed25519 keys; no network, no wallet, no funds, nothing reaches any chain.

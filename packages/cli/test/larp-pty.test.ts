@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const driver = resolve(root, '../../expert-coder/handoffs/dexterm-v01-qa-evidence/tools/drive.py');
+// the QA pty driver vendored into the repo (task-1319); task-1415 dropped the out-of-repo evidence path
+const driver = resolve(root, 'packages/cli/test/measure/drive.py');
 test('pty: explicit V runs larp-check and renders the computed badge; L opens a navigable menu', { skip: !existsSync(driver), timeout: 20000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'task1315-pty-'));
   const answer = { type: 'result', structured_output: { skill: 'larp-check', verdict: 'UNVERIFIABLE', confidence: 0.2,

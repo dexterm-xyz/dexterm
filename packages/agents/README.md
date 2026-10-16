@@ -1,6 +1,6 @@
 # @dexterm/agents — bring your own agent (task-1345)
 
-Hook your own agent (Claude Code, Codex, an OpenClaw-style agent, a custom bot) up to a running dexterm.
+Hook your own agent (Claude Code, Codex, a local agent, a custom bot) up to a running dexterm.
 Agents are **untrusted by default**: every agent has a server-side capability tier, every call passes one
 gate, and no agent path can ever arm, sign, send, raise a cap, change the confirmation gate, or touch a
 wallet, a mandate or the signer. Fixture data only in tests and demos; no wallets, no mainnet.

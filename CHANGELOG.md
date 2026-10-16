@@ -2,6 +2,32 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.3] - 2026-10-16
+
+A voice, signals and sharing release: a natural neural voice by default, live holder and rug signals, richer wallet tracking, a one-key copy-trade mirror ticket, shareable PnL cards, a spectator view of an agent at work, and an analyst that knows its way around the app. Trading is still experimental.
+
+### Added
+
+- **Live holder and rug signals**: the token screen now raises holder-concentration and rug signals in real time as the data moves, each tagged with its source and age, and a signal can fire an alert.
+- **Copy-trade mirror ticket**: `dexterm follow` turns a tracked wallet's swap into a one-key mirror ticket. It is a proposal only — nothing arms or fires on its own — and the whole flow is replay-testable.
+- **Shareable PnL cards**: turn a result into a 16:9 or 1:1 card (PNG plus plain text), stamped `PAPER`, `LIVE` or `TRACKED` so the basis is never ambiguous, with a one-key share to X that opens the draft post in your own browser.
+- **Spectator view**: watch an agent drive the terminal in real time ("watch the agent cook"). Every field in a spectator event is redacted and an unknown tool name is capped, so an untrusted agent cannot leak a wallet or key through the live stream or a saved recording.
+- **The analyst knows the app**: a generated app-help knowledge base and a read-only `app_state` let the analyst answer questions about what is on screen and run tiered, read-only UI actions, with a drift test that keeps the help in step with the real commands and flags.
+- **Wallet tracker — hold time, alerts and detail**: a tracked wallet now shows hold time, raises buy and sell alerts through the alerts engine, and has a per-wallet detail view.
+- **Headless recorder and recurring backtests**: an opt-in headless recorder mode and recurring backtest tooling for saved skills. Nothing turns itself on; every run is one you start, and proposals stay gated.
+
+### Changed
+
+- **A natural voice by default.** The default text-to-speech voice is now the Piper `en_GB-alan-medium` neural British voice on both macOS and Linux, with Apple's `say` as the fallback; `dexterm voice setup` installs it on this machine (it asks first) and `dexterm voice uninstall` removes it. Spoken answers on the screener are faster and read numbers the way a trader says them (market-cap style), `<` and `>` adjust the speaking rate, and asking about "this one" now refers to the highlighted coin.
+
+### Fixed
+
+- **Identity hygiene in the source.** The published source and its tests no longer carry internal maintainer or tooling names, and a ratchet test keeps it that way.
+
+### Known issues
+
+- **Trading is still experimental.** Paper trading and the live (wallet-signed) path still have bugs; do not rely on either for anything that matters. There is no mainnet trading.
+
 ## [0.1.2] - 2026-10-16
 
 A reliability and reach release: a sensible default voice, a fix for the "history failed" error on the token screen, a built-in update check, headless alerts, one-step agent setup, early Linux voice support, and a way to export and share what you see. Trading is still experimental.
@@ -10,7 +36,7 @@ A reliability and reach release: a sensible default voice, a fix for the "histor
 
 - **`dexterm update`**: checks for a newer release and updates an npm or source install in place; `dexterm update --off` turns off the once-a-day startup notice (so does `DEXTERM_NO_UPDATE_CHECK=1`). The check is two anonymous GETs to `registry.npmjs.org` and `api.github.com` and sends no telemetry.
 - **Push alerts and `dexterm watch`**: run your rules headless, with the terminal closed, and have alerts pushed to your desktop, your own Telegram bot or a Discord webhook. Delivery is opt-in and off by default; dexterm connects to Telegram or Discord only after you enable and configure it, and your tokens stay local and are never logged. `watch` has no signer and only ever raises proposals.
-- **One-step agent setup**: `dexterm mcp install <client>` writes the MCP config for `claude-code`, `claude-desktop`, `cursor`, `codex`, `openclaw` or a generic agent — it shows the exact change, asks first, is idempotent and backs the file up — and `dexterm mcp doctor` connects to the server and lists its tools. The read-only MCP server now exposes 25 tools, including a one-call `larp_check`, and agents have per-agent capability tiers and standing mandates.
+- **One-step agent setup**: `dexterm mcp install <client>` writes the MCP config for `claude-code`, `claude-desktop`, `cursor`, `codex` or a generic agent — it shows the exact change, asks first, is idempotent and backs the file up — and `dexterm mcp doctor` connects to the server and lists its tools. The read-only MCP server now exposes 25 tools, including a one-call `larp_check`, and agents have per-agent capability tiers and standing mandates.
 - **Export and share a view**: press `E` (or run with `--export`) to save the current screen as a PNG and a plain-text report under `~/.dexterm/exports` (local only). Paste a contract address or a token link anywhere a prompt accepts one to jump straight to that coin.
 - **Linux voice (beta)**: optional Piper (text-to-speech) and whisper.cpp (speech-to-text) engines, with `dexterm voice` to download the models from Hugging Face when you ask for them. Real speaker and microphone I/O on Linux is not yet verified on hardware; treat it as beta.
 - **LARP and skill backtests**: the LARP detector's links/domain/activity check now has a measured accuracy from a held-out backtest, reported honestly — on its own it is a weak signal, not a verdict — and saved skills can be backtested against held-out history the same way.

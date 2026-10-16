@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 2324bb4 and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 911d8ff and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -85,6 +85,12 @@ on each token's pump.fun **bonding-curve account**, price computed on-chain (no 
 - **Idle cost:** the fast lane adds **zero** HTTP requests/min (it is push); price pushes never force a draw
   in `--calm` (the 2 Hz tick picks them up) and are throttled in normal mode, so idle CPU stays bounded.
 
+**LIVE holder/rug signals (task-1404):** on the open token screen the holder and safety reads are no longer a
+one-time on-open snapshot — the ON-CHAIN panel streams a LIVE SIGNALS strip of the *changes* (dev sell, top-10
+shift, LP unlock, authority flip, new bundle/sniper, fresh inflow, bonding, migration), each with its source and
+data age and an honest `stale` mark, and each usable as an alerts-engine trigger (new rule fields `fresh` /
+`mintable` / `freezable`). See "Live holder/rug signals" under Customization.
+
 **COMING (labelled in-app, not live yet):** dev-history (`needs Helius key`; snipers / bundled are live from the
 task-1340 scan on the token screen and, since task-1359, on the new-pairs row the cursor rests on); the one-line analyst digests on the watchlist and in the
 new-pairs spotlight (labelled demo until you run the analyst yourself). Nothing in this list fabricates a
@@ -165,6 +171,38 @@ the coin and any LARP verdict, each labelled as a model output where it is one. 
 TypeScript (a 5×9 bitmap font drawn for dexterm, procedural box drawing / blocks / braille, coin images when the
 terminal had pixel images); the exporter (`packages/cli/src/export.ts`: `ExportView` → `renderExportPng` /
 `renderExportText` / `writeExport`) takes any rendered canvas, so other views (PNL cards) can reuse it.
+
+### PnL cards: share a result to X (task-1407)
+
+`H` on the **token** screen (that coin), the **positions** screen (`P`; every coin you have fills for, newest first)
+or the **followed wallets** screen (`U`; the selected wallet's coins) opens a preview of a PnL card. In the preview:
+`x` share to X · `t` copy as text · `s` save only · `a` show/hide the wallet · `z` exact size / size band ·
+`f` 16:9 ⇄ 1:1 · `←`/`→` another coin · `esc` close. Every action saves `dexterm-pnl-<source>-<coin>-<stamp>-16x9.png`
+(1200×675, the X card), `-1x1.png` (1080×1080) and `.txt` to **`~/.dexterm/exports/`** (dir 0700, files 0600).
+
+- **Stamp.** Each card is stamped by where its numbers came from: **PAPER** (the paper wallet: simulated, no real
+  funds), **LIVE** (the signer's ledger: wallet-signed transactions confirmed on chain; devnet fills say *DEVNET TEST
+  FUNDS*) or **TRACKED WALLET** (a followed wallet's decoded public history, read-only). The stamp is a solid block,
+  the frame colour and a repeating strip; there is no option to hide it.
+- **Numbers only from records.** PnL is computed from the fills (average cost, the same rule as the paper and live
+  ledgers): realized for a closed position, realized + unrealized at the latest price mark for an open one (refused
+  until a mark exists). Nothing accepts a typed number. The card prints the time window, the fee basis, what was
+  excluded (e.g. a tracked wallet's token-to-token swaps, transfers, airdrops) and the data ages (last fill, mark,
+  history fetch).
+- **Private by default.** The wallet address and LIVE tx signatures are hidden (`a` shows them; the text card then
+  carries the full signatures so they can be checked on an explorer), size is a band (`under 0.1`, `0.1-0.5`, `0.5-1`,
+  `1-5`, `5-10`, `10-50`, `50-100`, `100+ SOL`; `z` shows the exact SOL in and the absolute PnL). No balance, key or
+  path is ever drawn. Footer: *not financial advice*, *trading in dexterm is experimental*, the dexterm URL.
+- **Share to X without automation.** `x` saves the files, copies the 16:9 image to the clipboard where the OS allows
+  (macOS `osascript`, Linux `wl-copy` / `xclip`; elsewhere the toast names the file to attach) and opens
+  `https://x.com/intent/post?text=…` in your own browser with neutral text (the stamp in words, no coin, ticker, price
+  or PnL; it passes the marketing GUARDRAILS scan). You paste the image and post. dexterm stores no X credentials and
+  never posts. The only network read is for a TRACKED card: the coin's public decimals and price (the same keyless
+  lookup the mirror checks use; no wallet or user data in it).
+
+Code: `packages/cli/src/pnl-card.ts` (ledger adapters, the maths, the renderer on the task-1401 raster + PNG stack,
+save/share), `packages/cli/src/pnl-app.ts` (the `H` key, the preview overlay). Fixtures and visual review:
+`node packages/cli/tools/pnl-cards.mjs --out DIR` renders the profit / loss / long-hold fixtures at full size.
 
 ### Paste a CA or a coin link anywhere (task-1401)
 
@@ -485,6 +523,7 @@ holds no secrets by construction (the schema has no key field; an old config wit
 - **Themes + keymaps** — `~/.dexterm/themes/<name>.json` (`extends` a built-in + `tokens`; hex-only, a contrast floor and an up/down hue guard so a shared theme cannot hide a warning or swap buy/sell colours), `config.theme.overrides`; `config.keymap` re-binds actions (reserved keys `ctrl+c esc enter y !` and the confirm/dismiss/panic/quit actions are refused by name; collisions and chord-prefix clashes refuse the whole keymap). `dexterm theme list|show|init|check`, `dexterm keymap [screen]`.
 - **Price display mode** (task-1366) — `$` flips USD price ⇄ MARKET CAP on the screener, watchlist, new pairs, token screen, both charts (Y axis in K/M/B; the popup legend shows the price in parentheses), order-plan levels and position rows; saved as `config.display.priceMode` (`dexterm display [price|mcap]`, `--price-mode`, a workspace's `priceMode`). Market cap = price × the supply the sources report (mcap ÷ price at the latest tick); history uses the CURRENT supply and every mcap chart says `mcap (current supply)`; a token without a supply shows its price marked `ᵖ` / `supply unknown · showing price`. Display only: `packages/cli/src/display.ts`; nothing that trades reads it.
 - **Rules engine** — `when <cond> [for n ticks] then alert|ticket|ask|popup|tag|sound|watch [cooldown] [max n/h] [scope] [window] [name]`, parsed never eval'd, mandatory cooldown + max/h, a live dry-run while typing (`ctrl+r`, `dexterm rules …`). Rules only alert, annotate your own watchlist, open read-only popups, or PROPOSE: ticket/ask become proposal cards that open the PAPER ticket editor / ask the analyst on your keypress. Money-shaped args (`arm`, `auto`, `sign`, …) are refused at parse time, in text and in JSON.
+- **Live holder/rug signals** (task-1404) — while a token is open (or watched) dexterm streams its holder and safety state instead of reading it once on open, and surfaces the *changes*: a dev/creator sell, a top-holder / top-10 concentration shift, LP removal or an unlock change, a mint/freeze authority flip, a new bundle / sniper cluster, a fresh-wallet inflow, bonding-curve progress, a migration. Each is a risk flag (never a verdict) shown on the token screen's ON-CHAIN panel with its **source** and the **age** of the data it read, and degrades visibly to `stale` (never a fabricated number). The cheap on-chain reads refresh with the 10 s token poll and bonding streams sub-second from the fast lane; the credit-metered Helius leg (holders / bundle / sniper / fresh) re-scans on a slow cadence while the token is open. Every signal is also an **alert trigger**: the rules engine gains the fields `fresh`, `mintable` and `freezable` alongside `top10`/`dev`/`bundled`/`snipers`/`lpLocked`/`bonding`/`cluster`, so e.g. `when dev.delta < -2 then alert(down, "dev dumping")`, `when mintable > 0 then alert(warn)`, `when lplocked.delta < 0 then alert(down)` or `when top10.delta >= 5 scope mint:<addr> then alert(warn)` fire on the live values and deliver through the task-1398 alert channels.
 - **Packs** — a directory of the above (+ popup widgets) with a sha256 `pack.lock` and an optional `ssh-keygen -Y` signature; trust reviewed > signed > unsigned. `dexterm pack verify|add|remove|export|lock|sign|trust|signers|keymap|widget|list`. A pack never runs code: widgets install DISABLED, unsigned rules load disabled, the keymap merges only with `pack keymap <name> --merge`, and every load re-hashes the installed copy. Malicious-pack suite in `packages/custom/test/packs.test.ts` + `packages/cli/test/pack-1358.test.ts`.
 - **Knowledge base + skills** (task-1377) — your own copies live in `~/.dexterm/kb/entries/<id>.md` and `~/.dexterm/skills/<name>.md`, the same frontmatter + markdown as the bundled 17 KB entries and analyst skills. Same id as a bundled one = your file overrides it; a new id = added; the bundled files are never edited. `dexterm kb|skill list|show|new|edit|check|reset|path`: `edit` copies the bundled file into `~/.dexterm` and opens `$VISUAL`/`$EDITOR` (no editor or no TTY: it prints the path to edit), `check` validates frontmatter and size (a KB entry ≤ 16 KB with a body ≤ 4000 chars, a skill ≤ 32 KB / 8000), `reset` moves your file to `<dir>/.reset/` so the bundled one is back. The MCP server (`dexterm mcp`, also for your own agent), the analyst and Jarvis read the MERGED set and re-check the files on every call or turn, so an edit needs no restart; a file that fails `check` is skipped with the reason (MCP stderr, `list`, `dexterm doctor`) and the bundled one stays in effect. Safety: a skill is read-only guidance: its `tools:` may name only read tools, and a skill that names a trade / sign / arm / ticket / send tool anywhere (`open_ticket`, `execute_swap`, `mcp__…`, `/wallet …`) or sets `allowed-tools` / `model` / `hooks` is refused. Your text is untrusted like token text: it reaches a model only through the prompt firewall (`<untrusted source="kb:user:…">`, a user skill behind a dexterm preamble), `kb_lookup` reports `origin: bundled|user`, and an address in a user KB entry shows as `[addr]` (a KB entry never holds facts about a live token; `check` warns). Packs do not carry KB entries or skills. Every new/edit/reset is journaled in `~/.dexterm/kb-skills.journal.jsonl` (hashes, not content). For example: `dexterm kb edit lp-burn-vs-lock` or `dexterm skill edit rug-check`, save, and ask the analyst again.
 - **Widget API (beta)** — a pack widget is an html page the popup host serves inside its own wrapper window as a sandboxed iframe: the wrapper (ours, nonce CSP) owns the socket and names exactly one `frame-src`; the pack page runs under a hash-only CSP (every inline `<script>`/`<style>` allow-listed by sha256, no nonce, nothing substituted into the pack html; `<script src>`, `<link>`, frames, `<meta http-equiv>` and `@import` refused at install, open and ticket issue) with no network of its own (`connect-src 'none'`), an opaque origin, Trusted Types where the engine has them, no way to navigate anywhere (the parent's `frame-src` governs the child's every navigation), and — r4/r5 — a **DOM seal**: the SDK runs first and locks the DOM insertion methods, every HTML-parsing entry point (including the static `Document.parseHTMLUnsafe`), `adoptNode`/`importNode`, the element-taking setters and WebRTC on the prototypes, with a MutationObserver belt, and cancels any click on a link that targets another window (r6: WebKit opens a connection to the link's host:port before the sandbox refuses the popup), so none of the three connections no CSP directive covers (runtime preconnect, WebRTC, a targeted click) can be made by any path — without relying on Trusted Types, which the system WKWebView of macOS 14/15 lacks; verified on that WebView in the real shell and in headless Chromium + WebKit with a raw TCP sink. Widgets open only in the native shell (macOS 14+), which also routes every WebView connection through a loopback sink proxy (a backstop for named hosts). It is fed public view models (`rows · token · narrative · positions · alerts · theme`) by `postMessage` through a frozen `dexterm` SDK; it can only receive. `packages/popup/WIDGETS.md`; example `packs/example-widgets/`.
@@ -496,3 +535,8 @@ Not built from the task-1288 design: the in-process plugin sandbox (columns/pane
 - No runtime dependencies. Dev: `typescript`, `@types/node`.
 - Nothing here holds keys, signs, or sends transactions.
 - Token-originated strings are untrusted and go through the prompt firewall before any model sees them (D-12).
+- Identity hygiene (task-1415): never write a person's name, handle, agency or machine name anywhere in this
+  tree: code, comments, test names, fixtures, frontmatter (`owner: maintainers`), evidence/measure files or
+  absolute home paths. Say "the maintainers" (or "a tester", "the user"), use neutral fixture names, and write
+  paths relative to the repo or under `/tmp`. `packages/cli/test/identity-1415.test.ts` enforces this in
+  `npm test` against a term list kept outside the app (maintainer checkouts only; it skips without it).

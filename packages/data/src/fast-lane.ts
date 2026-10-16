@@ -18,7 +18,7 @@ import { systemClock } from './clock.ts';
 import type { CreditMeter } from './credits.ts';
 import type { HealthRegistry } from './health.ts';
 import type { Lane, PriceAccount, PricePoint, SourceId } from './model.ts';
-import { decodeBondingCurve } from './sources/pump-curve.ts';
+import { decodeBondingCurve, type BondingCurve } from './sources/pump-curve.ts';
 import { isPumpMint, pumpBondingCurve } from './sources/pda.ts';
 import { SolanaWsClient, type AccountUpdate, type SolanaWsStatus } from './sources/solana-ws.ts';
 import type { WsFactory } from './sources/pumpportal.ts';
@@ -88,6 +88,10 @@ interface Tracked {
   priceAccount: PriceAccount;
   lastTickAt: number | null;
   lastPrice: PricePoint | null;
+  /** Last decoded bonding curve (task-1404: the live-signals binding reads bonding progress / reserves from it). */
+  lastCurve: BondingCurve | null;
+  /** When `lastCurve` was decoded (local ms). */
+  lastCurveAt: number | null;
   /** Set once a decoded curve reports `complete` (migrated): on-chain curve price is no longer valid. */
   migrated: boolean;
 }
@@ -217,7 +221,7 @@ export class FastLane {
     const priceAccount = this.resolvePriceAccount(mint, curveHint);
     if (priceAccount.kind === 'unknown' || !priceAccount.curve) return false;
     if (this.tracked.size >= this.cap) return false; // over the cap: stay slow, never drop
-    const t: Tracked = { mint, priceAccount, lastTickAt: null, lastPrice: null, migrated: false };
+    const t: Tracked = { mint, priceAccount, lastTickAt: null, lastPrice: null, lastCurve: null, lastCurveAt: null, migrated: false };
     this.tracked.set(mint, t);
     this.byAccount.set(priceAccount.curve, mint);
     this.ws?.subscribe(priceAccount.curve);
@@ -279,7 +283,12 @@ export class FastLane {
     const tracked = this.tracked.get(mint);
     if (!tracked) return;
     const curve = decodeBondingCurve(base64);
-    if (!curve || curve.priceSol == null) return;
+    if (!curve) return;
+    // task-1404: keep the decoded curve (reserves / complete) so the live-signals binding can read bonding
+    // progress and migration from the same push, not just the price.
+    tracked.lastCurve = curve;
+    tracked.lastCurveAt = t;
+    if (curve.priceSol == null) return;
     if (curve.complete) {
       // Migrated to a DEX pool: the bonding-curve price is stale. Demote to the slow lane honestly;
       // AMM-pool on-chain pricing is a later card (SPEC §3.9.4).
@@ -328,6 +337,15 @@ export class FastLane {
   /** Last fast-lane price for a mint, or null. */
   price(mint: string): PricePoint | null {
     return this.tracked.get(mint)?.lastPrice ?? null;
+  }
+
+  /**
+   * Last decoded bonding curve for a mint and when it was decoded (task-1404). The live-signals binding reads
+   * bonding progress + `complete` from it. null when the mint is not tracked or no push/seed has decoded yet.
+   */
+  curve(mint: string): { curve: BondingCurve; at: number } | null {
+    const t = this.tracked.get(mint);
+    return t && t.lastCurve && t.lastCurveAt != null ? { curve: t.lastCurve, at: t.lastCurveAt } : null;
   }
 
   /**

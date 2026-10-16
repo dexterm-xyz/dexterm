@@ -80,6 +80,30 @@ test('stats: FIFO realised PnL per mint, closed/open, flagged airdrop cost, win 
   assert.equal(mid[0].tokensRaw, 0n); assert.ok(mid[0].realisedSol > 0.49);
 });
 
+test('stats: hold time = median first-buy→last-sell over CLOSED positions with known block times; open + unknown-time excluded; sample carries source + asOf (task-1399)', () => {
+  const trades = decodeWalletTrades(leaderHistory(), LEADER, { solUsd: 100 });
+  const pos = Object.fromEntries(positionsOf(trades).map((p) => [p.mint, p]));
+  assert.equal(pos[MINT_A].holdMs, 100_000, 'A: buy slot 100 → last sell slot 200 = 100 s');
+  assert.equal(pos[MINT_B].holdMs, 60_000, 'B: slot 120 → 180');
+  assert.equal(pos[MINT_C].holdMs, 60_000, 'C: airdrop slot 160 → sell 220');
+  assert.equal(pos[MINT_E].holdMs, 20_000, 'E: closed by transfer-out, slot 260 → 280');
+  assert.equal(pos[MINT_D].holdMs, null, 'D is open → no hold time');
+  const s = walletStats(LEADER, trades, { solUsd: 100, txs: 10, complete: true, asOf: 42 });
+  assert.equal(s.holdMedianMs, 60_000, 'median of [20k, 60k, 60k, 100k]');
+  assert.match(s.holdNote, /median .*over 4 closed positions/);
+  assert.equal(s.sample.source, 'helius-history');
+  assert.equal(s.sample.asOf, 42);
+  // a CLOSED position whose first/last block times are unknown (node gave no blockTime) is excluded from hold time
+  const noTime = [
+    mkTx({ slot: 300, blockTime: null, sig: sig(500), wallet: LEADER, tokens: [{ mint: addr(700), pre: 0n, post: 10n }], lamports: [10 * SOL, 10 * SOL - 0.1 * SOL] }),
+    mkTx({ slot: 301, blockTime: null, sig: sig(501), wallet: LEADER, tokens: [{ mint: addr(700), pre: 10n, post: 0n }], lamports: [10 * SOL, 10 * SOL + 0.2 * SOL] }),
+  ];
+  const u = walletStats(LEADER, decodeWalletTrades(noTime, LEADER));
+  assert.equal(u.closed, 1); assert.equal(u.holdMedianMs, null);
+  assert.match(u.holdNote, /no closed position with both block times known/);
+  assert.equal(u.sample.asOf, null, 'asOf defaults to null when not fetched');
+});
+
 test('follow store: base58 only, user-typed labels are firewalled and clipped, local file mode 600, purge wipes everything', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-follows-'));
   const path = join(dir, 'nested', 'follows.json');
@@ -129,6 +153,7 @@ test('tracker replay: first poll backfills silently, later polls alert only on N
   assert.deepEqual(history.calls.map((c) => [c.address === LEADER ? 'L' : 'L2', c.limit, c.sortOrder]), [['L', 100, 'desc'], ['L2', 100, 'desc']]);
   assert.equal(tr.trades(LEADER).length, 8); assert.equal(tr.trades(LEADER)[0].slot, 240, 'newest first');
   assert.equal(tr.stats(LEADER).sample.complete, true); assert.equal(tr.stats(LEADER).realisedUsd, Math.round((0.7 - 0.3 + 0.3 - 6 * 0.000005) * 200 * 100) / 100);
+  assert.equal(tr.stats(LEADER).sample.source, 'helius-history'); assert.equal(tr.stats(LEADER).sample.asOf, clock.now(), 'data age anchors to the last fetch (task-1399)'); // task-1399
   assert.equal(tr.stats(LEADER2).trades, 0);
   // the leader trades again: a transfer (no alert), then a buy, then a sell
   clock.advance(10_000);

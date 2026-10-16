@@ -7,7 +7,7 @@
 import { Canvas, header, footer, breakpoint, fmtAgeSec, type Hex } from '@dexterm/tui';
 import type { AppState } from '../state.ts';
 import { headerModel } from '../state.ts';
-import { shortAddr, autoSizeCap, type CopyAlert, type FollowRecord, type WalletStats } from '@dexterm/data/copy';
+import { shortAddr, autoSizeCap, fmtHoldMs, type CopyAlert, type FollowRecord, type WalletStats, type WalletTrade } from '@dexterm/data/copy';
 
 function fmtSol(n: number): string { const s = n >= 0 ? '+' : '−'; return `${s}${Math.abs(n).toFixed(Math.abs(n) >= 10 ? 1 : 3)} SOL`; }
 function fmtUsdSigned(n: number): string { const s = n >= 0 ? '+' : '−'; const a = Math.abs(n); return `${s}$${a >= 1000 ? (a / 1000).toFixed(1) + 'k' : a.toFixed(a >= 100 ? 0 : 2)}`; }
@@ -168,6 +168,84 @@ export function renderFollows(c: Canvas, state: AppState): void {
     c.text(mbox.x + 1, y, gateOk ? '✓ the "less safe" hands-free popup is accepted (O screen, G)' : '✗ needs the "less safe" hands-free popup first: O screen, then G (keypress only, expires in 24 h)', { fg: gateOk ? t.up : t.down, bg: mbg }, mbox.w - 2); y += 2;
     c.text(mbox.x + 1, y, gateOk ? 'Hold and release [enter] or [y] to turn auto ON (physical keypress) · [esc] leaves it OFF · a pipe/agent cannot' : '[esc] closes · accept the popup, then A again', { fg: t.accent, bg: mbg }, mbox.w - 2);
   }
+  // task-1399: the per-wallet DETAIL view (its own trades + positions + metrics, each with source + data age).
+  if (ui?.detail) renderWalletDetail(c, state, now);
   const autoHint = (() => { const f = follows[Math.max(0, Math.min(follows.length - 1, ui?.selected ?? 0))]; const p = f ? svc?.auto?.policy(f.addr) : null; return p?.enabled ? 'auto OFF' : 'auto-mirror'; })();
-  footer(c, [['↑↓', 'move'], ['i', 'follow a wallet'], ['d', 'unfollow'], ['m', ui?.mirror ? (ui.mirror.result?.ok ? 'PROPOSE mirror' : 'close') : 'mirror ticket'], ['A', autoHint], ['r', 'poll now'], ['esc', 'back'], ['q', 'quit']], t.name);
+  const foot: Array<[string, string]> = ui?.detail
+    ? [['↑↓', 'scroll'], ['enter/esc', 'close'], ['q', 'quit']]
+    : [['↑↓', 'move'], ['enter', 'wallet view'], ['i', 'follow a wallet'], ['d', 'unfollow'], ['m', ui?.mirror ? (ui.mirror.result?.ok ? 'PROPOSE mirror' : 'close') : 'mirror ticket'], ['A', autoHint], ['r', 'poll now'], ['esc', 'back'], ['q', 'quit']];
+  footer(c, foot, t.name);
+}
+
+/**
+ * task-1399 — one followed wallet's DETAIL view: its own recent decoded trades and positions, plus the full metric
+ * set (realised PnL, win rate with n, median hold time, early-entry score, open), each labelled with its source
+ * (Helius history) and data age (time since the last poll). Read-only: nothing here trades, arms, proposes or signs.
+ */
+function renderWalletDetail(c: Canvas, state: AppState, now: number): void {
+  const t = c.theme;
+  const ui = state.copyUi;
+  const svc = state.copy;
+  if (!ui?.detail || !svc) return;
+  const addr = ui.detail.wallet;
+  const f: FollowRecord | undefined = svc.follows().find((x) => x.addr === addr);
+  const s: WalletStats = svc.stats(addr);
+  const trades: WalletTrade[] = svc.trades(addr); // newest first
+  const top = 2, bottom = c.h - 1;
+  const mw = Math.min(c.w - 2, 104);
+  const mh = Math.max(10, bottom - top - 1);
+  const mx = Math.floor((c.w - mw) / 2), my = top + 1;
+  c.noRain(mx, my, mw, mh);
+  const label = f?.name ? ` · ${f.name}` : '';
+  const box = c.box(mx, my, mw, mh, { title: `WALLET${label} — read-only`, caption: 'its own trades + positions · every number: source + data age · not a recommendation', focus: true, bg: t.panelAlt });
+  const bg: Hex = box.bg;
+  let y = box.y;
+  c.text(box.x + 1, y, addr, { fg: t.text, bg }, box.w - 2); y += 1;
+  const age = s.sample.asOf ? `${Math.max(0, Math.round((now - s.sample.asOf) / 1000))}s ago` : 'not fetched yet';
+  c.text(box.x + 1, y, `source ${s.sample.source} · ${age} · ${s.sample.note}`, { fg: t.dim, bg }, box.w - 2); y += 1;
+  const pnl = `${fmtSol(s.realisedSol)}${s.realisedUsd !== null ? ` ${fmtUsdSigned(s.realisedUsd)}` : ''}`;
+  const wr = s.winRate === null ? `win rate n<10 (${s.wins}/${s.closed})` : `win rate ${Math.round(s.winRate * 100)}% (${s.wins}/${s.closed})`;
+  c.text(box.x + 1, y, `realised ${pnl} · ${wr} · hold ${fmtHoldMs(s.holdMedianMs)} · EES ${s.earlyEntry.score === null ? '—' : s.earlyEntry.score.toFixed(2)} · open ${s.open} · ${s.buys}b/${s.sells}s`, { fg: t.text, bg }, box.w - 2); y += 1;
+  c.text(box.x + 1, y, `hold: ${s.holdNote} · EES: ${s.earlyEntry.note}`, { fg: t.dim, bg }, box.w - 2); y += 2;
+
+  const footerY = box.y + box.h - 1;
+  const posCount = Math.min(s.positions.length, 6);
+  const posHeaderY = posCount ? footerY - posCount - 1 : footerY;
+  // RECENT TRADES (scrollable) fill the space above the positions block.
+  c.text(box.x + 1, y, 'RECENT TRADES', { fg: t.dim, bg }); y += 1;
+  if (!trades.length) {
+    c.text(box.x + 1, y, svc.status().state === 'unavailable' ? 'needs a free Helius key' : 'no swaps in fetched history', { fg: t.dim, bg, i: true }); y += 1;
+  } else {
+    const roomRows = Math.max(1, posHeaderY - 1 - y);
+    const scroll = Math.max(0, Math.min(Math.max(0, trades.length - roomRows), ui.detail.scroll));
+    for (let i = scroll; i < trades.length && y < posHeaderY - 1; i++) {
+      const tr = trades[i];
+      const sideFg = tr.side === 'buy' ? t.up : tr.side === 'sell' ? t.down : t.muted;
+      let cx = c.text(box.x + 1, y, (tr.tKnown ? new Date(tr.t).toISOString().replace('T', ' ').slice(5, 19) : 'time unknown ').padEnd(15), { fg: t.dim, bg });
+      cx = c.text(cx + 1, y, tr.side.toUpperCase().padEnd(9), { fg: sideFg, bg, b: true });
+      cx = c.text(cx + 1, y, shortAddr(tr.mint).padEnd(11), { fg: t.text, bg });
+      cx = c.text(cx + 1, y, (tr.solDelta !== null ? `${Math.abs(tr.solDelta).toFixed(3)} SOL` : 'unpriced').padStart(11), { fg: t.muted, bg });
+      cx = c.text(cx + 1, y, fmtUsdAbs(tr.usd).padStart(8), { fg: t.text, bg });
+      if (tr.note) c.text(cx + 1, y, `(${tr.note})`, { fg: t.dim, bg }, box.w - (cx + 1 - box.x) - 1);
+      y += 1;
+    }
+    const older = trades.length - scroll - roomRows;
+    if (older > 0) c.textR(box.x + 1, posHeaderY - 1, box.w - 2, `… ${older} older (↑↓)`, { fg: t.dim, bg, i: true });
+  }
+  // POSITIONS block (fixed, bottom).
+  if (posCount) {
+    c.text(box.x + 1, posHeaderY, `POSITIONS · ${s.positions.length}`, { fg: t.dim, bg });
+    let py = posHeaderY + 1;
+    for (const p of s.positions.slice(0, posCount)) {
+      if (py >= footerY) break;
+      let cx = c.text(box.x + 1, py, shortAddr(p.mint).padEnd(11), { fg: t.text, bg });
+      cx = c.text(cx + 1, py, (p.closed ? 'closed' : 'open').padEnd(7), { fg: p.closed ? t.muted : t.accent, bg });
+      cx = c.text(cx + 1, py, fmtSol(p.realisedSol).padStart(11), { fg: p.realisedSol > 0 ? t.up : p.realisedSol < 0 ? t.down : t.muted, bg });
+      cx = c.text(cx + 1, py, `${p.buys}b/${p.sells}s`.padEnd(8), { fg: t.dim, bg });
+      cx = c.text(cx + 1, py, `hold ${fmtHoldMs(p.holdMs)}`.padEnd(12), { fg: t.dim, bg });
+      if (p.flagged) c.text(cx + 1, py, '(cost-0 lot: airdrop/transfer/unpriced)', { fg: t.dim, bg }, box.w - (cx + 1 - box.x) - 1);
+      py += 1;
+    }
+  }
+  c.textR(box.x + 1, footerY, box.w - 2, 'not a recommendation · a wallet\'s past fills say nothing about its next one', { fg: t.dim, bg, i: true });
 }

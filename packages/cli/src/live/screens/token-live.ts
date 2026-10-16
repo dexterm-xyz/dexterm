@@ -203,6 +203,26 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
       sy += 1;
     }
   }
+  // task-1404: LIVE holder/rug signals — the changes seen since the token was opened (dev sell, concentration
+  // shift, LP unlock, authority flip, new bundle/sniper, fresh inflow, bonding, migration). Each is a risk flag,
+  // not a verdict, and carries its SOURCE and the AGE of the data it read; the `stale` mark shows honestly.
+  const sigs = state.live?.signals?.recent(v.mint, 4) ?? [];
+  if (sigs.length && sy < sb.y + sb.h) {
+    sy += sy + 1 < sb.y + sb.h ? 1 : 0;
+    if (sy < sb.y + sb.h) { c.text(sb.x + 1, sy, 'LIVE SIGNALS', { fg: t.dim, bg: sb.bg }); sy += 1; }
+    const staleAfter = 60_000;
+    for (const s of sigs) {
+      if (sy >= sb.y + sb.h) break;
+      const color = s.level === 'warn' ? t.warn : s.level === 'down' ? t.down : s.level === 'up' ? t.up : t.muted;
+      const ageMs = Math.max(0, now - s.at);
+      const stale = ageMs > staleAfter;
+      const meta = `${s.source} · ${ageMs >= 1000 ? `${Math.round(ageMs / 1000)}s` : 'now'}${stale ? ' · stale' : ''}`;
+      const metaClip = clip(meta, Math.max(8, Math.floor((sb.w - 2) / 2)));
+      c.text(sb.x + 1, sy, `⚑ ${s.title}`, { fg: color, bg: sb.bg, b: s.level === 'warn' || s.level === 'down' }, sb.w - 2 - metaClip.length - 1);
+      c.textR(sb.x + 1, sy, sb.w - 2, metaClip, { fg: stale ? t.warn : t.dim, bg: sb.bg, i: true });
+      sy += 1;
+    }
+  }
 
   if (bp !== 'compact') {
     const hx = statsW;

@@ -19,6 +19,8 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { writeExport, exportViewFor } from './export.ts';
+import { openPnl, loadPnl, pnlKey } from './pnl-app.ts';
+import { shareCard, runLocal } from './pnl-card.ts';
 import { parseMintTarget, parseCoinTarget, resolveCoinTarget, isBareOpen, type CoinTarget } from './coin-target.ts';
 import {
   THEMES, isThemeName, DEFAULT_THEME, THEME_NAMES, Flusher, ENTER_SCREEN, LEAVE_SCREEN, DEFAULT_KEYMAP, Keymap, nextTheme, parseKeys, keyId,
@@ -28,7 +30,7 @@ import {
   type Canvas, type ColorDepth, type ScreenKey, type AppAction, type Key, type Intensity, type Mood, type PulseKind, type SettledTx, type Rect, type Theme,
   fmtUsd as fmtUsdTui,
 } from '@dexterm/tui';
-import { resolveRpcUrl, redactSecrets, defaultDbPath, extraRpcUrls, wsUrlFor, SOLANA_PUBLIC_RPC_WS, parseHttpUrl, validateAnalystAction, ACTION_RATE, ImageService, encodePng, SummaryLimiter, buildSummaryWindow, KolStore, Cache, PackError, normalizeHandle, terminalSafe, type CandleInterval, type FastLaneEndpoint, type RpcConfig, type Launchpad, type TrendRow } from '@dexterm/data';
+import { resolveRpcUrl, redactSecrets, defaultDbPath, extraRpcUrls, wsUrlFor, SOLANA_PUBLIC_RPC_WS, parseHttpUrl, validateAnalystAction, ACTION_RATE, ACTION_TIER, configChangeForAction, ImageService, encodePng, SummaryLimiter, buildSummaryWindow, KolStore, Cache, PackError, normalizeHandle, terminalSafe, type CandleInterval, type FastLaneEndpoint, type RpcConfig, type Launchpad, type TrendRow, type AnalystAction } from '@dexterm/data';
 import { Recorder, recorderEnabled, MaintenanceSchedule } from '@dexterm/recorder';
 import { makeFixtureState, makeFeedState, syncFeed, renderFrame, isScreenKey, activityFor, SCREEN_NAMES, analystKey, syncAnalyst, pinNewpairsSelection, ANALYST_TAB_KEY, computeNarrativeView, newPlansUi, plansService, plansRows, newFollowsUi, copyService, copyAutoService, MIRROR_DEFAULT_CAP_USD, type AppState } from './state.ts';
 import { mulberry32, tick, spawnPair, shock, type FixtureToken, type WatchRow, type Rng } from './fixtures.ts';
@@ -51,6 +53,8 @@ import { widgetPage, widgetEnabled, syncWidgetPopups } from './widgets.ts';
 import { recordLarpVerdict } from './larp-record.ts';
 import { rulesUiOf, rulesTick, rulesMove, beginRuleInput, saveRuleInput, dryRunNow, removeSelectedRule, toggleSelectedRule, dismissSelectedProposal, actOnSelectedProposal, RULE_INPUT_MAX } from './rules.ts';
 import { buildNotifier, hasPushChannel } from './alerts/notifier.ts';
+import { copyAlertToDelivery } from './alerts/format.ts';
+import { readTelegramCreds, readDiscordCreds } from './alerts/creds.ts';
 import { launchIntelCells, launchRetryable } from './live/intel.ts';
 import { AnalystSession } from './analyst/session.ts';
 import type { AnalystDeps } from './analyst/backend.ts';
@@ -67,13 +71,13 @@ import { popupImagePath } from './screens/coin.ts';
 import { VoiceController, selectStt, selectTts, SayTts, voiceStyleDefaults, type VoiceDecision, type VoiceScreenState } from '@dexterm/voice';
 import { LivePlanExecutor, defaultPlansJournalPath } from '@dexterm/data/plans';
 import type { PlanInput } from '@dexterm/data/plans';
-import { isWalletAddress, shortAddr, buildMirror, leaderSoldSince, autoSizeCap, type MirrorMarket, type MirrorResult } from '@dexterm/data/copy';
+import { isWalletAddress, shortAddr, buildMirror, leaderSoldSince, autoSizeCap, type MirrorMarket, type MirrorResult, type CopyAlert } from '@dexterm/data/copy';
 import { FOLLOW_INPUT_MAX } from './screens/follows.ts';
 import type { VoiceHud } from './voice-hud.ts';
 import { isPriceMode, configPriceMode, togglePriceMode, priceModeOf, planLevels, type PriceMode } from './display.ts';
 import { VERSION } from './version.ts';
 import { initCustom, planWorkspace, planPopupOpens, findWorkspace, nextWorkspaceName, workspaceSlots, saveWorkspace, themeFor, themeByName, cycleTheme, themeNames, CHORD_TTL_MS, MAX_WORKSPACE_NAME, type WorkspacePlan } from './custom.ts';
-import { DEFAULT_WORKSPACE, MORNING_HUD, applyAndJournal } from '@dexterm/custom';
+import { DEFAULT_WORKSPACE, MORNING_HUD, applyAndJournal, policyCheck } from '@dexterm/custom';
 
 /** A compact, firewalled view of one visible pool row for the analyst context (task-1313). */
 interface VisibleRow { mint: string; symbol: string; priceUsd: number | null; chg1h: number | null; chg24h: number | null; liq: number | null; vol24: number | null }
@@ -85,6 +89,38 @@ interface VisibleRow { mint: string; symbol: string; priceUsd: number | null; ch
  * that bounds what the analyst's UI actions may reference. Token-derived text stays raw here; the
  * context-block renderer wraps it as untrusted before a model sees it.
  */
+/** Screens the analyst's `switch_screen` action may target (task-1413); the user-facing set. */
+export const SWITCHABLE_SCREENS = ['screener', 'token', 'newpairs', 'watchlist', 'analyst', 'positions', 'trending', 'kol'] as const;
+
+/**
+ * A read-only snapshot of local UI state for the `app_state` MCP tool (task-1413): what the user sees.
+ * NEVER includes a secret — alert channels report a boolean "configured", computed from creds presence,
+ * never the token/webhook/key itself. `null` when there is no live config (one-shot fixture frames).
+ */
+export function appStateBlock(state: AppState): Record<string, unknown> | null {
+  const ui = state.custom;
+  if (!ui) return null;
+  const cfg = ui.config;
+  const home = ui.home;
+  const ch = (cfg.alerts?.channels ?? {}) as Record<string, { enabled?: boolean } | undefined>;
+  const alerts = {
+    // toast is on unless explicitly disabled; the rest are off unless enabled. telegram/discord also need creds.
+    toast: ch.toast?.enabled !== false,
+    desktop: ch.desktop?.enabled === true,
+    telegram: ch.telegram?.enabled === true && readTelegramCreds(home) !== null,
+    discord: ch.discord?.enabled === true && readDiscordCreds(home) !== null,
+  };
+  return {
+    theme: state.theme.name,
+    priceMode: priceModeOf(state),
+    intensity: state.vfx.intensity,
+    calm: isCalm(state.vfx),
+    voice: { name: cfg.voice?.name ?? null, rate: cfg.voice?.rate ?? null },
+    scan: { on: state.scan?.engine.on ?? false },
+    alerts, // booleans only — never a token, webhook or key
+  };
+}
+
 export function buildScreenState(state: AppState): Record<string, unknown> {
   const live = state.live;
   const sc = state.screener;
@@ -133,7 +169,14 @@ export function buildScreenState(state: AppState): Record<string, unknown> {
     watchlist,
     ticket,
     positions,
-    actions: { enabled: !!live, mints: [...mints], feeds, sortKeys: SORT_KEYS.map((k) => k.key) },
+    actions: {
+      enabled: !!live, mints: [...mints], feeds, sortKeys: SORT_KEYS.map((k) => k.key),
+      // task-1413: targets the new tiered actions may reference.
+      screens: [...SWITCHABLE_SCREENS],
+      workspaces: Object.keys(state.custom?.config.layout?.workspaces ?? {}),
+      themes: themeNames(state.custom),
+    },
+    app: appStateBlock(state),
     now: Date.now(),
   };
 }
@@ -325,10 +368,11 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   dexterm wallet link|unlink|status|panic|resume  link a Phantom wallet via a local bridge (pubkey only); panic disables live trading, resume needs a TTY keypress
   dexterm plan propose|list|arm|cancel|journal     conditional order plans (entry/ladder/take-profit/moon bag/stop); arming needs a physical keypress
   dexterm mandate draft|list|arm|revoke            standing capped mandates (fast wallet); arming needs a physical keypress — voice/agents can never arm
-  dexterm follow add|remove|list|stats|trades|purge  copy trading tier 1: follow a wallet (your list, local labels), its decoded swaps + FIFO PnL; alerts in the app
-  dexterm mcp [install <client>|doctor]            read-only MCP server for your own agent; 'install' writes the config for claude-code|claude-desktop|cursor|codex|openclaw|generic (asks first, idempotent, backs up); 'doctor' verifies the connection
+  dexterm follow add|remove|list|stats|trades|mirror|purge  copy trading tier 1: follow a wallet (your list, local labels), its decoded swaps + FIFO PnL + win rate/early-entry; 'mirror' previews a one-key MIRROR TICKET from the wallet's latest buy (inert; arm in the app)
+  dexterm mcp [install <client>|doctor]            read-only MCP server for your own agent; 'install' writes the config for claude-code|claude-desktop|cursor|codex|generic (asks first, idempotent, backs up); 'doctor' verifies the connection
   dexterm alerts status|enable|disable|set-telegram|set-discord|test  where rule alerts are delivered (desktop / your Telegram / Discord; creds stay local, never logged)
   dexterm watch [--interval S] [--once] [--replay FILE]  run your rules headless and push alerts when the terminal is closed (no signer, proposals only)
+  dexterm record run|install|uninstall|status  keep the history recorder fed with no TUI open, as a user-level launchd agent (no network beyond the data layer; 'dexterm record help')
   dexterm --fixtures                          interactive demo on seeded fixtures
   dexterm --screen <name>                     one-shot frame to stdout (live)
   dexterm --screen <name> --fixtures          one-shot frame from fixtures
@@ -415,9 +459,10 @@ ${X_HELP}
   --version                 print the version
 
   Keys: 1-4 screens · tab cycle · j/k move · ⏎ open · esc back · a analyst · v voice · t theme · c calm · p pause · q quit
-        voice (JARVIS, macOS): v push-to-talk (press to talk, press to send) · m mute · , change voice · esc stop speaking
+        voice (JARVIS, macOS): v push-to-talk (press to talk, press to send) · m mute · , change voice · < / > slower/faster · esc stop speaking
                                voice asks the analyst or triggers safe actions (open/filter/watch/open a PAPER ticket);
                                a spoken "buy"/"sell" only OPENS a ticket — you still confirm it with a keypress
+                               spoken replies talk in market cap and round numbers (never a raw per-token price); < / > set the rate (saved to config)
         screener: / filter · s sort · [ ] presets · r refresh · g/G top/bottom
         social (task-1330): T trending in the space · K KOL lists · token screen: s social panel · f filter · x hidden spam
         dexterm kol list | create <name> | add <list> @handle | remove <list> @handle | mute @handle | unmute @handle | enable <list> | disable <list> | import <dir> | import-x
@@ -685,6 +730,12 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { runAgent } = await import('./agent-cmd.ts');
     return runAgent(argv.slice(1), io);
   }
+  // `dexterm spectate --replay FILE | --info` → watch an agent drive dexterm (task-1406, "watch the agent
+  // cook"): replay a saved session, or show the live read-only, token-gated, loopback spectator stream.
+  if (argv[0] === 'spectate') {
+    const { runSpectate } = await import('./spectate-cmd.ts');
+    return runSpectate(argv.slice(1), io);
+  }
   // `dexterm recorder <cmd>` → the history recorder's tables: stats, label, prune, export (task-1329). No network.
   if (argv[0] === 'recorder') {
     const { recorderCli } = await import('@dexterm/recorder');
@@ -719,6 +770,12 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { kbSkillCommand } = await import('./kb-skill-cmd.ts');
     return kbSkillCommand(argv[0], argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env, isTTY: io.stdout.isTTY === true });
   }
+  // `dexterm help [topic]` → the app-help KB (task-1413): how the app works, with the exact key/command.
+  // Backed by the same generated entries the analyst's `app_help` tool uses. No network, no model.
+  if (argv[0] === 'help') {
+    const { helpCommand } = await import('./help-cmd.ts');
+    return helpCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr });
+  }
   // `dexterm theme list|show|init|check` → user themes under ~/.dexterm/themes (task-1358 Tier 2). No network.
   if (argv[0] === 'theme') {
     const { themeCommand } = await import('./theme-cmd.ts');
@@ -750,6 +807,13 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
   if (argv[0] === 'watch') {
     const { watchCommand } = await import('./watch-cmd.ts');
     return watchCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
+  // `dexterm record [run|install|uninstall|status]` → the headless collector that keeps the history recorder
+  // fed with no TUI open (task-1414), to be driven by a user-level launchd LaunchAgent. No signer, no trading;
+  // requests honour the data layer limits / health gate / sweep budgets, and the Helius key is never printed.
+  if (argv[0] === 'record') {
+    const { recordCommand } = await import('./record-cmd.ts');
+    return recordCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm pack list|verify|add|remove|export|lock|sign|trust|signers|keymap|widget` → shareable packs (task-1358 Tier 4):
   // plain files + sha256 lock + optional ssh signature. No network, no model; a pack never runs code (widgets land
@@ -1131,6 +1195,7 @@ function leaderIntelFor(live: LiveContext | null, mint: string, wallet: string):
 function followsMove(state: AppState, delta: number): boolean {
   if (state.screen !== 'follows' || !state.copyUi) return false;
   if (state.copyUi.input !== null || state.copyUi.mirror || state.copyUi.autoModal) return true;
+  if (state.copyUi.detail) { state.copyUi.detail.scroll = Math.max(0, state.copyUi.detail.scroll + (delta > 0 ? 1 : -1)); return true; } // task-1399: j/k scroll the detail view
   const n = state.copy?.follows().length ?? 0;
   if (n <= 0) { state.copyUi.selected = 0; return true; }
   state.copyUi.selected = Math.max(0, Math.min(n - 1, state.copyUi.selected + delta));
@@ -1277,6 +1342,7 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     }
     case 'back': {
       if (state.screen === 'follows' && state.copyUi?.mirror) { state.copyUi.mirror = null; state.copyUi.notice = 'mirror preview closed'; break; } // task-1360: esc closes the mirror preview first
+      if (state.screen === 'follows' && state.copyUi?.detail) { state.copyUi.detail = null; break; } // task-1399: esc closes the wallet detail view before leaving the screen
       const prev = stack.pop(); if (prev) state.screen = prev; break;
     }
     case 'trade.buy':
@@ -1782,6 +1848,8 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     case 'goto.open': state.goto = { input: '', notice: null }; break;
     // task-1401 EXPORT: the loop renders the current view calm and writes the PNG + report (local files only).
     case 'export.view': state.pendingExport = true; break;
+    // task-1407 PNL CARD: the loop opens the preview (recorded fills only) and runs the share keys.
+    case 'pnl.card': state.pendingPnl = true; break;
     case 'display.priceMode': state.pendingToast = togglePriceMode(state); break; // task-1366: display only, persisted
     case 'theme.next': state.theme = state.custom ? cycleTheme(state.custom, state.theme) : nextTheme(state.theme); break; // task-1358: user themes join the cycle
     // task-1358 workspaces. Every case is a UI action: navigate / re-theme / open read-only popups via the
@@ -1956,7 +2024,14 @@ export function createScanSession(state: AppState, mint: string, symbol: string,
 }
 
 /** The outcome of applying one analyst UI action: a human label to show, or a rejection reason. */
-export interface AnalystActionResult { ok: boolean; label?: string; error?: string; refresh?: boolean }
+export interface AnalystActionResult { ok: boolean; label?: string; error?: string; refresh?: boolean; proposal?: AnalystConfigProposal }
+
+/**
+ * A tier-(b) persisted-config change the analyst requested (task-1413). It is NOT applied until the user
+ * accepts it with a keypress; then `applyAnalystConfig` writes it through the journaled path as actor
+ * `analyst` (so `ctrl+z` undoes it). Holds only the already-validated action + a one-line summary.
+ */
+export interface AnalystConfigProposal { action: AnalystAction; summary: string }
 
 /**
  * Resolve a mint to an openable seed from what the app already knows (screener view → new pairs →
@@ -2066,10 +2141,17 @@ export function applyAnalystAction(state: AppState, raw: Record<string, unknown>
   if (times.length >= ACTION_RATE.max) return { ok: false, error: 'analyst actions are rate-limited; try again shortly' };
 
   const sc = state.screener;
-  const allow = (buildScreenState(state).actions as { mints: string[]; feeds: string[]; sortKeys: string[] });
+  const allow = buildScreenState(state).actions as Parameters<typeof validateAnalystAction>[1];
   const res = validateAnalystAction(raw, allow);
   if (!res.ok) return { ok: false, error: res.error };
   const action = res.action;
+
+  // task-1413 tier (b): a persisted-config action is never applied by the model — return it as a PROPOSAL
+  // the user accepts with a keypress (applyAnalystConfig then journals it as actor 'analyst').
+  if (ACTION_TIER[action.type] === 'config') {
+    times.push(now);
+    return { ok: true, label: res.label, proposal: { action, summary: res.label } };
+  }
 
   // Resolve a mint to a row object from what is on screen (allow-list guarantees it was visible).
   const findSeed = (mint: string) => seedForMint(state, live, mint);
@@ -2103,15 +2185,81 @@ export function applyAnalystAction(state: AppState, raw: Record<string, unknown>
     }
     case 'show_in_screener': {
       toScreen('screener');
+      if (action.preset && !setPreset(sc, action.preset as PresetId)) return { ok: false, error: `preset "${action.preset}" is unavailable` };
+      if (action.preset && state.feed) state.feed.setPreset(sc.preset);
       if (action.filter) { const err = setFilter(sc, action.filter); if (err) return { ok: false, error: `bad filter: ${err.error}` }; }
       if (action.sort) setSort(sc, action.sort.key, action.sort.dir);
       if (action.highlight) { const i = screenerView(sc).findIndex((r) => r.mint === action.highlight); if (i >= 0) state.selected = i; }
       state.selected = clampSelection(sc, state.selected);
+      if (action.preset) { times.push(now); return { ok: true, label: res.label, refresh: true }; }
+      break;
+    }
+    // --- task-1413 view-only actions: applied immediately, shown as "analyst did X".
+    case 'switch_screen': {
+      toScreen(action.screen as ScreenKey);
+      state.selected = 0;
+      break;
+    }
+    case 'switch_workspace': {
+      const r = switchWorkspace(state, action.name, stack);
+      if (!r.ok) return { ok: false, error: r.reason };
+      times.push(now);
+      return { ok: true, label: res.label, refresh: r.refresh };
+    }
+    case 'chart_popup': {
+      // Open the chart popup (the loop performs the open/close); needs a selected coin to chart.
+      state.pendingPopup = action.open ? 'chart' : null;
+      break;
+    }
+    case 'toggle_calm': {
+      if (action.on) { if (!isCalm(state.vfx)) { state.vfx.intensity = 'off'; state.vfx.trail.clear(); } }
+      else if (isCalm(state.vfx)) { const back: Intensity = 'fever'; state.vfx.intensity = back; state.vfx.baseline = 0.12; }
+      break;
+    }
+    case 'set_scan': {
+      scanCommand(state, action.on ? 'on' : 'off', stack);
+      break;
+    }
+    case 'export_view': {
+      state.pendingExport = true;
       break;
     }
   }
   times.push(now);
   return { ok: true, label: res.label };
+}
+
+/**
+ * task-1413: apply an accepted tier-(b) config proposal through the journaled path as actor `analyst`
+ * (so `ctrl+z` undoes it), creating the parent section when absent (exactly like the `$` / `,` handlers),
+ * then reflect it in the live UI where cheap. Throws on a refusal (schema / policy); the caller toasts it.
+ * Returns the one-line label for the confirmation toast.
+ */
+export function applyAnalystConfig(state: AppState, proposal: AnalystConfigProposal): string {
+  const ui = state.custom;
+  if (!ui) throw new Error('config changes need a loaded config (not available on this run)');
+  const change = configChangeForAction(proposal.action);
+  if (!change) throw new Error('not a persisted-config action');
+  const parent = (ui.config as unknown as Record<string, unknown>)[change.section];
+  const op = parent && typeof parent === 'object'
+    ? { op: 'add' as const, path: change.path, value: change.value }
+    : { op: 'add' as const, path: `/${change.section}`, value: { [change.key]: change.value } };
+  // THE GATE (task-1413 r2): re-run the model-actor policy on the exact journal op BEFORE writing. The
+  // analyst is not the user, so `DENIED_FOR_MODELS` applies — a config action can never reach a signer /
+  // trading / keys / caps / mandates / wallet / alerts / VOICE path, even behind the keypress confirm.
+  // CONFIG_ACTION_PATHS is already a closed non-denied allow-list; this is the server-side belt-and-braces.
+  const denied = policyCheck([op], 'claude');
+  if (denied.length) throw new Error(`refused: ${denied.map((e) => e.msg).join('; ')}`);
+  const { config } = applyAndJournal(ui.home, [op], { actor: 'analyst', why: `analyst: ${proposal.summary}`, now: state.now.getTime() });
+  ui.config = config;
+  // Reflect the change in the running UI where it is cheap and local.
+  switch (proposal.action.type) {
+    case 'set_theme': { const t = themeByName(ui, proposal.action.name); if (t) state.theme = t; break; }
+    case 'set_price_mode': state.priceMode = proposal.action.mode; break;
+    case 'set_intensity': state.vfx.intensity = proposal.action.intensity; state.vfx.baseline = proposal.action.intensity === 'fever' ? 0.12 : 0; break;
+    default: break;
+  }
+  return proposal.summary;
 }
 
 /**
@@ -2245,6 +2393,17 @@ export function applyKey(state: AppState, key: Key, stack: ScreenKey[]): Effect 
     if (key.name === 'backspace') { ui.input = cur.slice(0, -1); return; }
     if (key.name === 'space' && cur.length < FOLLOW_INPUT_MAX) { ui.input = cur + ' '; return; }
     if (key.name === 'char' && key.ch && !key.ctrl && !key.alt && cur.length < FOLLOW_INPUT_MAX) ui.input = cur + key.ch;
+    return;
+  }
+  // task-1399: on the follows screen (not typing, no modal), enter opens/closes the selected wallet's DETAIL view.
+  if (state.screen === 'follows' && state.copyUi && state.copyUi.input === null && !state.copyUi.mirror && !state.copyUi.autoModal && key.name === 'enter') {
+    const ui = state.copyUi;
+    if (ui.detail) { ui.detail = null; return; }
+    const svc = state.copy;
+    const rows = svc?.follows() ?? [];
+    const f = rows[Math.max(0, Math.min(rows.length - 1, ui.selected))];
+    if (f) ui.detail = { wallet: f.addr, scroll: 0 };
+    else ui.notice = 'follow a wallet first (i)';
     return;
   }
   if (state.screen === 'kol' && state.kolInput !== null && state.kolInput !== undefined) {
@@ -2737,6 +2896,10 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     // Live bindings redraw as soon as something lands (one frame per macrotask at most).
     let drawPending = false;
     let lastFastDraw = 0;
+    // task-1399: a followed wallet's buy/sell also PUSHES through the alerts engine (desktop / Telegram / Discord)
+    // when the user enabled a push channel. Forward-declared; the real impl is set once the Notifier exists below.
+    // Read-only, like a rule alert — nothing here trades, arms or signs.
+    let pushCopyAlert: (a: CopyAlert) => void = () => {};
     if (live) {
       // task-1360: poll the followed wallets for the whole run (live only; replay never spends credits) and toast
       // every new buy/sell a followed wallet made. Information only: no path from an alert to a trade exists here.
@@ -2748,6 +2911,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             const a = as[as.length - 1];
             const who = a.name ?? shortAddr(a.wallet);
             say(`${who} ${a.trade.side === 'buy' ? 'BOUGHT' : 'SOLD'} ${shortAddr(a.trade.mint)}${a.trade.usd !== null ? ` ≈ $${a.trade.usd.toFixed(0)}` : ''}${a.lagMs !== null ? ` · lag ${Math.round(a.lagMs / 1000)}s` : ''}${as.length > 1 ? ` (+${as.length - 1} more · U)` : ' (U)'}`, a.trade.side === 'buy' ? 'up' : 'down', 6);
+            for (const ca of as) pushCopyAlert(ca); // task-1399: push each one out through the alerts engine too
           }
         }
         if (done || drawPending) return;
@@ -2837,6 +3001,15 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         const before = state.screen;
         const r = applyAnalystAction(state, raw, stack);
         if (!r.ok || !r.label) return;
+        // task-1413 tier (b): a persisted-config request is a PROPOSAL — show it and wait for the user's key.
+        if (r.proposal) {
+          // The proposal expires with its 8s toast (task-1413 defect c): a 'y' typed after it fades never
+          // persists a stale change. `now` is the frame clock so it stays deterministic under replay.
+          state.analystConfigProposal = { ...r.proposal, expiresAt: state.now.getTime() + 8000 };
+          say(`analyst suggests: ${r.proposal.summary} — press y to accept, any other key to dismiss`, 'ai', 8);
+          scheduleDraw();
+          return;
+        }
         const log = (state.analystActions ??= []);
         log.push(r.label);
         if (log.length > 6) log.shift();
@@ -3146,6 +3319,9 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     const alertNotifier = state.custom && hasPushChannel(state.custom.config.alerts)
       ? buildNotifier(state.custom.home, state.custom.config.alerts, { toastSink: () => {} })
       : null;
+    // task-1399: now the Notifier exists, a followed wallet's buy/sell can be pushed. Fire-and-forget; a slow
+    // channel never blocks the loop; routing's `levels` filter lets the user scope (a buy is `up`, a sell `down`).
+    if (alertNotifier) pushCopyAlert = (ca: CopyAlert): void => { void alertNotifier.deliver(copyAlertToDelivery(ca)).catch(() => { /* never crash the loop on a channel failure */ }); };
     const drainDeliveries = (): void => {
       const ui = state.rulesUi;
       if (!ui || !ui.pendingDeliveries.length) return;
@@ -3269,6 +3445,42 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       if (np) return { price: np.price ?? null, mcap: np.mcap ?? null };
       return { price: null, mcap: null };
     };
+    // task-1411: a short instruction appended to a VOICE analyst question so the answer is built for the
+    // ear, not the screen — market cap not a per-token price, round numbers, short.
+    const VOICE_ANALYST_SPEECH_HINT =
+      'Answer out loud for text-to-speech: talk about price as market cap, never a raw per-token price; '
+      + 'round big numbers like "340 thousand" or "1.2 million"; no long addresses; keep it to two or three short sentences.';
+    // A spoken pronoun that points at the highlighted row ("this one", "this coin", "it").
+    const VOICE_SELECTION_PRONOUN = /\b(?:this (?:one|coin|token)|that (?:one|coin|token)|this|it)\b/i;
+    // A friendly, complete spoken ack for each navigable screen (the router's `say` is the terse key).
+    const NAV_ACK: Record<string, string> = {
+      screener: 'the screener', newpairs: 'new pairs', watchlist: 'your watchlist', analyst: 'the analyst', positions: 'your positions',
+    };
+    /**
+     * Run a VOICE-originated analyst question (task-1411). Fixes the screener silence: "what do you think
+     * of THIS ONE" aimed at a highlighted screener row used to start a context-free `trench-scan` with no
+     * mint, so the analyst never learned which coin "this one" was and answered with a short, useless
+     * fragment (the tester heard nothing useful). We now attach the SELECTED coin as a token-dossier target —
+     * exactly the context a token screen already gives — so it answers for real. The question also carries
+     * a short "answer for speech" instruction (market cap, round numbers, short).
+     */
+    const askVoiceAnalyst = (question: string): void => {
+      const q = question.trim().slice(0, 400);
+      const instructed = `${q}\n\n${VOICE_ANALYST_SPEECH_HINT}`;
+      // A warm session: follow up on it so the model keeps context (the screen is already analyst/token).
+      if (state.analyst) { state.analyst.ask(instructed, buildScreenState(state)); return; }
+      const tv = live?.token?.view;
+      const sel = voiceSelected();
+      if (state.screen === 'token' && live && tv?.mint) {
+        state.pendingAnalyst = { skill: 'token-dossier', mint: tv.mint, symbol: tv.symbol, target: 'token', question: instructed };
+      } else if (live && sel && VOICE_SELECTION_PRONOUN.test(q)) {
+        // the screener/analyst/watchlist/new-pairs highlighted coin IS "this one" (task-1411)
+        state.pendingAnalyst = { skill: 'token-dossier', mint: sel.mint, symbol: sel.symbol, target: 'analyst', question: instructed };
+      } else {
+        state.pendingAnalyst = { skill: 'trench-scan', target: 'analyst', question: instructed };
+      }
+      if (state.pendingAnalyst) beginAnalyst();
+    };
     /**
      * Perform a voice decision. Returns `false` when the app spoke its own reply (an ask / clarify), so
      * the controller does not read the decision's `say` line over it (task-1339, re-verify N1: the
@@ -3280,7 +3492,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       const ask = (line: string): void => { answered = true; voice?.speak(line); };
       try {
         switch (d.kind) {
-          case 'navigate': { const a = SCREEN_ACTION[d.screen]; if (a) applyAction(state, a, stack); break; }
+          case 'navigate': { const a = SCREEN_ACTION[d.screen]; if (a) applyAction(state, a, stack); ask(NAV_ACK[d.screen] ?? d.say); break; }
           case 'open-token': {
             const mint = resolveVoiceMint(d.target);
             if (mint && live) { live.openToken(seedForMint(state, live, mint)); if (state.screen !== 'token') stack.push(state.screen); state.screen = 'token'; }
@@ -3358,10 +3570,11 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           case 'analyst': {
             // Route the question to the analyst, surface the chat, and let the answer be spoken when it lands.
             // Capped like typed chat (400 chars): a runaway transcript never becomes a 200 KB argv (N7).
+            // task-1411: askVoiceAnalyst attaches the highlighted coin as context so a screener "this one"
+            // question is answered for real, and appends the "answer for speech" instruction.
             if (state.screen !== 'token' && state.screen !== 'analyst') { stack.push(state.screen); state.screen = 'analyst'; }
             syncAnalyst(state);
-            sendChat(d.question.slice(0, 400));
-            if (state.pendingAnalyst) beginAnalyst();
+            askVoiceAnalyst(d.question);
             break;
           }
           case 'workspace': {
@@ -3406,6 +3619,19 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         ui.config = config;
       } catch { /* keep the voice for this run; nothing to surface */ }
     };
+    // task-1411: persist the < / > speaking-rate nudge to config.voice.rate (actor 'user', journaled →
+    // undo works). Best-effort: a failure keeps the rate for this run and never breaks the UI.
+    const persistVoiceRate = (rate: number): void => {
+      const ui = state.custom;
+      if (!ui) return;
+      try {
+        const op = ui.config.voice
+          ? { op: 'add' as const, path: '/voice/rate', value: rate }
+          : { op: 'add' as const, path: '/voice', value: { rate } };
+        const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `voice rate ${rate}`, now: state.now.getTime() });
+        ui.config = config;
+      } catch { /* keep the rate for this run; nothing to surface */ }
+    };
     const initVoice = async (): Promise<void> => {
       if (voiceInitStarted) return;
       voiceInitStarted = true;
@@ -3426,6 +3652,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         onState: () => { if (!done && voice) { state.voice = toHud(); scheduleDraw(); } },
         onDecision: handleVoiceDecision,
         onVoiceChange: persistVoiceChoice,
+        onRateChange: persistVoiceRate,
       });
       voice.enable();
       await voice.toggleTalk(); // the first `v` press both enables and starts listening
@@ -3466,6 +3693,27 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         }
         // Ctrl-C always quits cleanly (terminal restored by the guard), whatever is focused.
         if (key.ctrl && key.ch === 'c') { quit(); return; }
+        // task-1413: a pending analyst config PROPOSAL owns the next key. `y` accepts and journals it as
+        // actor 'analyst' (ctrl+z undoes); any other key dismisses it. A stray key never persists a change.
+        // Two guards (defect c): the proposal does NOT steal a key while a TEXT INPUT is open — the GO-TO
+        // prompt or a focused analyst chat line — so a 'y' being typed goes into the field, not the accept;
+        // and an EXPIRED proposal (its 8s toast has faded) is silently dropped, never accepted by a late 'y'.
+        if (state.analystConfigProposal) {
+          const inputOpen = !!state.goto || (state.aiFocused === true);
+          const expired = state.now.getTime() >= state.analystConfigProposal.expiresAt;
+          if (expired) {
+            state.analystConfigProposal = null; // let the key fall through to its normal handler below
+          } else if (!inputOpen) {
+            const prop = state.analystConfigProposal;
+            state.analystConfigProposal = null;
+            if (key.ch === 'y' || key.ch === 'Y') {
+              try { say(`analyst ${applyAnalystConfig(state, prop)} · ctrl+z undoes`, 'ai', 5); }
+              catch (e) { say(`change refused: ${describeError(e)}`, 'warn', 4); }
+            } else { say('dismissed the analyst change', 'ai', 3); }
+            draw();
+            continue;
+          }
+        }
         // task-1388 GO-TO prompt: while the "open any coin" input is open it owns the keyboard. Route the key
         // straight to applyKey (which does the capture / open) and skip the voice, calm, demo and keymap
         // handlers below — otherwise a base58 char like v / m / c would toggle voice or calm instead of typing.
@@ -3489,7 +3737,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         // `micEngaged` also covers the window while the mic is still OPENING (listen() in flight), so a key
         // pressed before the engine came up closes the session the moment it arrives (task-1339, N3/N8).
         if (voice?.micEngaged) {
-          const isVoiceCtl = key.name === 'char' && !key.ctrl && !key.alt && (key.ch === 'v' || key.ch === 'm' || key.ch === ',');
+          const isVoiceCtl = key.name === 'char' && !key.ctrl && !key.alt && (key.ch === 'v' || key.ch === 'm' || key.ch === ',' || key.ch === '<' || key.ch === '>');
           if (key.name === 'esc') { voice.cancelListen(); draw(); continue; }
           if (!isVoiceCtl) voice.cancelListen(); // fall through so the key still does its normal job
         }
@@ -3507,6 +3755,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             if (key.ch === 'v') { if (!voice) void initVoice(); else void voice.toggleTalk(); draw(); continue; }
             if (voice?.isEnabled && key.ch === 'm') { voice.toggleMute(); draw(); continue; }
             if (voice?.isEnabled && key.ch === ',') { voice.cycleVoice(); draw(); continue; }
+            if (voice?.isEnabled && key.ch === '<') { voice.nudgeRate(-1); draw(); continue; } // slower (task-1411)
+            if (voice?.isEnabled && key.ch === '>') { voice.nudgeRate(1); draw(); continue; }  // faster (task-1411)
           }
         }
         // A modal overlay (welcome/help) is open: any key dismisses it; `?` switches welcome→help (task-1305).
@@ -3516,6 +3766,21 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           else if (key.name === 'down' || (key.name === 'char' && key.ch === 'j')) menu.selected = Math.min(menu.items.length - 1, menu.selected + 1);
           else if (key.name === 'up' || (key.name === 'char' && key.ch === 'k')) menu.selected = Math.max(0, menu.selected - 1);
           else if (key.name === 'enter') { state.pendingOpen = menu.items[menu.selected]?.url ?? null; state.overlay = null; }
+          draw(); continue;
+        }
+        // task-1407: the PnL card preview owns the keys while open (share / save / toggles / other coin / esc).
+        if (state.overlay === 'pnl' && state.pnl) {
+          const ui = state.pnl;
+          const eff = pnlKey(ui, key);
+          if (eff.kind === 'close') { state.overlay = null; state.pnl = null; }
+          else if (eff.kind === 'reload') { ui.stats = null; ui.error = null; void loadPnl(state).then(() => { if (!done) draw(); }); }
+          else if (eff.kind === 'share' && ui.stats) {
+            ui.busy = true; ui.notice = null;
+            void shareCard(ui.stats, { ...ui.opts }, eff.action, { platform: process.platform, env: io.env, run: runLocal, openUrl: (u) => openInBrowser(u), copyText: copyToClipboard })
+              .then((r) => { ui.notice = r.message; say(r.message, 'info', 10); })
+              .catch((e) => { ui.notice = `card failed: ${describeError(e)}`; })
+              .finally(() => { ui.busy = false; if (!done) draw(); });
+          }
           draw(); continue;
         }
         // task-1358: the WORKSPACES card — a digit picks a slot, j/k move, ⏎ activates, esc/q/ctrl+w w close.
@@ -3890,6 +4155,13 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           say(`exported PNG + report → ${r.png.replace(homedir(), '~')} · local only, nothing uploaded`, 'info', 8);
         } catch (e) { say(`export failed: ${describeError(e)}`, 'warn', 6); }
       }
+      if (state.pendingPnl) {
+        // task-1407: open the PnL card preview for this screen (recorded fills only), then build the card.
+        state.pendingPnl = false;
+        const why = openPnl(state);
+        if (why) say(why, 'warn', 6);
+        else void loadPnl(state).then(() => { if (!done) draw(); });
+      }
       if (state.pendingToast) {
         // task-1315: surface the link list / "no link" reply as a durable toast. Drained BEFORE
         // pendingOpen so that on a successful open the "opened <url>" toast overwrites the "open <url>" one.
@@ -3948,6 +4220,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
               // task-1330: the social feed's own cadence (venues 60 s, RSS 10 min); it never creates timers itself.
               live.social.tick(Date.now());
               if (state.screen === 'token' && live.token && Date.now() - lastTokenRefresh >= TOKEN_REFRESH_MS) { lastTokenRefresh = Date.now(); void live.token.load(); }
+              // task-1404: keep the open token's credit-metered holder/rug intel LIVE (slow cadence, budget-gated inside).
+              if (state.screen === 'token' && live.token) live.refreshOpenIntel(Date.now());
               if (state.screen === 'watchlist' && Date.now() - lastWatchRefresh >= WATCH_REFRESH_MS) { lastWatchRefresh = Date.now(); void live.watch.refresh(); }
               if (state.screen === 'newpairs' || live.feedStarted) void live.newpairs.refresh();
               if (state.screen === 'newpairs') pinNewpairsSelection(state); // QA M8: keep the highlight on the picked mint

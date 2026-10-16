@@ -71,6 +71,14 @@ export interface TtsEngine {
   /** List selectable voice names (macOS voices); [] when the engine has none. */
   listVoices(): Promise<string[]>;
   speak(text: string, opts?: SpeakOptions): SpeakHandle;
+  /**
+   * Optional: pre-load/initialise the engine so the first reply starts quickly (Piper loads its model
+   * into a standby process). Safe to call repeatedly; a no-op for engines that stream from spawn (`say`).
+   * `rate` is the words-per-minute the first reply will likely use, so the standby is primed for it.
+   */
+  warmup?(rate?: number): void;
+  /** Optional: release any long-lived resources (warm processes) when voice is disabled. */
+  dispose?(): void;
 }
 
 /** The screen context the router needs. Mirrors the subset of buildScreenState() the router reads. */

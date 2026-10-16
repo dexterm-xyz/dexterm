@@ -26,6 +26,15 @@ export interface RuleRow {
   holders?: number | null; org?: number | null; top10?: number | null; dev?: number | null;
   lpLocked?: number | null; bundled?: number | null; snipers?: number | null;
   cluster?: number | null;
+  /**
+   * task-1404 LIVE holder/rug signals as alert triggers. These come from the live-signals engine for the open
+   * token (and watched coins): `fresh` = fresh-at-buy wallets % of the top sample; `mintable` / `freezable` are
+   * 1 when a mint / freeze authority is present (new supply can be minted / transfers can be frozen), 0 when
+   * revoked, null when unknown. A change is caught with `.delta` (e.g. `dev.delta < 0` = dev sold, `top10.delta`,
+   * `lplocked.delta < 0`, `mintable.delta > 0` = authority re-enabled). The engine's per-mint ring gives these
+   * fields the same `.delta` / `.velocity` as any other field, so no new engine machinery is needed.
+   */
+  fresh?: number | null; mintable?: number | null; freezable?: number | null;
   /** LARP-detector grade (task-1398): higher = more real (REAL_PRODUCT 3 · EARLY_BUT_REAL 2 · UNVERIFIABLE 1 · LARP 0); null = no verdict yet. `larp.delta` detects a grade change. */
   larp?: number | null;
   ageMin?: number | null;
@@ -44,11 +53,12 @@ export const FIELDS: Record<string, FieldFn> = {
   holders: (r) => r.holders, org: (r) => r.org, top10: (r) => r.top10, dev: (r) => r.dev,
   lplocked: (r) => r.lpLocked, bundled: (r) => r.bundled, snipers: (r) => r.snipers,
   cluster: (r) => r.cluster, larp: (r) => r.larp,
+  fresh: (r) => r.fresh, mintable: (r) => r.mintable, freezable: (r) => r.freezable,
   age: (r) => r.ageMin, m5: (r) => r.chg?.m5, h1: (r) => r.chg?.h1, h6: (r) => r.chg?.h6, h24: (r) => r.chg?.h24,
   buys: (r) => r.buys, sells: (r) => r.sells, bonding: (r) => r.bonding,
 };
 export const FIELD_NAMES = Object.keys(FIELDS);
-const ALIASES: Record<string, string> = { vol: 'vol24', volume: 'vol24', liquidity: 'liq', cap: 'mcap', mc: 'mcap', holder: 'holders', organic: 'org', top: 'top10', locked: 'lplocked', 'cluster%': 'cluster', clusterpct: 'cluster' };
+const ALIASES: Record<string, string> = { vol: 'vol24', volume: 'vol24', liquidity: 'liq', cap: 'mcap', mc: 'mcap', holder: 'holders', organic: 'org', top: 'top10', locked: 'lplocked', 'cluster%': 'cluster', clusterpct: 'cluster', freshwallets: 'fresh', mintauth: 'mintable', freezeauth: 'freezable' };
 type Op = '>' | '>=' | '<' | '<=' | '=' | '==' | '!=';
 const OPS: Record<Op, (a: number, b: number) => boolean> = { '>': (a, b) => a > b, '>=': (a, b) => a >= b, '<': (a, b) => a < b, '<=': (a, b) => a <= b, '=': (a, b) => a === b, '==': (a, b) => a === b, '!=': (a, b) => a !== b };
 const TAGS: Record<string, (r: RuleRow, v: string) => boolean> = {

@@ -13,3 +13,8 @@ export * from './ws.ts';
 export * from './executor.ts';
 export * from './proposals.ts';
 export * from './bus.ts';
+// task-1406 "watch the agent cook": the spectator event model + redaction + save/replay, the local
+// follow-mode controller (pause / take over / kill), and the read-only loopback spectator stream.
+export * from './spectator.ts';
+export * from './follow.ts';
+export * from './spectator-server.ts';

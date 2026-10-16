@@ -79,12 +79,15 @@ export function parseSayVoices(stdout: string): VoiceInfo[] {
 export const BRITISH_MALE_PREFERENCE: readonly string[] = ['eddy', 'daniel', 'oliver', 'arthur'];
 
 /**
- * Per-voice delivery defaults, applied only when the user has not saved their own rate/pitch. Eddy's are
- * the values of the audition sample chosen (2026-10-15: 06-eddy-uk-deep-slow = rate 168, pbas 30).
+ * Per-voice delivery defaults, applied only when the user has not saved their own rate/pitch.
+ *
+ * task-1411: the old Eddy override (rate 168 + pbas 30) came from an audition sample the maintainers never
+ * explicitly picked; it was reported as "crazy bad" and "way too slow", and the pitch shift distorted
+ * the voice. It is removed: every voice now uses the engine-wide DEFAULT_RATE (a brisk ~205 wpm) and NO
+ * pitch override unless the user sets `voice.pitch` themselves. Keep this map empty rather than deleting
+ * the hook, so a future per-voice tweak has a home and the public `voiceStyleDefaults` export is stable.
  */
-export const VOICE_STYLE_DEFAULTS: Readonly<Record<string, { rate: number; pitch: number }>> = {
-  eddy: { rate: 168, pitch: 30 },
-};
+export const VOICE_STYLE_DEFAULTS: Readonly<Record<string, { rate: number; pitch: number }>> = {};
 
 /** The delivery defaults for a resolved voice name, or undefined to use the engine-wide defaults. */
 export function voiceStyleDefaults(name: string | null | undefined): { rate: number; pitch: number } | undefined {

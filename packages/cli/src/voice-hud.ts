@@ -48,7 +48,7 @@ export function renderVoiceHud(c: Canvas, v: VoiceHud, t: Theme): void {
   } else {
     // idle but enabled: a quiet "ready" badge with the key hints.
     x = c.text(x, y, ' ◎ voice ', { fg: t.borderFocus, bg, b: true });
-    x = c.text(x, y, `v talk · m ${v.muted ? 'unmute' : 'mute'} · , voice${voiceName}`, { fg: t.muted, bg });
+    x = c.text(x, y, `v talk · m ${v.muted ? 'unmute' : 'mute'} · , voice · < > rate${voiceName}`, { fg: t.muted, bg });
   }
   if (mute && v.mode !== 'off') x = c.text(x, y, mute, { fg: t.warn, bg, b: true });
 

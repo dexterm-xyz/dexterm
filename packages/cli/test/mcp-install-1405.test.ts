@@ -52,7 +52,7 @@ test('planToml: appends when absent, no-op when present, never clobbers a differ
 
 test('every client has a stable id and either a default path or is print-only', () => {
   const ids = CLIENTS.map((c) => c.id);
-  for (const want of ['claude-code', 'claude-desktop', 'cursor', 'codex', 'openclaw', 'generic']) assert.ok(ids.includes(want), `client ${want} exists`);
+  assert.deepEqual(ids, ['claude-code', 'claude-desktop', 'cursor', 'codex', 'generic'], 'the public client list names no maintainer-specific tool (task-1415)');
   const desktop = clientById('claude-desktop')!.path({ HOME: '/home/u' } as NodeJS.ProcessEnv, process.platform);
   assert.ok(desktop && desktop.endsWith('claude_desktop_config.json'));
 });

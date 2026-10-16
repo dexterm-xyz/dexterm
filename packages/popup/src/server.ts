@@ -57,6 +57,8 @@ export const POPUP_EVENTS = new Set<string>([
   'event:roster.pause', 'event:roster.resume', 'event:roster.kick',
   // task-1355 order plans: cancel a plan by id (the ONLY write the plans popup can send — never arm/cap/sign)
   'event:plan.cancel',
+  // task-1406 spectator: pause / resume / take over / kill an agent by name (the only writes this popup sends)
+  'event:spectator.pause', 'event:spectator.resume', 'event:spectator.takeover', 'event:spectator.kill',
 ]);
 /**
  * task-1358 r3: the ONLY messages a pack widget's socket may send — the generic set every popup has. A widget socket
@@ -105,6 +107,7 @@ export function validateEventPayload(name: string, payload: unknown): Record<str
     case 'popup.close-request': case 'popup.focus': case 'popup.drag':
       return {};
     case 'roster.pause': case 'roster.resume': case 'roster.kick':
+    case 'spectator.pause': case 'spectator.resume': case 'spectator.takeover': case 'spectator.kill':
       return typeof p.agent === 'string' && ROSTER_AGENT_RE.test(p.agent) ? { agent: p.agent } : null;
     case 'plan.cancel':
       return typeof p.id === 'string' && PLAN_ID_RE.test(p.id) ? { id: p.id } : null;
@@ -120,7 +123,7 @@ export function lwcLogoStyleHash(lwcSource: string): string | null {
 }
 
 // (r3) 'widget' is the WRAPPER page — ours, nonce-rendered like the rest; the pack html goes in its iframe
-const PAGE_KINDS: PopupKind[] = ['chart', 'token', 'feeds', 'bubbles', 'roster', 'narrative', 'plans', 'widget'];
+const PAGE_KINDS: PopupKind[] = ['chart', 'token', 'feeds', 'bubbles', 'roster', 'narrative', 'plans', 'widget', 'spectator'];
 
 function b64url(buf: Buffer): string { return buf.toString('base64url'); }
 function safeEq(a: string, b: string): boolean {

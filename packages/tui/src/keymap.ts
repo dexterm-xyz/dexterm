@@ -207,7 +207,9 @@ export type AppAction =
   | 'intel.bubbles' | 'popup.bubbles' | 'bubbles.view' | 'bubbles.zoom' | 'bubbles.deep'
   // task-1282 JARVIS voice: push-to-talk. Handled in the interactive loop (the controller lives there),
   // so applyAction has no case for it; the binding exists for the footer hint and the `?` help card.
-  | 'voice.talk'
+  // task-1411: the in-voice controls (only live once voice is on) — mute, cycle voice, nudge the speaking
+  // rate slower/faster — are loop-handled the same way and documented here for the `?` help card.
+  | 'voice.talk' | 'voice.mute' | 'voice.cycle' | 'voice.rate'
   // task-1355 order plans & standing mandates: the PLANS screen (O, global). On the screen, tab flips
   // plans ⇄ mandates, a arms the selected row (hold-to-confirm modal, physical keypress only), c cancels a
   // plan / r revokes a mandate, ! panics (revokes everything). Arming is NEVER reachable by voice/agent.
@@ -238,7 +240,10 @@ export type AppAction =
   | 'goto.open'
   // task-1401 EXPORT / SHARE: `E` (global, unused before) renders the current view to a PNG + a text report in
   // ~/.dexterm/exports with its data ages and the LIVE / SAMPLE / REPLAY label. Local files only; nothing uploads.
-  | 'export.view';
+  | 'export.view'
+  // task-1407 PNL CARDS: `H` on the token, positions and followed-wallets screens previews a shareable PnL card built from
+  // recorded fills (PAPER / LIVE / TRACKED stamp); share = save + clipboard + X compose intent in the user's browser.
+  | 'pnl.card';
 
 /** The prototype's key table (README of dexterm/prototype) plus the SPEC §4.1 screener keys. */
 export const DEFAULT_KEYMAP = new Keymap<AppAction>([
@@ -267,6 +272,12 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   // task-1282 JARVIS voice: push-to-talk toggle (hold not possible in a terminal). Lowercase v is free
   // on every screen; the loop auto-enables voice mode on first use and shows a live mic indicator.
   { keys: ['v'], action: 'voice.talk', label: 'voice' },
+  // task-1411: in-voice controls (loop-handled; only act while voice is on). `m` mute, `,` change voice,
+  // `<`/`>` slow down / speed up the spoken reply (saved to config.voice.rate). Per-screen `m` bindings
+  // (kol/bubbles/follows) override this global one on those screens, exactly like `voice.talk`.
+  { keys: ['m'], action: 'voice.mute', label: 'mute voice' },
+  { keys: [','], action: 'voice.cycle', label: 'change voice' },
+  { keys: ['<', '>'], action: 'voice.rate', label: 'slower / faster voice' },
   // task-1311: `i` focuses the chat input on the token / analyst screens (QA B1–B3); the loop only
   // captures keystrokes into the input while it is focused, so the number keys and `q` never type.
   { keys: ['i'], action: 'input.focus', label: 'ask', screen: 'token' },
@@ -278,6 +289,10 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['$'], action: 'display.priceMode', label: 'price ⇄ mcap' },
   // task-1401: `E` exports the current view (PNG + text report, local only). Free on every screen.
   { keys: ['E'], action: 'export.view', label: 'export PNG + report' },
+  // task-1407: `H` (free capital everywhere) opens the PnL card preview on the screens that have fills to card.
+  { keys: ['H'], action: 'pnl.card', label: 'PnL card (share)', screen: 'token' },
+  { keys: ['H'], action: 'pnl.card', label: 'PnL card (share)', screen: 'positions' },
+  { keys: ['H'], action: 'pnl.card', label: 'PnL card (share)', screen: 'follows' },
   { keys: ['/'], action: 'filter.edit', label: 'filter', screen: 'screener' },
   { keys: ['\\'], action: 'filter.clear', label: 'clear filter', screen: 'screener' },
   { keys: ['s'], action: 'sort.menu', label: 'sort', screen: 'screener' },

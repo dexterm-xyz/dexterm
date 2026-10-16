@@ -114,7 +114,13 @@ export function larpGrade(verdict: string | null | undefined): number | null {
   return g === undefined ? null : g;
 }
 
-/** The rows a rule can see: the screener feed (no skeletons) with the wallet-intel top-cluster share and the LARP grade attached. */
+/**
+ * The rows a rule can see: the screener feed (no skeletons) with the wallet-intel top-cluster share and the LARP
+ * grade attached. task-1404: the OPEN token also carries its LIVE holder/rug signal fields (top10 / dev / bundled /
+ * snipers / fresh / cluster / lpLocked / bonding / mintable / freezable), so a rule like `dev.delta < 0` or
+ * `mintable > 0` fires on the real streaming values, not the on-open snapshot. A token opened by `--mint` that is
+ * not in the screener feed is appended as its own row so rules still see it.
+ */
 export function ruleRowsOf(state: AppState): RuleRow[] {
   const out: RuleRow[] = [];
   const seen = new Set<string>();
@@ -124,12 +130,43 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
     const c = res.analysis.clusters[0];
     return c ? c.pct : null;
   };
+  const openMint = state.live?.token?.view.mint ?? null;
   for (const r of state.screener.rows as ScreenerRow[]) {
     if (!r.mint || r.skeleton || seen.has(r.mint)) continue;
     seen.add(r.mint);
-    out.push(Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict) }) as RuleRow);
+    const row = Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict) }) as RuleRow;
+    if (r.mint === openMint) overlaySignalFields(row, state, r.mint);
+    out.push(row);
+  }
+  // A token opened by mint (not in the screener feed): synthesize a row from its live view so rules see it too.
+  if (openMint && !seen.has(openMint) && state.live?.token) {
+    const v = state.live.token.view;
+    const row = Object.assign(Object.create(null), {
+      mint: v.mint, symbol: v.symbol, price: v.price, mcap: v.mcap, fdv: v.fdv, liq: v.liq, vol24: v.vol24,
+      holders: v.holders, org: v.org, top10: v.top10, dev: v.dev, lpLocked: v.lpLocked,
+      cluster: clusterOf(v.mint), larp: larpGrade(state.larpByMint?.get(v.mint)?.verdict),
+      ageMin: v.ageMin, chg: v.chg, launchpad: v.launchpad, flags: v.flags, verified: v.verified, sus: v.sus,
+    }) as RuleRow;
+    overlaySignalFields(row, state, v.mint);
+    out.push(row);
   }
   return out;
+}
+
+/** Overlay the live-signals engine's latest values (non-null wins) onto a rule row (task-1404). */
+function overlaySignalFields(row: RuleRow, state: AppState, mint: string): void {
+  const f = state.live?.signals?.fields(mint);
+  if (!f) return;
+  if (f.top10 !== null) row.top10 = f.top10;
+  if (f.dev !== null) row.dev = f.dev;
+  if (f.bundled !== null) row.bundled = f.bundled;
+  if (f.snipers !== null) row.snipers = f.snipers;
+  if (f.cluster !== null) row.cluster = f.cluster;
+  if (f.lpLocked !== null) row.lpLocked = f.lpLocked;
+  if (f.bonding !== null) row.bonding = f.bonding;
+  if (f.fresh !== null) row.fresh = f.fresh;
+  if (f.mintable !== null) row.mintable = f.mintable;
+  if (f.freezable !== null) row.freezable = f.freezable;
 }
 
 export interface RuleTickSummary { fired: number; alerts: string[]; proposals: number; suppressed: number }

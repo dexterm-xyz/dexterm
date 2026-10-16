@@ -8,7 +8,7 @@
 import { createPopupManager } from './open.ts';
 import { loadConfig, type PopupConfig } from './config.ts';
 import { createPopupHost, displayAvailable } from './host.ts';
-import type { ChartVM, RosterVM, NarrativeBoardVM, ServerEvent, ThemeTokens } from './protocol.ts';
+import type { ChartVM, RosterVM, NarrativeBoardVM, SpectatorPopupVM, ServerEvent, ThemeTokens } from './protocol.ts';
 
 export interface SelfTestResult {
   shell: 'wry' | 'browser';
@@ -83,6 +83,26 @@ export function fixtureNarrativeVM(): NarrativeBoardVM {
       { narrative: 'unclassified', rank: null, score: null, tokens: 6, new_1h: 1, new_24h: 2, vol: 0, pace: null, med_chg: null, runner: null },
     ],
     limits: 'model output: none (deterministic lexicon v0.1.0). Name-based: X/Telegram-only narratives are missed; 6 copycat symbols.',
+  };
+}
+
+/** A deterministic, network-free spectator view for the popup self-test / demo (task-1406). Not real agents. */
+export function fixtureSpectatorVM(): SpectatorPopupVM {
+  const now = Date.now();
+  return {
+    title: 'watch the agent cook', now, redacted: true, control: 'agent',
+    screen: { screen: 'token', selectedMint: 'Fixt…AAAA', feed: 'new', filter: null, highlight: null },
+    agents: [
+      { name: 'claude-code', tier: 'propose', status: 'active', lastAt: now - 1200 },
+      { name: 'scanbot', tier: 'observe', status: 'paused', lastAt: now - 8000 },
+    ],
+    activity: [
+      { seq: 1, t: now - 8000, phase: 'connect', agent: 'claude-code', tier: 'propose', tool: null, summary: 'connected · claude-code 2.1', ms: null, dataAgeSec: null, ok: true, refusal: null },
+      { seq: 2, t: now - 5000, phase: 'nav', agent: 'claude-code', tier: 'propose', tool: 'open_token', summary: 'open Fixt…AAAA', ms: 6, dataAgeSec: null, ok: true, refusal: null },
+      { seq: 3, t: now - 4200, phase: 'result', agent: 'claude-code', tier: 'propose', tool: 'rugcheck', summary: 'rugcheck Fixt…', ms: 42, dataAgeSec: 3, ok: true, refusal: null },
+      { seq: 4, t: now - 2000, phase: 'proposal', agent: 'claude-code', tier: 'propose', tool: 'propose_alert', summary: 'alert when mcap crosses 1M', ms: 2, dataAgeSec: null, ok: true, refusal: null },
+      { seq: 5, t: now - 1000, phase: 'refused', agent: 'scanbot', tier: 'observe', tool: 'arm_plan', summary: 'refused: no agent may do that at any tier', ms: null, dataAgeSec: null, ok: false, refusal: 'never' },
+    ],
   };
 }
 

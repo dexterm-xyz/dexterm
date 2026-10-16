@@ -28,6 +28,7 @@ import { renderPlans } from './screens/plans.ts';
 import { renderFollows } from './screens/follows.ts';
 import { renderRules } from './screens/rules.ts';
 import type { RulesUi } from './rules.ts';
+import type { PnlUi } from './pnl-app.ts';
 import { CopyLive } from './live/copy.ts';
 import { CopyAuto, defaultCopyJournalPath, leaderSoldSince, type CopyAlert, type MirrorMarket, type MirrorResult } from '@dexterm/data/copy';
 import { computeBoard, loadDefaultLexicon, recentNarrativeRows, type NarrativeBoard, type NarrativeRow } from '@dexterm/packs';
@@ -102,6 +103,10 @@ export interface AppState {
   pendingCopy?: string | null;
   /** task-1401: `E` asked for an export of the current view; the loop renders + writes it (local files only). */
   pendingExport?: boolean;
+  /** task-1407: `H` asked for a PnL card of this screen's coin(s); the loop opens the preview (state.pnl). */
+  pendingPnl?: boolean;
+  /** task-1407: the PnL card preview (overlay 'pnl'); null when closed. */
+  pnl?: PnlUi | null;
   /**
    * A website/social URL the loop should open in the OS browser (task-1315, LARP detector). Set by the
    * token screen's W/X/T keys; the loop re-validates the scheme (http/https only) before launching
@@ -147,10 +152,14 @@ export interface AppState {
   analystActions?: string[];
   /** Timestamps of applied analyst UI actions, for rate limiting (task-1313). */
   analystActionTimes?: number[];
+  /** A pending tier-(b) config change the analyst proposed (task-1413); the user accepts it with a keypress.
+   *  `expiresAt` is an epoch-ms deadline (matches the 8s toast) after which the proposal is treated as gone,
+   *  so a stale 'y' typed minutes later never persists a change. */
+  analystConfigProposal?: { action: import('@dexterm/data').AnalystAction; summary: string; expiresAt: number } | null;
   /** Colour depth of the run (the boot screen prints it). */
   colorDepth: ColorDepth;
   /** Active modal overlay drawn on top of the screen (task-1305): the first-run welcome or the `?` help card. */
-  overlay?: 'welcome' | 'help' | 'links' | 'workspaces' | null;
+  overlay?: 'welcome' | 'help' | 'links' | 'workspaces' | 'pnl' | null;
   linkMenu?: { items: Array<{ kind: string; url: string }>; selected: number };
   /** PAPER trade ticket view (task-1310); set while the ticket screen is open, else null. */
   ticket?: TicketView | null;
@@ -432,9 +441,15 @@ export interface FollowsUi {
    * engine's less-safe popup already accepted. Turning auto OFF needs no gesture and happens on `A` directly.
    */
   autoModal: { wallet: string } | null;
+  /**
+   * task-1399: the per-wallet DETAIL view (one followed wallet's own recent trades + positions + metrics, each
+   * labelled with its source and data age). `enter` opens it for the selected wallet, `esc` closes. Read-only:
+   * nothing on it trades, arms or signs. `scroll` is the trades/positions scroll offset.
+   */
+  detail: { wallet: string; scroll: number } | null;
 }
 
-export function newFollowsUi(): FollowsUi { return { selected: 0, input: null, notice: null, mirror: null, autoModal: null }; }
+export function newFollowsUi(): FollowsUi { return { selected: 0, input: null, notice: null, mirror: null, autoModal: null, detail: null }; }
 
 /**
  * Tier 3: the auto-mirror service for this run, attached to the copy binding on first use. It sits on the plan

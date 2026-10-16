@@ -19,19 +19,31 @@ import { NewPairsLive, type NewPairRow, type NewPairsLiveOptions } from './newpa
 import { WatchlistLive, type WatchCandidate } from './watchlist.ts';
 import { TradeTicketLive, PositionsLive, LivePositions, CombinedPositions, POSITIONS_REFRESH_MS } from './trade.ts';
 import { IntelLive } from './intel.ts';
+import { LiveSignalsLive, type SignalInputs } from './signals.ts';
 import { CopyLive } from './copy.ts';
 import type { SettledTx } from '@dexterm/tui';
+import type { LiveSignal } from '@dexterm/data';
 
 export { TokenLive, INTERVALS, panelCaption, emptyView, type TokenView, type TokenSeed, type PanelStatus } from './token.ts';
 export { NewPairsLive, latencyStats, percentile, RECENT_POLL_MS, NEW_TOKENS_POLL_MS, ENRICH_POLL_MS, type NewPairRow, type NewPairsStatus, type LatencyStats } from './newpairs.ts';
 export { WatchlistLive, WATCH_REFRESH_MS, type WatchViewRow, type WatchCandidate } from './watchlist.ts';
 export { TradeTicketLive, PositionsLive, LivePositions, CombinedPositions, POSITIONS_REFRESH_MS } from './trade.ts';
 export { IntelLive, popupBubbleVM, unavailableText, INTEL_AUTOSCAN_DELAY_MS, type IntelEntry, type IntelScanSeed } from './intel.ts';
+export { LiveSignalsLive, buildObservation, SIGNALS_LOG_MAX, type SignalInputs } from './signals.ts';
 export { renderTokenLive } from './screens/token-live.ts';
 export { renderNewPairsLive } from './screens/newpairs-live.ts';
 export { renderWatchlistLive } from './screens/watchlist-live.ts';
 
 export type LiveMode = 'live' | 'replay';
+
+/** task-1404: how often the open token's credit-metered wallet-intel leg (holders/bundle/sniper/fresh) is re-scanned. */
+export const INTEL_RESCAN_MS = 45_000;
+
+/** A transient one-liner for a fired live signal (⚑ SYMBOL-less; the token screen shows the full strip). */
+function signalNotice(s: LiveSignal): string {
+  const age = s.dataAgeMs >= 1000 ? ` · ${Math.round(s.dataAgeMs / 1000)}s` : '';
+  return `⚑ ${s.title}: ${s.text} (${s.source}${age})`;
+}
 
 export interface LiveContextOptions {
   mode: LiveMode;
@@ -112,6 +124,8 @@ export class LiveContext {
   token: TokenLive | null = null;
   /** task-1340 wallet intel: the holder scan per mint (light on open, deep for watched coins) behind the bubble map. */
   readonly intel: IntelLive;
+  /** task-1404 LIVE holder/rug signals: turns the open token's repeated holder/safety reads into signal events. */
+  readonly signals: LiveSignalsLive;
   /** task-1360 copy trading Tier 1: the follow store + wallet tracker (alerts on a followed wallet's buys/sells). */
   readonly copy: CopyLive;
   /**
@@ -144,6 +158,8 @@ export class LiveContext {
   private readonly onLog?: (line: string) => void;
   private lastFastLogAt = 0;
   private lastFastLog = '';
+  /** task-1404: last time the open token's wallet-intel leg was re-scanned (slow cadence; see refreshOpenIntel). */
+  private lastIntelRescanAt = 0;
 
   constructor(dl: DataLayer, opts: LiveContextOptions) {
     this.dl = dl;
@@ -182,7 +198,7 @@ export class LiveContext {
         endpoints: opts.fastEndpoints,
         solUsd: () => this.solUsd,
         ws: opts.ws,
-        onPrice: (_p: PricePoint) => emit('fastprice'),
+        onPrice: (_p: PricePoint) => { this.observeSignals(); emit('fastprice'); },
         onStatus: () => { emit('fastlane:status'); this.logFast(); },
       })
       : null;
@@ -223,7 +239,10 @@ export class LiveContext {
       ? new LivePositions(this.trade.paths?.liveLedger ?? defaultLiveLedgerPath(), { now: this.now, mark: (m) => this.positions.markOf(m), solUsd: () => this.positions.solUsd() ?? this.solUsd })
       : null;
     this.positionSource = new CombinedPositions(this.positions, this.livePositions);
-    this.intel = new IntelLive(dl, { now: this.now, onChange: () => { this.syncIntelRows(); emit('intel'); }, isWatched: (mint) => this.watch.has(mint) });
+    this.intel = new IntelLive(dl, { now: this.now, onChange: () => { this.syncIntelRows(); this.observeSignals(); emit('intel'); }, isWatched: (mint) => this.watch.has(mint) });
+    // task-1404: the live holder/rug signals engine. A fired signal sets a transient notice and redraws; the
+    // token screen shows the recent signals, and the rules engine reads `signals.fields()` so each is an alert trigger.
+    this.signals = new LiveSignalsLive({ now: this.now, onSignal: (s) => { this.notice = signalNotice(s); emit('signals'); } });
     // task-1360: followed wallets are polled only in a real live run (replay never spends credits); the store is always readable.
     this.copy = new CopyLive(opts.mode === 'live' ? dl : null, { onChange: (r) => emit(r), solUsd: () => this.solUsd, env: opts.copy?.env, followsPath: opts.copy?.followsPath, history: opts.copy?.history, pollMs: opts.copy?.pollMs });
   }
@@ -409,7 +428,7 @@ export class LiveContext {
 
   /** Open a token: a fresh loader, first load kicked off; the view is readable immediately (row fields). */
   openToken(row: TokenSeed): TokenLive {
-    const t = new TokenLive(this.dl, row, { interval: this.token?.view.interval ?? this.interval, now: this.now, onChange: () => { this.syncChainRows(t); this.onChange('token'); } });
+    const t = new TokenLive(this.dl, row, { interval: this.token?.view.interval ?? this.interval, now: this.now, onChange: () => { this.syncChainRows(t); this.observeSignals(); this.onChange('token'); } });
     this.token = t;
     this.syncFastSet(); // promote the opened token to the fast lane (slow→fast, no seam)
     this.x?.setFocus({ mint: row.mint, symbol: row.symbol }); // task-1357: the open token's X search (60 s, cached 15 min)
@@ -447,6 +466,47 @@ export class LiveContext {
     const I = r.analysis.insights;
     const sigs = chainSignalsFromIntel({ mint, clusters: r.analysis.clusters, snipers: I.coverage.launchTxs > 0 ? I.snipers : null, t: r.fetchedAt });
     if (sigs.length) this.social.ingest(sigs.map((s) => chainSignalToRaw(s, this.now())));
+  }
+
+  /** The current inputs for the live-signals engine: the open token's view + its settled intel scan + fast-lane curve. */
+  private signalInputs(): SignalInputs | null {
+    if (!this.token) return null;
+    const mint = this.token.view.mint;
+    const result = this.intel.entry(mint)?.result;
+    const ok = result && result.state === 'ok' ? result : null;
+    return {
+      view: this.token.view,
+      intel: ok ? { analysis: ok.analysis, fetchedAt: ok.fetchedAt, via: ok.via.history ? 'helius' : ok.via.holders } : null,
+      curve: this.fastLane?.curve(mint) ?? null,
+    };
+  }
+
+  /**
+   * task-1404: feed one moment of the open token's holder/rug state to the live-signals engine. Called whenever the
+   * token, the intel scan or a fast-lane push changed something; the engine only emits on a real threshold-crossing
+   * change, so this is cheap to call on every redraw. Nothing fires until a second observation of the same field.
+   */
+  private observeSignals(): void {
+    if (this.closed) return;
+    const inputs = this.signalInputs();
+    if (inputs) this.signals.observe(inputs);
+  }
+
+  /**
+   * task-1404: re-run the open token's wallet-intel scan on a slow cadence so holder/concentration/bundle/sniper
+   * signals stay LIVE, not computed once on open. Gated: live mode, the history leg can actually run (else a scan
+   * would only spend public-RPC calls to still print a dash), not already in flight, and at most once per
+   * INTEL_RESCAN_MS. The cheap on-chain reads (authorities, LP, liq, price) already refresh with token.load()
+   * every 10 s and bonding streams sub-second; this covers the credit-metered Helius leg.
+   */
+  refreshOpenIntel(now: number): void {
+    if (this.mode !== 'live' || !this.token) return;
+    if (now - this.lastIntelRescanAt < INTEL_RESCAN_MS) return;
+    if (!this.intel.historyAvailable().ok) return;
+    const v = this.token.view;
+    if (this.intel.entry(v.mint)?.state === 'loading') return;
+    this.lastIntelRescanAt = now;
+    void this.intel.scan({ mint: v.mint, symbol: v.symbol, name: v.name, holderCount: v.holders ?? null }, { force: true }).catch(() => {});
   }
 
   /** The token screen's `1`..`6` keys. */

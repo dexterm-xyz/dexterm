@@ -14,11 +14,18 @@ to install and voice **degrades to text** — it never crashes.
   `swiftc`, no key, streaming, macOS only), `whisper` (whisper.cpp `base.en`, local, no key — the
   DEFAULT voice-in off macOS; never `large-v3-turbo` on a CPU-only Mac: ~55–93 s/clip; mic capture via
   `rec`/`sox`, `arecord` on Linux, or `ffmpeg`), and `fake` (scripted, for headless tests).
-- `tts/` — speech-out engines: `say` (built-in macOS `say`, no key, interruptible, voice picker),
-  `piper` (Piper neural voice, local, no key — the PREFERRED engine off macOS; synthesises a WAV that
-  plays through `aplay`/`paplay`/`ffplay`), `espeak` (espeak-ng, the portable last-resort baseline off
-  macOS), and `fake`. Every engine shares one contract: untrusted text is sanitised, delivered on stdin,
-  one speak queue (never two voices), and a macOS voice name is never passed verbatim to a Linux engine.
+- `tts/` — speech-out engines: `piper` (Piper neural voice, local, no key — the PREFERRED/default engine
+  EVERYWHERE it is installed, on macOS as well as off; synthesises WAVs played through `afplay` on macOS
+  or `aplay`/`paplay`/`ffplay` off macOS, kept pre-warmed so the first word starts in ~0.2 s; task-1416),
+  `say` (built-in macOS `say`, no key, interruptible, voice picker — the macOS fallback), `espeak`
+  (espeak-ng, the portable last-resort baseline off macOS), and `fake`. Every engine shares one contract:
+  untrusted text is sanitised, delivered on stdin, one speak queue (never two voices), and a macOS voice
+  name is never passed verbatim to Piper/espeak.
+- `tts/piper-setup.ts` — the managed macOS Piper runtime (`dexterm voice setup` / `uninstall`): a private
+  virtualenv at `~/.dexterm/piper/venv` with `pip install piper-tts` (the prebuilt macOS tarball from
+  rhasspy is broken — it needs a libespeak-ng dylib it does not bundle — so we run `python -m piper`),
+  plus the voice model. Confirmation-gated, offline after setup, no key, needs Python 3.9+. All
+  system/network effects are injected so it is unit-testable.
 - `download.ts` — the checksum-verified, confirmation-gated downloader for the two optional models
   (whisper `base.en`, the Piper voice). Nothing is fetched without an explicit yes.
 - `summary.ts` — the first ~2 sentences of an analyst answer, for the spoken reply.
@@ -34,15 +41,26 @@ to install and voice **degrades to text** — it never crashes.
 - `m` — mute · `,` — change voice · `esc` — stop speaking / cancel listening.
 - A red `● LISTENING` badge on the band under the header whenever the mic is live.
 
-## Models (off macOS)
+## The neural voice (macOS + Linux)
+
+The Piper neural voice (en_GB-alan-medium) is the default speaking voice wherever it is installed.
+- **macOS:** `dexterm voice setup` builds the managed runtime (venv + model) and Piper becomes the default
+  automatically, with `say` as the fallback. First word starts in ~0.2 s thanks to a pre-warmed standby
+  process; measured on an Intel Mac: warm 179 ms, cold 1.7 s (task-1416).
+- **off macOS:** install the rhasspy/piper prebuilt binary into `~/.dexterm/piper/` and run
+  `dexterm voice download piper-voice`.
+
+## Models
 
 whisper `base.en` and the Piper voice are not shipped (free-forever: no bundled large binaries, no keys).
-`dexterm doctor` reports each engine's real status and how to install it, and `dexterm voice download
-<whisper|piper-voice>` fetches a model from the official source — only after an explicit yes, and only
-if it matches the checksum pinned in `download.ts`. On Debian, do NOT `apt install piper` (that is an
-unrelated gaming-mouse tool); the Piper TTS binary is the rhasspy/piper prebuilt release, and whisper.cpp
-is not packaged either — use its prebuilt release. Real speaker/mic I/O on Linux is not covered by the
-test suite; synthesis-to-WAV and whisper transcription are verified in Docker (see the task-1408 handoff).
+`dexterm doctor` reports each engine's real status and how to install it, `dexterm voice setup` installs
+the neural voice on macOS, and `dexterm voice download <whisper|piper-voice>` fetches a model from the
+official source — only after an explicit yes, and only if it matches the checksum pinned in `download.ts`.
+On Debian, do NOT `apt install piper` (that is an unrelated gaming-mouse tool); the Piper TTS binary is
+the rhasspy/piper prebuilt release, and whisper.cpp is not packaged either — use its prebuilt release.
+Real speaker/mic I/O on Linux is not covered by the test suite; synthesis-to-WAV and whisper transcription
+are verified in Docker (task-1408) and, for the macOS venv runtime, on a real Mac with afplay + whisper
+(task-1416).
 
 ## Latency
 

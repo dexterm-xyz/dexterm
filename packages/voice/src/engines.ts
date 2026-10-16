@@ -60,8 +60,14 @@ export async function selectTts(
   if (choice === 'piper') { const p = new PiperTts(); return (await p.available()) ? p : null; }
   if (choice === 'espeak') { const e = new EspeakTts(espeakVoiceFor(configuredVoice) ?? undefined); return (await e.available()) ? e : null; }
 
-  // On macOS, prefer `say`. Off macOS, `say` does not exist — use the portable engines below.
+  // On macOS, prefer Piper alan (neural) when the managed runtime is installed (task-1416:
+  // `dexterm voice setup` → venv + model + afplay), else the built-in `say`. Off macOS, `say` does not
+  // exist — use the portable engines below. An explicit `choice==='say'` always skips Piper.
   if (choice === 'say' || (choice === 'auto' && process.platform === 'darwin')) {
+    if (choice === 'auto') {
+      const piperMac = new PiperTts();
+      if (await piperMac.available()) return piperMac;
+    }
     const probe = new SayTts();
     if (choice === 'auto' && !(await probe.available())) return null;
     const r = await resolveSayVoice(probe, configuredVoice);

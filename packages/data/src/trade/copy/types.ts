@@ -72,6 +72,11 @@ export interface MintPosition {
   closed: boolean;
   firstT: number;
   lastT: number;
+  /** the first/last trade in this position carried a real block time (not a fetchedAt fallback) */
+  firstKnown: boolean;
+  lastKnown: boolean;
+  /** hold time (ms) first buy → last sell — only for a CLOSED position whose first+last block times are both known; null otherwise */
+  holdMs: number | null;
 }
 
 export interface EarlyEntryInput {
@@ -99,9 +104,12 @@ export interface WalletStats {
   winRateNote: string;
   open: number;
   earlyEntry: { score: number | null; n: number; note: string };
+  /** median hold time (ms) over closed positions with known block times; null without any; `holdNote` carries the n */
+  holdMedianMs: number | null;
+  holdNote: string;
   positions: MintPosition[];
   firstT: number | null;
   lastT: number | null;
-  /** how much history the numbers rest on; every figure is sample-bounded */
-  sample: { txs: number; complete: boolean; note: string };
+  /** how much history the numbers rest on; every figure is sample-bounded. `source` + `asOf` (last fetch ms) give provenance + data age */
+  sample: { txs: number; complete: boolean; note: string; source: 'helius-history'; asOf: number | null };
 }

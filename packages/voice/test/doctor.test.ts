@@ -32,6 +32,27 @@ test('task-1393: no safe voice (resolvedVoice null) warns with an install fix, n
   assert.ok(!cs.some((c) => c.status === 'fail'));
 });
 
+test('task-1416 — macOS with Piper set up: Piper is the default, say is the fallback, never a fail', () => {
+  const cs = voiceDoctor(deps({ piperPresent: true, piperVoicePresent: true, playerName: 'afplay', resolvedVoice: 'Eddy (English (UK))', resolvedVoiceReason: 'Eddy — deep British male (dexterm default)' }));
+  const piper = find(cs, /Voice out \(Piper\)/)!;
+  assert.equal(piper.status, 'pass');
+  assert.match(piper.detail, /default/);
+  assert.match(piper.detail, /afplay/);
+  // `say` is still present, now labelled as the fallback.
+  assert.match(find(cs, /Voice out \(say/)?.detail ?? '', /fallback/);
+  assert.equal(find(cs, /Fallback voice/)?.status, 'pass');
+  assert.ok(!cs.some((c) => c.status === 'fail'));
+});
+
+test('task-1416 — macOS without Piper: say is the default and a non-silent hint offers `dexterm voice setup`', () => {
+  const cs = voiceDoctor(deps({ resolvedVoice: 'Eddy (English (UK))', resolvedVoiceReason: 'Eddy — deep British male (dexterm default)' }));
+  assert.equal(find(cs, /Default voice/)?.status, 'pass');
+  const neural = find(cs, /Neural voice \(Piper\)/)!;
+  assert.equal(neural.status, 'warn');
+  assert.match(neural.fix ?? '', /dexterm voice setup/);
+  assert.ok(!cs.some((c) => c.status === 'fail'));
+});
+
 test('task-1393 Part 2 — Linux with espeak-ng + whisper: both pass, never a fail', () => {
   const cs = voiceDoctor(deps({ platform: 'linux', espeakPresent: true, resolvedStt: 'whisper', whisperBinPresent: true, whisperModelPresent: true, micToolPresent: true }));
   assert.equal(find(cs, /Voice out \(espeak/)?.status, 'pass');
