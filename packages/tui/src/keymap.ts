@@ -40,6 +40,11 @@ export function parseKeys(data: string): Key[] {
         while (j < data.length && /[0-9;]/.test(data[j])) params += data[j++];
         const fin = data[j];
         if (fin === undefined) { keys.push({ name: 'esc', raw: c }); i = data.length; break; }
+        // task-1388: bracketed-paste markers (ESC [ 200~ / 201~). dexterm never enables the mode, but a
+        // terminal/multiplexer that does would otherwise wrap a paste in them and the unknown-CSI branch
+        // below would surface each as `esc` — cancelling the go-to prompt before the pasted mint arrives.
+        // Swallow the markers so the printable paste flows through as plain chars.
+        if (fin === '~' && (params === '200' || params === '201')) { i = j + 1; continue; }
         const raw = data.slice(i, j + 1);
         const parts = params.split(';');
         const mod = parts.length > 1 ? Number(parts[1]) - 1 : 0;
@@ -226,7 +231,11 @@ export type AppAction =
   // the user still confirms there). Rules only alert or PROPOSE; nothing on this screen arms or signs.
   | 'screen.rules' | 'rules.new' | 'rules.edit' | 'rules.toggle' | 'rules.remove' | 'rules.tab' | 'rules.dismiss' | 'rules.act'
   // task-1366: `$` flips the price display mode (USD price ⇄ market cap) everywhere and persists it to config.json.
-  | 'display.priceMode';
+  | 'display.priceMode'
+  // task-1388 GO-TO prompt: `g` on the list and token screens opens a one-line input; paste or type a base58
+  // mint (or a dexscreener/pump.fun/solscan URL) and ⏎ opens that coin's live token screen (read-only). Esc
+  // cancels, bad input shows a notice. Per-screen so the global `g` (move to top) still has `home`.
+  | 'goto.open';
 
 /** The prototype's key table (README of dexterm/prototype) plus the SPEC §4.1 screener keys. */
 export const DEFAULT_KEYMAP = new Keymap<AppAction>([
@@ -240,6 +249,13 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['k', 'up'], action: 'move.up', label: 'move' },
   { keys: ['g', 'home'], action: 'move.top', label: 'top' },
   { keys: ['G', 'end'], action: 'move.bottom', label: 'bottom' },
+  // task-1388 GO-TO prompt: `g` on the list and token screens opens the "open any coin" input. Per-screen so it
+  // overrides the global `g` (move to top) only here; `home` still moves to top on these screens. Collision-free
+  // with every other verb on these screens (the token screen's `g` was only "scroll answer to top", kept on home).
+  { keys: ['g'], action: 'goto.open', label: 'go to coin', screen: 'screener' },
+  { keys: ['g'], action: 'goto.open', label: 'go to coin', screen: 'newpairs' },
+  { keys: ['g'], action: 'goto.open', label: 'go to coin', screen: 'watchlist' },
+  { keys: ['g'], action: 'goto.open', label: 'go to coin', screen: 'token' },
   { keys: ['pagedown', 'ctrl+f'], action: 'move.pagedown', label: 'page' },
   { keys: ['pageup', 'ctrl+b'], action: 'move.pageup', label: 'page' },
   { keys: ['enter'], action: 'open', label: 'open' },

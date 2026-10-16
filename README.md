@@ -54,7 +54,14 @@ dexterm doctor
 
 Without the trust step, `brew install dexterm` stops with "Refusing to load formula … from untrusted tap". The one-line form `brew install dexterm-xyz/dexterm/dexterm` also works: naming the formula in full trusts that one formula. The formula installs the same release tarball with Homebrew's own Node. Homebrew no longer ships prebuilt packages for Intel Macs, so there it builds Node and its toolchain from source, which takes a long time; the release installer above is much faster on Intel.
 
-npm installs are planned; see [docs/release-process.md](docs/release-process.md).
+### With npm
+
+```sh
+npm i -g dexterm
+dexterm doctor
+```
+
+Published from this repository's release workflow with [build provenance](https://docs.npmjs.com/generating-provenance-statements); `npm audit signatures` verifies it against this repo and tag. The npm package ships compiled JavaScript, so it needs no build step.
 
 ### Optional pieces
 

@@ -37,4 +37,4 @@
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  j/k  move   PgUp/Dn·g/G  page   [ ]  feed   ⏎  open   /  filter   s  sort   w  watch
+  j/k  move   PgUp/Dn·G  page   [ ]  feed   ⏎  open   g  go to   /  filter   s  sort

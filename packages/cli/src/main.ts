@@ -301,7 +301,7 @@ export function shouldDrawFrame(g: FrameGate): boolean {
   return g.frame % g.idleEvery === 0;
 }
 
-export const HELP = `dexterm 0.1.0 (live: screener, token, new pairs, watchlist · analyst = your local claude CLI · cyberspace look)
+export const HELP = `dexterm 0.1.1 (live: screener, token, new pairs, watchlist · analyst = your local claude CLI · cyberspace look)
 
   dexterm                                     interactive, live data (needs a TTY)
   dexterm doctor                              check this machine is ready (Node, colour, claude, network, Helius key)
@@ -785,7 +785,7 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     return 2;
   }
   if (args.help) { io.stdout.write(HELP + '\n'); return 0; }
-  if (args.version) { io.stdout.write('0.1.0\n'); return 0; }
+  if (args.version) { io.stdout.write('0.1.1\n'); return 0; }
   if (args.unknown.length) { io.stderr.write(`dexterm: unknown option ${args.unknown[0]}\n${HELP}\n`); return 2; }
   if (!args.screen && (!io.stdout.isTTY || !io.stdin.isTTY)) {
     io.stderr.write('dexterm: interactive mode needs a TTY; use --screen for one-shot output\n');
@@ -1711,6 +1711,9 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
       break;
     }
     case 'help.toggle': state.overlay = state.overlay === 'help' ? null : 'help'; break;
+    // task-1388 GO-TO prompt: open the one-line "paste a contract address to open any coin" input. The loop
+    // captures keys into it (applyKey) and ⏎ opens the token screen; nothing here loads or trades.
+    case 'goto.open': state.goto = { input: '', notice: null }; break;
     case 'display.priceMode': state.pendingToast = togglePriceMode(state); break; // task-1366: display only, persisted
     case 'theme.next': state.theme = state.custom ? cycleTheme(state.custom, state.theme) : nextTheme(state.theme); break; // task-1358: user themes join the cycle
     // task-1358 workspaces. Every case is a UI action: navigate / re-theme / open read-only popups via the
@@ -1902,6 +1905,47 @@ function seedForMint(state: AppState, live: LiveContext, mint: string, symbol?: 
   return { mint, symbol: symbol || mint.slice(0, 4) + '…', name: '', launchpad: 'unknown' };
 }
 
+// task-1388 GO-TO prompt: the longest input we keep (a bare base58 mint is ≤ 44; the longest coin URL we
+// accept is well under this), so a huge paste can never balloon the buffer.
+const GOTO_INPUT_MAX = 120;
+/** A full base58 Solana mint: 32–44 chars, no 0/O/I/l. Same shape `--mint` validates (main.ts parseArgs). */
+const GOTO_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * task-1388: turn a pasted/typed go-to target into a mint, or null when there is none. Accepts a bare base58
+ * mint, or a dexscreener / pump.fun / solscan URL (or any text) by pulling the first base58 run of mint length.
+ * Base58 excludes 0, O, I and l, so splitting on every non-base58 character also splits on them and on the URL
+ * punctuation (/, :, ., ?, =, &), leaving each path/query segment as its own token; a real mint is never cut.
+ * Pure and total: it only ever returns a validated mint string or null, and never throws. Exported for tests.
+ */
+export function parseMintTarget(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (GOTO_MINT_RE.test(s)) return s;
+  for (const tok of s.split(/[^1-9A-HJ-NP-Za-km-z]+/)) if (GOTO_MINT_RE.test(tok)) return tok;
+  return null;
+}
+
+/**
+ * task-1388: resolve the GO-TO prompt's input to a coin and open its live token screen (read-only — the same
+ * path `--screen token --mint` and the analyst's open_token use: live.openToken(seedForMint(...)), which seeds
+ * an unknown-launchpad stub when the mint is not already on a screen). Bad input keeps the prompt open with a
+ * one-line notice and changes nothing; a good open closes the prompt and pushes the current screen on the stack.
+ */
+function openGotoTarget(state: AppState, stack: ScreenKey[]): void {
+  const g = state.goto;
+  if (!g) return;
+  const raw = g.input.trim();
+  if (!raw) { state.goto = null; return; } // ⏎ on an empty prompt just closes it
+  const mint = parseMintTarget(raw);
+  if (!mint) { g.notice = 'not a contract address or a dexscreener / pump.fun / solscan link'; return; }
+  const live = state.live && state.screener.source !== 'fixtures' ? state.live : null;
+  if (!live) { g.notice = 'opening a coin by address needs live mode (not --fixtures)'; return; }
+  live.openToken(seedForMint(state, live, mint));
+  state.goto = null;
+  if (state.screen !== 'token') { stack.push(state.screen); state.screen = 'token'; }
+}
+
 /**
  * Apply one analyst-requested UI action to the state (task-1313). This is the trust boundary: every
  * action is RE-validated against the current screen's allow-list (never trust the channel), rate-
@@ -2019,6 +2063,20 @@ export function switchWorkspace(state: AppState, name: string, stack: ScreenKey[
 
 export function applyKey(state: AppState, key: Key, stack: ScreenKey[]): Effect {
   const sc = state.screener;
+  // task-1388 GO-TO prompt: while the "open any coin" input is open it captures EVERY key (so a base58 char
+  // like v / m / c never toggles voice or calm, and q / 1-4 never quit or navigate out from under a half-typed
+  // address). A 44-char paste arrives as 44 printable `char` keys (parseKeys has no bracketed-paste state), so
+  // each is appended here and the whole mint lands. esc cancels, ⏎ opens the coin, bad input shows a notice.
+  if (state.goto) {
+    const g = state.goto;
+    if (key.name === 'esc') { state.goto = null; return; }
+    if (key.name === 'enter') { openGotoTarget(state, stack); return; }
+    if (key.name === 'backspace') { g.input = g.input.slice(0, -1); g.notice = null; return; }
+    if (key.ctrl && key.ch === 'u') { g.input = ''; g.notice = null; return; }
+    // printable, non-control, non-space (a mint or URL never contains a space): append up to the cap.
+    if (key.name === 'char' && key.ch && !key.ctrl && !key.alt && g.input.length < GOTO_INPUT_MAX && !/[\u0000-\u001f\u007f]/.test(key.ch)) { g.input += key.ch; g.notice = null; }
+    return;
+  }
   // task-1358: typing a workspace name after ctrl+w s captures every key until ⏎ / esc (lowercase letters,
   // digits and dashes only, so a name can never carry a path or a shell fragment).
   const ui = state.custom;
@@ -3258,6 +3316,21 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         }
         // Ctrl-C always quits cleanly (terminal restored by the guard), whatever is focused.
         if (key.ctrl && key.ch === 'c') { quit(); return; }
+        // task-1388 GO-TO prompt: while the "open any coin" input is open it owns the keyboard. Route the key
+        // straight to applyKey (which does the capture / open) and skip the voice, calm, demo and keymap
+        // handlers below — otherwise a base58 char like v / m / c would toggle voice or calm instead of typing.
+        if (state.goto) {
+          const before = state.screen;
+          try { applyKey(state, key, stack); }
+          catch (e) { state.goto = null; state.screener.notice = `⚠ go-to failed: ${describeError(e)}`; }
+          if (state.screen !== before) {
+            state.aiFocused = false;
+            syncAnalyst(state);
+            try { startTransition(); } catch (e) { transition = null; state.screener.notice = `⚠ transition failed: ${describeError(e)}`; }
+          }
+          draw();
+          continue;
+        }
         // task-1282 rework (D2): the mic is live ONLY while listening. It must never stay live once the
         // keyboard moves elsewhere. ANY key other than the voice controls (v/m/,) stops the capture
         // immediately, and esc always cancels it — even on the ticket, chat, filter or overlay screens

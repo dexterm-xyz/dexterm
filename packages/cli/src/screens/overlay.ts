@@ -192,6 +192,28 @@ function renderWorkspaces(c: Canvas, state: AppState): void {
   c.text(box.x + 2, fy, `active: ${ui?.active ?? 'default'} · a workspace only navigates, re-themes and opens read-only popups`, { fg: t.warn, bg, i: true }, box.w - 4);
 }
 
+/**
+ * task-1388: the GO-TO prompt — a one-line "paste a contract address (or a dexscreener / pump.fun / solscan
+ * URL) to open any coin" input, opened with `g`. Read-only: ⏎ opens the coin's live token screen, esc cancels.
+ * Drawn as a centered card so it works the same on every screen that offers it.
+ */
+export function renderGotoPrompt(c: Canvas, state: AppState): void {
+  const g = state.goto;
+  if (!g) return;
+  const t = c.theme;
+  const box = card(c, { w: 68, h: 7 }, 'GO TO COIN', '⏎ open · esc cancel');
+  if (!box) return;
+  const bg = box.bg;
+  c.text(box.x + 2, box.y, 'paste or type a contract address (or a coin URL):', { fg: t.muted, bg }, box.w - 4);
+  const shown = g.input.length > box.w - 6 ? '…' + g.input.slice(-(box.w - 7)) : g.input;
+  c.text(box.x + 2, box.y + 2, '› ', { fg: t.accent, bg, b: true });
+  c.text(box.x + 4, box.y + 2, shown, { fg: t.text, bg, b: true }, box.w - 7);
+  c.text(box.x + 4 + shown.length, box.y + 2, '▏', { fg: t.borderFocus, bg });
+  const fy = box.y + box.h - 1;
+  c.hline(box.x, fy - 1, box.w, { fg: mix(t.border, t.warn, 0.4), bg, soft: true });
+  c.text(box.x + 2, fy, g.notice ?? 'read-only — opens the token screen, never trades or signs', { fg: g.notice ? t.down : t.warn, bg, i: true }, box.w - 4);
+}
+
 /** Draw the active overlay (welcome or help). Called by renderFrame after the effects pass. */
 export function renderOverlay(c: Canvas, state: AppState): void {
   if (state.overlay === 'welcome') renderWelcome(c, state);

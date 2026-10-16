@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import {
-  normalizeSwapQuote, SOL_MINT, LAMPORTS_PER_SOL,
+  normalizeSwapQuote, SOL_MINT, LAMPORTS_PER_SOL, currentPriority,
   type SwapQuote, type PaperOrder, type Fill, type PaperWallet, type TradeExecutor, type DataLayer,
 } from '@dexterm/data';
 import { fmtPct } from '@dexterm/tui';
@@ -151,4 +151,33 @@ test('happy path still books: a quote that resolves fills the ticket', async () 
   assert.ok(lastSignal.v instanceof AbortSignal, 'even the happy path carries an abort signal');
   assert.equal(tl.ticket.phase, 'filled');
   assert.equal(tl.view().rateLimited, false);
+});
+
+test('task-1387: the warm AND confirm-time quotes run at HIGH priority so they are not starved by background enrichment', async () => {
+  // The keyless `jupiter` bucket is ~0.5 rps and shared with the screener/token enrichment. Before
+  // this fix the ticket quoted at the default `normal` priority, so on a live token the warm quote
+  // took seconds and the confirm-time re-quote hit its 8 s abort → a PAPER fill failed with
+  // "quote timed out". A user-initiated trade quote must preempt background work (`high`).
+  const seen: { warm?: string; confirm?: string } = {};
+  const dl = {
+    clock: { now: () => 1_000_000 },
+    limiter: { bucket: () => ({ stats: () => ({ pausedUntil: 0 }) }) },
+    store: { enrich: async () => ({ rows: [{ token: { decimals: 6 } }] }) },
+    jupiterSwap: {
+      quote: (_req: unknown, signal?: AbortSignal) => {
+        const level = currentPriority()?.level;
+        if (signal) seen.confirm = level; else seen.warm = level;
+        return Promise.resolve(sampleQuote());
+      },
+    },
+  } as unknown as DataLayer;
+  const tl = new TradeTicketLive(dl, fakeWallet(), fakeExec, { mint: MINT, symbol: 'USDC', decimals: 6, side: 'buy' }, { now: () => 1_000_000 });
+  tl.key(ch('0')); tl.key(ch('.')); tl.key(ch('5')); // 0.5 SOL
+  tl.refreshQuote(); // the warm quote, issued synchronously now
+  assert.equal(seen.warm, 'high', 'the warm quote preempts background enrichment');
+  tl.key({ name: 'enter' }); // → confirm
+  tl.key(ch('y')); // → filling
+  await tl.confirm(); // the confirm-time re-quote
+  assert.equal(seen.confirm, 'high', 'the confirm-time re-quote preempts background enrichment');
+  assert.equal(tl.ticket.phase, 'filled', 'and the fill books instead of timing out');
 });

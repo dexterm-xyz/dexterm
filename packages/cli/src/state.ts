@@ -17,7 +17,7 @@ import { renderNewPairs } from './screens/newpairs.ts';
 import { renderWatchlist } from './screens/watchlist.ts';
 import { renderAnalyst } from './screens/analyst.ts';
 import { renderBoot } from './screens/boot.ts';
-import { renderOverlay } from './screens/overlay.ts';
+import { renderOverlay, renderGotoPrompt } from './screens/overlay.ts';
 import { renderTicket } from './screens/ticket.ts';
 import { renderPositions } from './screens/positions.ts';
 import { renderTrending } from './screens/trending.ts';
@@ -258,6 +258,19 @@ export interface AppState {
    * Display only: nothing that trades reads it.
    */
   priceMode?: PriceMode;
+  /**
+   * task-1388 GO-TO prompt: the one-line "paste a contract address to open any coin" input, opened with `g`
+   * on the screener / new pairs / watchlist / token screens. `null` = closed. While open the interactive loop
+   * captures every key into it (so a base58 char like v/m/c never toggles voice or calm). Read-only navigation:
+   * ⏎ opens the coin's live token screen, esc cancels, bad input sets `notice` and changes nothing.
+   */
+  goto?: GotoPrompt | null;
+}
+
+/** task-1388: the GO-TO prompt's state (the text being typed + a one-line notice for bad input). */
+export interface GotoPrompt {
+  input: string;
+  notice: string | null;
 }
 
 /** Launch request raised by a key, fulfilled by the interactive loop (which can spawn `claude`). */
@@ -750,5 +763,7 @@ export function renderFrame(state: AppState, w: number, h: number): Canvas {
   }
   // Overlays (task-1305) draw last, over the effects, so the welcome/help card is always crisp.
   if (state.overlay) renderOverlay(c, state);
+  // task-1388: the GO-TO prompt draws on top of everything (but is mutually exclusive with an overlay).
+  if (state.goto) renderGotoPrompt(c, state);
   return c;
 }

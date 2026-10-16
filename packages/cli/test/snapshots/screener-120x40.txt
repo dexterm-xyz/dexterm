@@ -37,4 +37,4 @@
 │  31 WIFHAT dogwifhat classic    7d   $0.0₃4746   ▼0.8%   ▼0.4%   ▲14.9%     $789K     $23K    $475K ▅▅▄▃▃▁▂▁▁▂▃▃▃▄▂█ │
 │  32 TITCOIN titcoin            22h   $0.0₃7351   ▲1.9%   ▲6.4%   ▲39.4%     $528K     $85K    $735K ▂▄▅▄▃▃▄▃▂▂▂▂▂▁▁█ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  j/k  move   PgUp/Dn·g/G  page   [ ]  feed   ⏎  open   /  filter   s  sort   w  watch
+  j/k  move   PgUp/Dn·G  page   [ ]  feed   ⏎  open   g  go to   /  filter   s  sort
