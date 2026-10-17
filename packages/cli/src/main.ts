@@ -39,6 +39,8 @@ import { createLiveFeed, createReplayFeed, type ScreenerFeed } from './feed.ts';
 import { LiveContext, INTERVALS, WATCH_REFRESH_MS, POSITIONS_REFRESH_MS, popupBubbleVM, type NewPairRow, type WatchViewRow } from './live/index.ts';
 import type { BubbleVM, NarrativeBoardVM, PlansVM, TokenDetailVM } from '@dexterm/popup';
 import type { NarrativeBoard } from '@dexterm/packs';
+import type { SpectatorNav } from '@dexterm/agents';
+import { McpFollowSession } from './mcp-follow.ts';
 import { TOKEN_REFRESH_MS, CandlePrefetcher } from './live/token.ts';
 import { PRESETS, presetSpec, type PresetId } from './screener/presets.ts';
 import { parseSortArg, SORT_KEYS, type SortDir } from './screener/sort.ts';
@@ -282,6 +284,8 @@ export interface CliArgs {
   workspace: string | null;
   /** task-1366: `--price-mode price|mcap` for this run (overrides config.display.priceMode; not saved). */
   priceMode: PriceMode | null;
+  /** task-1421: follow an agent driving over MCP — the terminal moves with it, and a read-only stream opens. */
+  spectateMcp: boolean;
   help: boolean;
   version: boolean;
   unknown: string[];
@@ -373,6 +377,7 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   dexterm alerts status|enable|disable|set-telegram|set-discord|test  where rule alerts are delivered (desktop / your Telegram / Discord; creds stay local, never logged)
   dexterm watch [--interval S] [--once] [--replay FILE]  run your rules headless and push alerts when the terminal is closed (no signer, proposals only)
   dexterm record run|install|uninstall|status  keep the history recorder fed with no TUI open, as a user-level launchd agent (no network beyond the data layer; 'dexterm record help')
+  dexterm larp-detected --out DIR [--db PATH]  build timestamped high-risk follow-up drafts/cards from recorder history; never posts
   dexterm --fixtures                          interactive demo on seeded fixtures
   dexterm --screen <name>                     one-shot frame to stdout (live)
   dexterm --screen <name> --fixtures          one-shot frame from fixtures
@@ -385,6 +390,8 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   --sort KEY[:asc|desc]     ${SORT_KEYS.map((k) => k.key).join(' | ')}
   --preset NAME             ${PRESETS.map((p) => p.id).join(' | ')}
   --record FILE             save every live response (and the PumpPortal session) to FILE (replay it with --replay)
+  --spectate-mcp            follow an MCP agent's allowed navigation in this terminal; Ctrl+P pauses, Ctrl+K stops,
+                            and any normal user keypress takes control (refused actions never move the UI)
   --max-requests N          hard cap on live requests for this run (default: none)
   --max-credits N           hard cap on Helius credits for this run (default: 5000)
   --mint MINT|LINK          token to open on the token screen (a CA or a dexscreener / pump.fun / solscan / birdeye link)
@@ -494,6 +501,7 @@ export function parseArgs(argv: string[]): CliArgs {
     sound: false,
     trade: [], live: true,
     workspace: null, priceMode: null,
+    spectateMcp: false,
     help: false, version: false, unknown: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -561,6 +569,8 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--trade-rpc') { a.trade.push('--rpc', str()); }
     else if (k === '--no-live') a.live = false;
     else if (k === '--price-mode') { const s = str(); if (!isPriceMode(s)) throw new Error(`--price-mode expects price|mcap, got ${JSON.stringify(s.slice(0, 20))}`); a.priceMode = s; }
+    // task-1421: follow an agent driving over MCP (the running terminal moves with it; a read-only stream opens).
+    else if (k === '--spectate-mcp') a.spectateMcp = true;
     else if (k === '--workspace') { const s = str(); if (!/^[a-z][a-z0-9-]{0,39}(\/[a-z][a-z0-9-]{0,39})?$/.test(s)) throw new Error(`--workspace expects a name like morning-hud, got ${JSON.stringify(s.slice(0, 40))}`); a.workspace = s; }
     else if (Object.hasOwn(SCAN_FLAGS, k)) {
       const key = SCAN_FLAGS[k];
@@ -750,6 +760,11 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
   if (argv[0] === 'backtest') {
     const { backtestCommand } = await import('./backtest-cmd.ts');
     return backtestCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
+  // Local-only marketing evidence pipeline (task-1433): drafts and cards for human review, never posts.
+  if (argv[0] === 'larp-detected') {
+    const { larpDetectedCommand } = await import('./larp-detected.ts');
+    return larpDetectedCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm kol …` → KOL lists on the shared DB (task-1330): list/create/add/remove/mute/unmute/enable/disable/import.
   if (argv[0] === 'kol') return kolCommand(argv.slice(1), io);
@@ -2230,6 +2245,44 @@ export function applyAnalystAction(state: AppState, raw: Record<string, unknown>
 }
 
 /**
+ * task-1421: move the REAL terminal to mirror an agent's navigation (follow mode, on the owner's own
+ * machine). This is the same VIEW-ONLY navigation the analyst / go-to path uses — open a token, switch
+ * screen/feed, set a filter, highlight a row, open the PAPER ticket editor. It never trades, sizes, confirms
+ * or signs, and the key loop flips control to the user before any of it runs, so the human always wins the
+ * screen. Unlike the analyst boundary it does not re-check the on-screen allow-list: the agent already made
+ * the call on its own server and this only reflects where it went. A no-op when live navigation is off.
+ */
+export function applyFollowNav(state: AppState, nav: SpectatorNav, stack: ScreenKey[]): void {
+  const sc = state.screener;
+  const live = state.live && state.screener.source !== 'fixtures' ? state.live : null;
+  const toScreen = (next: ScreenKey): void => { if (state.screen !== next) { stack.push(state.screen); state.screen = next; } };
+  if (nav.mint && (!nav.screen || nav.screen === 'token')) {
+    if (!live) return;
+    try { live.openToken(seedForMint(state, live, nav.mint)); toScreen('token'); } catch { /* a stale mint never breaks follow */ }
+    return;
+  }
+  if (nav.screen === 'ticket') {
+    if (!live || !nav.mint) return;
+    try { const seed = seedForMint(state, live, nav.mint); live.openTicket({ mint: seed.mint, symbol: seed.symbol, name: seed.name }, nav.side === 'sell' ? 'sell' : 'buy'); toScreen('ticket'); } catch { /* ignore */ }
+    return;
+  }
+  if (nav.screen === 'watchlist') {
+    if (live && nav.mint) { try { if (!live.watch.has(nav.mint)) live.watch.add(LiveContext.candidate(seedForMint(state, live, nav.mint) as unknown as ScreenerRow)); } catch { /* ignore */ } }
+    toScreen('watchlist');
+    return;
+  }
+  if (nav.feed || nav.filter || nav.highlight || nav.screen === 'screener') {
+    toScreen('screener');
+    if (nav.feed) { if (setPreset(sc, nav.feed as PresetId) && state.feed) state.feed.setPreset(sc.preset); }
+    if (nav.filter) { try { setFilter(sc, nav.filter); } catch { /* an invalid agent filter is ignored */ } }
+    if (nav.highlight) { const i = screenerView(sc).findIndex((r) => r.mint === nav.highlight); if (i >= 0) state.selected = i; }
+    state.selected = clampSelection(sc, state.selected);
+    return;
+  }
+  if (nav.screen && isScreenKey(nav.screen)) toScreen(nav.screen as ScreenKey);
+}
+
+/**
  * task-1413: apply an accepted tier-(b) config proposal through the journaled path as actor `analyst`
  * (so `ctrl+z` undoes it), creating the parent section when absent (exactly like the `$` / `,` handlers),
  * then reflect it in the live UI where cheap. Throws on a refusal (schema / policy); the caller toasts it.
@@ -2839,6 +2892,9 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     let timer: NodeJS.Timeout | null = null;
     let lastRefresh = 0;
     let done = false;
+    // task-1421: the MCP follow session (set below when `--spectate-mcp` is on). Declared here so the quit /
+    // terminal-guard teardown closures can stop it.
+    let followSession: McpFollowSession | null = null;
     // Idle economy (task-1303, retuned for task-1319 AC3): between events the ambient rain redraws at
     // IDLE_FPS instead of the full frame cap, cutting idle CPU. A keypress opens a KEY_WAKE_S full-rate
     // window (`wakeUntil`) so input and transitions stay smooth; data landings paint at once on their own
@@ -2862,7 +2918,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         wake(5);
       } catch (e) { say(`trade moment failed: ${describeError(e)}`, 'warn'); }
     };
-    const guard = terminalGuard(io, () => { done = true; prefetcher?.close(); if (timer) clearInterval(timer); state.analyst?.cancel(); if (state.analystByMint) for (const s of state.analystByMint.values()) s.cancel(); state.popups?.shutdown(); voice?.disable(); images?.close(); live?.close(); feed?.close(); }, proc, { beforeLeave: () => layer?.teardown() ?? '' });
+    const guard = terminalGuard(io, () => { done = true; prefetcher?.close(); if (timer) clearInterval(timer); void followSession?.stop(); state.analyst?.cancel(); if (state.analystByMint) for (const s of state.analystByMint.values()) s.cancel(); state.popups?.shutdown(); voice?.disable(); images?.close(); live?.close(); feed?.close(); }, proc, { beforeLeave: () => layer?.teardown() ?? '' });
     let lastTokenRefresh = 0;
     let lastWatchRefresh = 0;
     let lastPositionsRefresh = 0;
@@ -2983,6 +3039,27 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     };
     // task-1326: an image landing (decoded, or found missing) repaints at most once per macrotask.
     if (images) images.onChange = () => scheduleDraw();
+    // task-1421: `--spectate-mcp` → follow an agent driving over MCP. The rendezvous lets a `dexterm mcp`
+    // server the external client spawned emit here; we tail it, move the terminal for navigation calls, and
+    // the owner's controls (ctrl+p pause/resume · ctrl+k stop · any key = take over) are handled in onInput.
+    // A read-only, loopback, token-gated stream opens too (`dexterm spectate --info`). Off (and zero-cost)
+    // unless the flag is set; nothing it folds can arm, sign, confirm, send or raise a cap.
+    if (args.spectateMcp) {
+      followSession = new McpFollowSession({
+        env: io.env,
+        stream: true,
+        onNav: (nav) => {
+          const before = state.screen;
+          try { applyFollowNav(state, nav, stack); } catch { /* a stale mint never breaks follow */ }
+          if (state.screen !== before) { try { startTransition(); } catch { transition = null; } }
+          scheduleDraw();
+        },
+        onStatus: (line) => { say(line, 'ai', 4); scheduleDraw(); },
+        onEvent: () => scheduleDraw(),
+      });
+      void followSession.start();
+      say('following agents over MCP · ctrl+p pause · ctrl+k stop · any key takes over', 'ai', 6);
+    }
     // Launch a real Claude analyst session when a key asked for one (applyAction cannot spawn). A
     // `question` means start it as a chat turn, not a paid structured skill run (task-1311, QA B3).
     const beginAnalyst = () => {
@@ -3662,6 +3739,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       done = true;
       prefetcher?.close();
       if (timer) clearInterval(timer);
+      void followSession?.stop();
       guard.restore();
       guard.uninstall();
       cancelAllAnalysts();
@@ -3693,6 +3771,15 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         }
         // Ctrl-C always quits cleanly (terminal restored by the guard), whatever is focused.
         if (key.ctrl && key.ch === 'c') { quit(); return; }
+        // task-1421 follow-mode controls (only while following an MCP agent). ctrl+p pauses / resumes the
+        // terminal mirroring; ctrl+k stops following (removes the rendezvous so the server stops emitting);
+        // ANY other key while the agent is driving hands control to the user — the human and the agent never
+        // fight over the screen. The control keys are consumed; the take-over key still does its own job.
+        if (followSession) {
+          if (key.ctrl && key.ch === 'k') { followSession.kill(); draw(); continue; }
+          if (key.ctrl && key.ch === 'p') { if (followSession.isPaused) followSession.resume(); else followSession.pause(); draw(); continue; }
+          if (followSession.controlState === 'agent') followSession.userKey(); // take over, then fall through
+        }
         // task-1413: a pending analyst config PROPOSAL owns the next key. `y` accepts and journals it as
         // actor 'analyst' (ctrl+z undoes); any other key dismisses it. A stray key never persists a change.
         // Two guards (defect c): the proposal does NOT steal a key while a TEXT INPUT is open — the GO-TO

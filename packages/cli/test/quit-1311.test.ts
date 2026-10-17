@@ -7,13 +7,13 @@
 // These tests drive the real handle owners (LiveContext over an injected FakeClock + a WebSocket that
 // refuses to connect; AnalystSession over an injected fake spawn) and assert close()/cancel() releases
 // every handle. The FakeClock makes "is a backoff timer still pending?" exact via pendingTimers. The
-// end-to-end check runs the quit-probe over the REAL systemClock and asserts the process goes idle in
-// under a second — the production timer path, with the token + ticket + fast lane + stream all live.
+// end-to-end check (the quit-probe over the REAL systemClock: the process must go idle in under a second,
+// with the token + ticket + fast lane + stream all live) runs in the serial lane: serial/quit-1311-probe.test.ts
+// (task-1424).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDataLayer, FakeClock, type Transport, type WsFactory, type WsLike, type FastLaneEndpoint } from '@dexterm/data';
@@ -22,7 +22,6 @@ import { LiveContext } from '../src/live/index.ts';
 import { AnalystSession } from '../src/analyst/session.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PROBE = resolve(here, '..', 'tools', 'quit-probe.mjs');
 const MINT = 'FakeMintPumpaaaaaaaaaaaaaaaaaaaaaaaaaaaapump';
 const EP: FastLaneEndpoint = { url: 'wss://example/fast', source: 'solana-ws', keyed: false, label: 'public RPC ws' };
 
@@ -140,16 +139,4 @@ test('QA M1 (analyst busy): cancel() kills the claude child and drops its stdio 
   assert.deepEqual(calls.kill, ['SIGTERM'], 'the child got SIGTERM');
   assert.equal(calls.unref, 1, 'the child was unref’d so a slow death cannot hold the loop');
   assert.ok(calls.destroyed >= 2, 'the stdout/stderr pipes were destroyed so they stop holding the loop');
-});
-
-test('QA M1 (end to end, real timers): the quit path drains the loop in under a second', () => {
-  // Runs quit-probe.mjs: a LIVE context over the real systemClock with a refusing WebSocket (both the
-  // stream and the fast lane in backoff) plus an open token and PAPER ticket, then close()s it. The
-  // probe exits 0 only when close() left zero pending timers and the loop idled in < 1000 ms.
-  const r = spawnSync('node', [PROBE], { encoding: 'utf8', timeout: 8_000 });
-  assert.equal(r.status, 0, `quit-probe did not exit cleanly within a second:\n${r.stdout}\n${r.stderr}`);
-  assert.match(r.stdout, /pending right after close\(\): 0/, 'no WS backoff timer survived close()');
-  const m = /idle at \+(\d+)ms/.exec(r.stdout);
-  assert.ok(m, `probe did not report an idle time:\n${r.stdout}`);
-  assert.ok(Number(m![1]) < 1000, `the loop took ${m![1]} ms to drain after close (must be < 1000 ms)`);
 });

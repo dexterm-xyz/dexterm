@@ -51,6 +51,8 @@ export interface KbSkillIo {
   isTTY?: boolean;
   /** Open the editor on a file and wait; returns its exit code. Tests inject this; default spawns $VISUAL/$EDITOR. */
   editor?: (file: string) => number;
+  /** Platform for the default editor spawn (default: process.platform). Tests inject it. */
+  platform?: NodeJS.Platform;
 }
 
 const NOUN = { kb: 'KB entry', skill: 'skill' } as const;
@@ -82,6 +84,8 @@ function openEditor(io: KbSkillIo, file: string): 'edited' | 'no-editor' | 'fail
   if (io.editor) return io.editor(file) === 0 ? 'edited' : 'failed';
   const ed = (io.env.VISUAL || io.env.EDITOR || '').trim();
   if (!ed || io.isTTY === false) return 'no-editor';
+  // task-1423: Windows has no /bin/sh, so the spawn below always failed there; print the path to edit instead
+  if ((io.platform ?? process.platform) === 'win32') return 'no-editor';
   // `sh -c '$EDITOR "$1"'` so an EDITOR with arguments ("code -w") works; the path is passed as $1, never interpolated.
   const r = spawnSync('/bin/sh', ['-c', `${ed} "$1"`, 'sh', file], { stdio: 'inherit', env: io.env });
   return r.status === 0 ? 'edited' : 'failed';

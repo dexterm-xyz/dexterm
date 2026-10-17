@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 911d8ff and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at d943a36 and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -132,6 +132,14 @@ Built on the two-stage analysis packs (deterministic ASSEMBLE, 0 tokens; the opt
   machine's app DB, so no accuracy figure exists yet. **Re-measured after the task-1361 recorder fix (same day):**
   the app DB now holds n = 401 observed 1 h outcomes, but still 0 LARP verdicts (a verdict is only written when
   you run the LARP check on a token), so the LARP figure is still n = 0 and `larp-quality` stays in progress.
+- **LARP/high-risk follow-up drafts** (task-1433): `dexterm larp-detected --out DIR` (or the cron-ready
+  `node scripts/larp-detected.mjs --out DIR`) reads the local recorder without network access, scores only each
+  point-in-time t0 row with the named H1 heuristic, and joins it only to a later recorder outcome. It writes a
+  timestamped PNG evidence card and review draft for up to three qualifying coins, identified only by short mint,
+  with the source, evidence age, follow-up horizon and same-dataset count of flags that did and did not meet the
+  outcome condition. Fewer than 50 unique flagged coins is a thin sample and writes nothing. `--live MINT` makes
+  a current, read-only graded card from one keyless lookup and says that no later outcome exists yet. These are
+  drafts only: dexterm has no posting or scheduling path. A risk flag is not a certificate.
 - **Skill backtest + tuning** (task-1401): `dexterm backtest --subject skills` replays the parts of the default
   analyst skills that CAN be replayed on recorded history and reports per-grade precision/recall (95 % Wilson
   intervals) on a train split and a held-out, later TEST split. The eval set (`packages/packs/eval/skills-eval.json`,
@@ -463,27 +471,69 @@ The fixture clock is pinned to America/New_York so frames are identical on every
 ## Test
 
 ```sh
-npm test            # tsc typecheck + node:test (tui unit + fx tests, CLI tests, snapshots, fx practicality rules, contrast gate, boot state, loop), then test:perf
-npm run test:perf   # the perf lane alone: packages/*/test/perf/*.test.ts, one file at a time
+npm test              # tsc typecheck, then the parallel lane, then test:serial, then test:perf
+npm run test:serial   # the serial lane alone: packages/*/test/serial/*.test.ts, one file at a time
+npm run test:perf     # the perf lane alone: packages/*/test/perf/*.test.ts, one file at a time
+DEXTERM_TEST_NO_RETRY=1 npm run test:serial   # same, with the automatic retry off (reproduce a flake)
 ```
 
-`npm test` runs every `packages/*/test/*.test.ts` file **in parallel** (one process each), then the
-**perf lane** serially. The parallel glob does not reach `test/perf/`, so a timing assertion never
-measures ~150 neighbouring test processes. (task-1410: the 1330 p95 check used to sit in the parallel
-glob and read ~40 ms of scheduler noise on every full run, against ~3 ms alone.) Put any test whose
-assertion is a wall-clock budget in `packages/<pkg>/test/perf/`. `packages/cli/test/perf/render-1330.test.ts`
-has two guards for the trending, token + social and KOL screens at 176×48:
-- **frame budget**: p95 per tick under 16 ms (one 60 Hz frame).
+`npm test` runs three lanes, in order:
+
+1. **parallel**: every `packages/*/test/*.test.ts` file at once (one process each, ~150 of them).
+2. **serial** (task-1424): `packages/*/test/serial/*.test.ts`, one file at a time, after the parallel lane
+   has finished, so these tests never share the CPU with it.
+3. **perf** (task-1410): `packages/*/test/perf/*.test.ts`, one file at a time, last.
+
+The parallel glob does not reach `test/serial/` or `test/perf/`. **Where a test goes:**
+- a test that drives a terminal through a pty (`measure/drive.py`, `measure/action-pty.py`,
+  `measure/quit-timing.py`, an inline `pty.fork`), runs the interactive loop on real timers, or asserts a
+  wall-clock bound (the < 1 s quit, the 50 ms fuzz budget, a server lifetime a request must fit inside)
+  goes in `packages/<pkg>/test/serial/`;
+- a render or CPU budget goes in `packages/<pkg>/test/perf/`;
+- everything else (deterministic, FakeClock, replay, one-shot CLI frames) stays in the parallel glob.
+  A loose "doesn't hang" bound (≥ 10× headroom, e.g. "resolves in < 1 s instead of the 60 s pace wait")
+  may stay parallel.
+
+Serial and perf tests register with `serialLane(import.meta.url)` from `packages/cli/test/serial/lane.ts`
+instead of `test()`. That gives each test **one automatic retry, logged and never hidden**: the first
+failure is printed in full on stderr and attached to the test as a TAP diagnostic, and
+`scripts/test-lane.mjs` (which runs both lanes) ends with a summary of every test that needed the retry
+(`RETRY passed on retry: <file> › <test>` plus the first failure), or `no test needed the automatic retry`.
+A test that fails twice fails the run. Assertions are not relaxed for the retry. A test that needs the
+retry is load-sensitive: report it in the handoff. `DEXTERM_TEST_NO_RETRY=1` turns the retry off.
+`packages/cli/test/lanes-1424.test.ts` (parallel) enforces the layout: no parallel file drives a pty
+harness, every serial/perf file uses `serialLane`, `npm test` keeps the lane order, and the retry logs.
+
+No pty test opens the user's cache database: `quit-timing.py` and `action-pty.py` pass the app a
+throwaway `--db` (task-1424: with the default `~/.local/share/dexterm/dexterm.db` a run beside another
+lane's run, or beside an open dexterm, could exit 2 with `database is locked` before painting, the
+quit-1319 / task-1313 pty flakes); the `drive.py` and guard pty tests run `--fixtures` (no database) with
+`DEXTERM_HOME` in a temp dir, and the LARP run sets HOME to a temp dir. `quit-timing.py` (the networked
+quit check) still reads the real `DEXTERM_HOME`, so it keeps the user's RPC configuration. It starts its
+fill clock at the app's first paint, not at spawn, and if the app never paints it says whether it exited
+or timed out and prints the tail of the app's stderr.
+
+(task-1410: the 1330 p95 check used to sit in the parallel glob and read ~40 ms of scheduler noise on
+every full run, against ~3 ms alone.) `packages/cli/test/perf/render-1330.test.ts` has two guards for
+the trending, token + social and KOL screens at 176×48:
+- **frame budget**: p95 per tick under 16 ms (one 60 Hz frame), on two clocks (task-1424). The main
+  thread's **CPU time** per tick (`process.threadCpuUsage`) is asserted every run: another process on the
+  core cannot inflate it, and a slower render always does. **Wall time** per tick (`performance.now`) is
+  asserted whenever the p95 tick cannot be a preempted one: at most n − 1 − ⌊0.95·n⌋ ticks lost more than
+  1 ms of wall time beyond their CPU time, with no voluntary context switch. Under a full CPU hog the wall
+  p95 is scheduler time (p50 ~3 ms, p95 ~60 ms at 2× oversubscription, CPU p95 ~4 ms); the run then prints
+  `wall p95 NOT asserted: k/150 ticks lost > 1 ms to other processes, CPU p95 asserted`. If the render ever
+  blocks (a voluntary switch), the wall check is asserted regardless.
 - **regression guard**: median render time ÷ median of a fixed reference workload, timed interleaved
   frame by frame so machine speed and background load affect both the same way. It must stay under 2×
   the ratio recorded in the test (`RATIO_BASELINE`). An injected 3× render slowdown (p95 ~8–10 ms,
   still inside 16 ms) fails it at ratio ~7.0 against a limit of 4.7. After an intentional render change,
   recalibrate `RATIO_BASELINE` from the printed `ratio` values and say so in the handoff.
 
-The pty tests (`qa-1311`, the `task-1313` pty cases) do not use fixed sleeps. Each step waits for the
-screen to show the expected content: `action-pty.py` waits on its own screen model, and `drive.py` has
-`WAIT:text[@secs]`, which also shifts the rest of the key script by the time it waited. A slow boot under
-load therefore delays the script instead of racing it.
+The pty tests (`serial/qa-1311-pty`, `serial/task-1313-pty`, `serial/larp-pty`) do not use fixed sleeps.
+Each step waits for the screen to show the expected content: `action-pty.py` waits on its own screen model,
+and `drive.py` has `WAIT:text[@secs]`, which also shifts the rest of the key script by the time it waited.
+A slow boot under load therefore delays the script instead of racing it.
 
 Snapshot goldens live in `packages/cli/test/snapshots/` and are the **calm** render of this
 renderer (`npm run snap:update` regenerates them after an intentional change; say so in the pull request).

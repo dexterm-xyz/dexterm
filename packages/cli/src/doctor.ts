@@ -71,9 +71,16 @@ export interface DoctorDeps {
   content?: () => { kb: MergedSet; skills: MergedSet };
 }
 
-/** Cheap PATH lookup (no spawn) for the voice probe. */
-function onPath(bin: string): boolean {
-  for (const p of (process.env.PATH ?? '').split(':')) if (p && existsSync(join(p, bin))) return true;
+/** Cheap PATH lookup (no spawn). Windows (task-1423): PATH is `;`-separated and commands carry an extension
+ *  (`claude.cmd` from npm, `claude.exe` from the native installer), so try the PATHEXT list there. */
+export function onPath(bin: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
+  const win = platform === 'win32';
+  // Windows file names are case-insensitive; lower-case keeps the lookup exact on the case-sensitive test hosts
+  const exts = win ? ['', ...(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').toLowerCase().split(';').filter(Boolean)] : [''];
+  for (const p of (env.PATH ?? env.Path ?? '').split(win ? ';' : ':')) {
+    if (!p) continue;
+    for (const ext of exts) if (existsSync(join(p, bin + ext))) return true;
+  }
   return false;
 }
 
@@ -150,7 +157,11 @@ export async function livingProbe(url: string, timeoutMs = 4000): Promise<ProbeR
 }
 
 /** Default claude probe: spawn `claude --version` with a timeout. Presence only (login is not asserted here). */
-export async function claudeProbe(timeoutMs = 4000): Promise<'ok' | 'present' | 'missing'> {
+export async function claudeProbe(timeoutMs = 4000, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): Promise<'ok' | 'present' | 'missing'> {
+  // Windows (task-1423): answer from PATH without a spawn, and count only what the analyst's shell-less spawn can
+  // start: `claude.exe` / `.com` (the native installer). An npm `claude.cmd` alone is 'missing', because the
+  // analyst cannot run it, so "found on PATH" would be a false pass.
+  if (platform === 'win32') return onPath('claude', { ...env, PATHEXT: '.EXE;.COM' }, platform) ? 'present' : 'missing';
   const { execFile } = await import('node:child_process');
   return new Promise((resolve) => {
     let done = false;

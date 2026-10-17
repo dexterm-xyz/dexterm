@@ -120,7 +120,10 @@ def main() -> int:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
 
-    argv = ["node", BIN, "--replay", args.sample, "--no-boot", "--tz", "UTC"]
+    # task-1424: a per-run cache DB under the temp home. Replay mode otherwise opens the user's default
+    # ~/.local/share/dexterm/dexterm.db, which another lane (or a running dexterm) may hold locked:
+    # the app then exits 2 with "database is locked" before it paints.
+    argv = ["node", BIN, "--replay", args.sample, "--no-boot", "--tz", "UTC", "--db", os.path.join(args.home, "dexterm.db")]
     env = dict(os.environ)
     env["PATH"] = args.fake_dir + os.pathsep + env.get("PATH", "")
     env["DEXTERM_OFFLINE"] = "1"

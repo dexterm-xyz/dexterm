@@ -2,7 +2,7 @@
 export * from './state.ts';
 export * from './fixtures.ts';
 export {
-  parseArgs, stateFromArgs, applyScreenerArgs, applyEffectArgs, applyAction, applyAnalystAction, applyKey, colorDepthFor, intensityFor, asciiRainFor, fpsFor, demoEvent, main, interactive, terminalGuard, describeError, buildScreenState,
+  parseArgs, stateFromArgs, applyScreenerArgs, applyEffectArgs, applyAction, applyAnalystAction, applyFollowNav, applyKey, colorDepthFor, intensityFor, asciiRainFor, fpsFor, demoEvent, main, interactive, terminalGuard, describeError, buildScreenState,
   HELP, LIVE_REFRESH_MS, FPS_BY_INTENSITY, MAX_FPS, DEMO_KEYS,
   type CliArgs, type Effect, type Io, type GuardProcess, type TerminalGuard, type DemoEvent, type AnalystActionResult,
 } from './main.ts';

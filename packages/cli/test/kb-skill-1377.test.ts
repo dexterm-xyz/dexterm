@@ -72,6 +72,16 @@ test('kb: new writes a starter that passes check; new on a bundled id refuses; a
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('kb: on Windows (no /bin/sh) new/edit print the file to edit instead of failing the editor spawn (task-1423)', async () => {
+  const { dir, env } = home();
+  try {
+    const w = io({ ...env, EDITOR: 'notepad' });
+    w.isTTY = true; w.platform = 'win32';
+    assert.equal(await kbSkillCommand('kb', ['new', 'my-win-notes'], w), 0, w.out + w.err);
+    assert.match(w.out, /no \$EDITOR .*edit .*my-win-notes\.md with any editor/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('skill: edit copies the bundled analyst skill, the analyst turn gets a merged plugin dir with it firewalled', async () => {
   const { dir, env } = home();
   try {

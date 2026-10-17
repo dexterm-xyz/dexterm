@@ -9,6 +9,7 @@
 // it is read-only, loopback-only and token-gated, and redacts wallet addresses/keys (see SPECTATOR.md).
 
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FollowController, loadSpectatorRecording, type FollowView, type SpectatorEvent } from '@dexterm/agents';
 import type { Io } from './main.ts';
@@ -19,7 +20,19 @@ function has(rest: string[], name: string): boolean { return rest.includes(name)
 const USAGE = `dexterm spectate <command>
   --replay FILE [--json]   replay a saved session (fold agent actions into the screen + activity panel)
   --info [--json]          show the live stream endpoint from ~/.dexterm/spectator.json (if streaming)
-read-only · redacts wallet addresses/keys · the live stream is started by \`dexterm agent serve --spectate\``;
+read-only · redacts wallet addresses/keys · the live stream is started by \`dexterm agent serve --spectate\`
+or by a running app in follow mode (\`dexterm --spectate-mcp\`, for an agent connected over MCP)
+Full docs: https://dexterm.xyz/docs/spectator/`;
+
+/**
+ * Where `agent serve --spectate` writes its discovery file: the same rule as the writer (@dexterm/agents
+ * `dextermHome`), so a blank DEXTERM_HOME falls back and a missing HOME (Windows) does not turn into a
+ * relative `.dexterm` under the current directory.
+ */
+export function spectatorInfoPath(env: NodeJS.ProcessEnv, home: string = homedir()): string {
+  const dir = env.DEXTERM_HOME && env.DEXTERM_HOME.trim() ? env.DEXTERM_HOME : join(home, '.dexterm');
+  return join(dir, 'spectator.json');
+}
 
 function ago(t: number): string { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`; }
 function age(s: number | null | undefined): string { if (s == null) return ''; return s < 60 ? ` · ${Math.round(s)}s old` : s < 3600 ? ` · ${Math.floor(s / 60)}m old` : ` · ${Math.floor(s / 3600)}h old`; }
@@ -66,8 +79,7 @@ export async function runSpectate(rest: string[], io: Io): Promise<number> {
   }
 
   if (has(rest, '--info')) {
-    const home = io.env.DEXTERM_HOME || join(io.env.HOME || '', '.dexterm');
-    const path = join(home, 'spectator.json');
+    const path = spectatorInfoPath(io.env);
     let info: Record<string, unknown>;
     try { info = JSON.parse(readFileSync(path, 'utf8')); }
     catch { errOut('no live spectator stream (start one with `dexterm agent serve --spectate`).'); return 1; }
