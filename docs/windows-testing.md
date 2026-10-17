@@ -9,6 +9,11 @@ whether this Windows gate passes.
 
 ## Exact platform limitations
 
+- Windows thread CPU accounting can advance in 16 ms quanta, so a per-frame
+  CPU delta is not a high-resolution measurement. The render gate keeps its
+  strict wall p95 <16 ms and unchanged 2× regression guard. On Windows, wall
+  p95 is also a conservative upper bound on single-thread CPU p95; the raw CPU
+  counter is logged only as a quantized diagnostic. POSIX CPU assertions remain.
 - NTFS does not implement POSIX owner/group/other permission bits. Node's `chmod`
   is **not** proof of owner-only Windows ACLs. Only the exact mode assertions are
   named POSIX subtests, skipped on Windows with that reason. Their enclosing

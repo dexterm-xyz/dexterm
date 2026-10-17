@@ -17,13 +17,13 @@ import assert from 'node:assert/strict';
 import { makeFixtureState, renderFrame, type AppState } from '../../src/state.ts';
 import { socialOf } from '../../src/social/view.ts';
 import { serialLane } from '../serial/lane.ts';
+import { assertFrameBudget as assertBudget } from './budget.ts';
 
 const laneTest = serialLane(import.meta.url);
 
 /** render ms ÷ reference ms, medians, on this repo at task-1410 (load-independent; see the header). */
 const RATIO_BASELINE = { trending: 2.35, social: 2.85, kol: 2.05 } as const;
 const REGRESSION_FACTOR = 2;
-const FRAME_BUDGET_MS = 16;
 /** A tick whose wall time exceeds its own CPU time by more than this waited for the core. */
 const PREEMPT_MS = 1;
 
@@ -52,11 +52,9 @@ function budget(wall: number[], cpu: number[], vol: number): Budget {
   const preempted = wall.filter((w, i) => w - cpu[i] > PREEMPT_MS).length;
   return { p50: quantile(wall, 0.5), p95: quantile(wall, 0.95), max: quantile(wall, 1), cpuP95: quantile(cpu, 0.95), preempted, n: wall.length, blocked: vol > 0 };
 }
-const wallNote = (b: Budget): string => `wall p95 asserted (${b.preempted}/${b.n} ticks lost > ${PREEMPT_MS} ms to other processes${b.blocked ? '; voluntary switch observed' : ''})`;
-function assertBudget(name: string, b: Budget, detail: string): void {
-  assert.ok(b.cpuP95 < FRAME_BUDGET_MS, `${name} CPU p95 ${b.cpuP95.toFixed(2)} ms (${detail}) must be under ${FRAME_BUDGET_MS} ms`);
-  assert.ok(b.p95 < FRAME_BUDGET_MS, `${name} wall p95 ${b.p95.toFixed(2)} ms (${detail}) must be under ${FRAME_BUDGET_MS} ms`);
-}
+const wallNote = (b: Budget): string => process.platform === 'win32'
+  ? 'wall p95 asserted; CPU bounded by wall time; raw Windows CPU counter is quantized, preemption count unavailable'
+  : `wall p95 asserted (${b.preempted}/${b.n} ticks lost > ${PREEMPT_MS} ms to other processes${b.blocked ? '; voluntary switch observed' : ''})`;
 
 type Measured = Budget & { ratio: number; runs: number[]; cpuRuns: number[]; ratios: number[] };
 
