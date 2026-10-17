@@ -1,10 +1,11 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1401 EXPORT / SHARE: `E` renders the current view to a PNG + a text report in ~/.dexterm/exports with the
 // data ages and the LIVE / SAMPLE / REPLAY label. Offline: fixtures, the recorded replay sample, temp dirs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Writable } from 'node:stream';
 import { Canvas, rasterizeCanvas, glyphBits, DEFAULT_KEYMAP, parseKeys, THEMES } from '@dexterm/tui';
@@ -109,14 +110,14 @@ test('renderExportPng decodes back to the framed size; renderExportText carries 
   assert.equal(fmtAge(4), '4s'); assert.equal(fmtAge(125), '2m'); assert.equal(fmtAge(7300), '2h'); assert.equal(fmtAge(null), '—');
 });
 
-test('writeExport: PNG + TXT under DEXTERM_HOME/exports, private file modes, nothing else written', () => {
+test('writeExport: PNG + TXT under DEXTERM_HOME/exports, private file modes, nothing else written', async (t) => {
   const home = tmp();
   try {
     const r = writeExport(view('live'), { now: NOW, env: { DEXTERM_HOME: home }, raster: { cellW: 6, cellH: 12, scale: 1 } });
     assert.equal(dirname(r.png), join(home, 'exports'));
     assert.match(r.png, /dexterm-token-DezXAZ-\d{8}-\d{6}\.png$/);
-    assert.deepEqual(readdirSync(join(home, 'exports')).sort(), [r.png, r.txt].map((p) => p.split('/').pop()).sort());
-    assert.equal(statSync(r.png).mode & 0o777, 0o600); assert.equal(statSync(r.txt).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(join(home, 'exports')).sort(), [r.png, r.txt].map((p) => basename(p)).sort());
+    await posixPermissions(t, () => { assert.equal(statSync(r.png).mode & 0o777, 0o600); assert.equal(statSync(r.txt).mode & 0o777, 0o600); });
     assert.ok(decodePng(readFileSync(r.png)).w > 0);
     assert.match(readFileSync(r.txt, 'utf8'), /● LIVE DATA/);
   } finally { rmSync(home, { recursive: true, force: true }); }

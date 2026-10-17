@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1360 Tier 1 — wallet tracker: swap decoding on fixture wallet histories, FIFO PnL / win rate / early-entry
 // honesty, the firewalled follow store, and the tracker's backfill-then-alert replay. Optional: a replay over the
 // task-1286 spike recordings (real launch-window transactions) when they are present on disk.
@@ -104,7 +105,7 @@ test('stats: hold time = median first-buy→last-sell over CLOSED positions with
   assert.equal(u.sample.asOf, null, 'asOf defaults to null when not fetched');
 });
 
-test('follow store: base58 only, user-typed labels are firewalled and clipped, local file mode 600, purge wipes everything', () => {
+test('follow store: base58 only, user-typed labels are firewalled and clipped, local file mode 600, purge wipes everything', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-follows-'));
   const path = join(dir, 'nested', 'follows.json');
   const clock = new SimClock();
@@ -118,7 +119,7 @@ test('follow store: base58 only, user-typed labels are firewalled and clipped, l
   assert.ok((ok.follow.name ?? '').length <= 24);
   assert.equal(fs.add(LEADER).ok, false, 'already followed');
   assert.ok(fs.add(LEADER2, 'x'.repeat(100)).ok); assert.equal(fs.get(LEADER2)!.name!.length, 24);
-  assert.equal((statSync(path).mode & 0o777), 0o600);
+  await posixPermissions(t, () => { assert.equal((statSync(path).mode & 0o777), 0o600); });
   const raw = JSON.parse(readFileSync(path, 'utf8')) as { v: number; follows: unknown[] };
   assert.equal(raw.v, 1); assert.equal(raw.follows.length, 2);
   // reload from disk keeps the rows; rename re-firewalls; remove + purge

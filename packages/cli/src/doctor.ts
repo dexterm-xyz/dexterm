@@ -71,9 +71,16 @@ export interface DoctorDeps {
   content?: () => { kb: MergedSet; skills: MergedSet };
 }
 
-/** Cheap PATH lookup (no spawn) for the voice probe. */
-function onPath(bin: string): boolean {
-  for (const p of (process.env.PATH ?? '').split(':')) if (p && existsSync(join(p, bin))) return true;
+/** Cheap PATH lookup (no spawn). Windows (task-1423): PATH is `;`-separated and commands carry an extension
+ *  (`claude.cmd` from npm, `claude.exe` from the native installer), so try the PATHEXT list there. */
+export function onPath(bin: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
+  const win = platform === 'win32';
+  // Windows file names are case-insensitive; lower-case keeps the lookup exact on the case-sensitive test hosts
+  const exts = win ? ['', ...(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').toLowerCase().split(';').filter(Boolean)] : [''];
+  for (const p of (env.PATH ?? env.Path ?? '').split(win ? ';' : ':')) {
+    if (!p) continue;
+    for (const ext of exts) if (existsSync(join(p, bin + ext))) return true;
+  }
   return false;
 }
 
@@ -150,7 +157,11 @@ export async function livingProbe(url: string, timeoutMs = 4000): Promise<ProbeR
 }
 
 /** Default claude probe: spawn `claude --version` with a timeout. Presence only (login is not asserted here). */
-export async function claudeProbe(timeoutMs = 4000): Promise<'ok' | 'present' | 'missing'> {
+export async function claudeProbe(timeoutMs = 4000, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): Promise<'ok' | 'present' | 'missing'> {
+  // Windows (task-1423): answer from PATH without a spawn, and count only what the analyst's shell-less spawn can
+  // start: `claude.exe` / `.com` (the native installer). An npm `claude.cmd` alone is 'missing', because the
+  // analyst cannot run it, so "found on PATH" would be a false pass.
+  if (platform === 'win32') return onPath('claude', { ...env, PATHEXT: '.EXE;.COM' }, platform) ? 'present' : 'missing';
   const { execFile } = await import('node:child_process');
   return new Promise((resolve) => {
     let done = false;
@@ -275,8 +286,10 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
     const modes = xs.modes();
     const clientId = xs.clientId(deps.env);
     if (meta.loggedIn) {
+      const windows = deps.platform === 'win32';
       const loose = (modes.tokens !== null && modes.tokens !== 0o600) || (modes.dir !== null && modes.dir !== 0o700);
-      checks.push({ name: 'Login with X', status: loose ? 'warn' : 'pass', detail: `logged in${meta.user ? ` as @${meta.user.username}` : ''} · scopes ${meta.scopes.join(' ') || '?'} · refresh ${meta.hasRefresh ? 'yes' : 'no'}${loose ? ' · token file permissions are looser than 0600' : ''}`, ...(loose ? { fix: `chmod 700 ${xs.dir} && chmod 600 ${xs.tokensPath}` } : {}) });
+      const warning = windows ? ' · Windows ACL isolation is not verified' : loose ? ' · token file permissions are looser than 0600' : '';
+      checks.push({ name: 'Login with X', status: windows || loose ? 'warn' : 'pass', detail: `logged in${meta.user ? ` as @${meta.user.username}` : ''} · scopes ${meta.scopes.join(' ') || '?'} · refresh ${meta.hasRefresh ? 'yes' : 'no'}${warning}`, ...(windows ? { fix: 'Review the token directory Security permissions in Windows; chmod does not enforce owner-only ACLs.' } : loose ? { fix: `chmod 700 ${xs.dir} && chmod 600 ${xs.tokensPath}` } : {}) });
     } else if (clientId) {
       checks.push({ name: 'Login with X', status: 'warn', detail: 'client id stored, not logged in — X posts stay off (keyless venues, news and on-chain rows still work)', fix: 'dexterm x login' });
     } else {

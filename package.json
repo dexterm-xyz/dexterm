@@ -9,8 +9,9 @@
   "engines": { "node": ">=22.18" },
   "workspaces": ["packages/*"],
   "scripts": {
-    "test": "npm run typecheck && node --test \"packages/*/test/*.test.ts\" && npm run test:perf",
-    "test:perf": "node --test --test-concurrency=1 \"packages/*/test/perf/*.test.ts\"",
+    "test": "npm run typecheck && node --test \"packages/*/test/*.test.ts\" && npm run test:serial && npm run test:perf",
+    "test:serial": "node scripts/test-lane.mjs serial",
+    "test:perf": "node scripts/test-lane.mjs perf",
     "typecheck": "tsc -p tsconfig.json",
     "snap:update": "node packages/cli/tools/snapshots.mjs --update",
     "dexterm": "node packages/cli/bin/dexterm.mjs"

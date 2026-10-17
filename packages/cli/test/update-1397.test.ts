@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1397 — `dexterm update` and the startup notice. The network is replayed from the two responses recorded
 // in fixtures/update-1397.json (npm registry `latest`, GitHub latest release); a "0.1.2 is out" world is the same
 // recording with the version moved forward. DEXTERM_HOME is a temp dir; nothing here touches the network.
@@ -7,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'n
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { THEMES } from '@dexterm/tui';
 import {
   CHECK_EVERY_MS, GITHUB_LATEST_URL, NPM_LATEST_URL, REQUEST_HEADERS, compareVersions, detectInstall, fetchLatest, noticeFor, parseVersion,
@@ -143,7 +144,7 @@ test('drafts, prereleases and junk replies never become a notice', async () => {
   assert.equal(noticeFor('0.1.1', '0.1.2'), 'dexterm 0.1.2 is available (you have 0.1.1) · run dexterm update');
 });
 
-test('startup: no cache → one background refresh that writes the cache; within a day → cache only, no network', async () => {
+test('startup: no cache → one background refresh that writes the cache; within a day → cache only, no network', async (t) => {
   const env = { DEXTERM_HOME: home() };
   const r = replay(world('0.1.2'));
   const first = startupCheck(env, { current: '0.1.1', now: 10_000, fetchFn: r.fetchFn });
@@ -151,7 +152,7 @@ test('startup: no cache → one background refresh that writes the cache; within
   assert.equal(await first.refresh, 'dexterm 0.1.2 is available (you have 0.1.1) · run dexterm update', 'the refresh reports what it found');
   assert.equal(r.calls.length, 2);
   assert.deepEqual(readUpdateState(env), { enabled: true, checkedAt: 10_000, latest: '0.1.2' });
-  assert.equal(statSync(updateStatePath(env)).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(updateStatePath(env)).mode & 0o777, 0o600); });
 
   const next = startupCheck(env, { current: '0.1.1', now: 10_000 + CHECK_EVERY_MS - 1, fetchFn: r.fetchFn });
   assert.equal(next.notice, 'dexterm 0.1.2 is available (you have 0.1.1) · run dexterm update');
@@ -230,7 +231,7 @@ test('install detection from the real path of the running code', () => {
   assert.equal(detectInstall('/home/u/Downloads/dexterm-0.1.1/packages/cli/src/update.ts', no), 'tarball');
   let asked = '';
   assert.equal(detectInstall('/home/u/src/dexterm/packages/cli/src/update.ts', (p) => { asked = p; return yes(); }), 'checkout');
-  assert.equal(asked, '/home/u/src/dexterm/.git');
+  assert.equal(asked, resolve('/home/u/src/dexterm/.git'));
   assert.deepEqual(upgradeCommands('checkout', '0.1.2', { root: "/home/u/my src/it's" }), [`git -C '/home/u/my src/it'\\''s' pull --ff-only`]);
 });
 

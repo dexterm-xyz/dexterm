@@ -1,0 +1,51 @@
+{
+  "manifest_version": "0.3",
+  "name": "dexterm",
+  "display_name": "dexterm",
+  "version": "0.1.4",
+  "description": "Local Solana memecoin research, rug checks, LARP evidence, and holder analysis over MCP.",
+  "long_description": "dexterm exposes 36 MCP tools for Solana memecoin research: token dossiers, holder analysis, security and rug checks, mechanical LARP evidence, candles, trades, knowledge resources, and bounded app navigation. Market and web reads use public or user-configured sources and report missing data as unavailable. MCP actions cannot arm, sign, confirm, or send a trade, raise a signer cap, or change the keypress confirmation gate. The source is AGPL-3.0-only.",
+  "author": {
+    "name": "dexterm maintainers",
+    "url": "https://dexterm.xyz"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dexterm-xyz/dexterm.git"
+  },
+  "homepage": "https://dexterm.xyz",
+  "documentation": "https://dexterm.xyz/docs/agents/",
+  "support": "https://github.com/dexterm-xyz/dexterm/issues",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "solana",
+    "memecoin",
+    "rug-check",
+    "larp",
+    "holder-analysis",
+    "read-only",
+    "local"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/dist/packages/mcp/bin/dexterm-mcp.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/dist/packages/mcp/bin/dexterm-mcp.mjs"
+      ]
+    }
+  },
+  "tools_generated": false,
+  "prompts_generated": false,
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=22.18"
+    }
+  }
+}

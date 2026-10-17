@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1377: `dexterm kb|skill list|show|new|edit|check|reset|path`, the analyst's per-turn plugin dir (the merged
 // skills the analyst and Jarvis run), and the doctor's KB + skills line. Hermetic: a temp DEXTERM_HOME, an injected
 // editor (no TTY, no $EDITOR), no network, no claude.
@@ -20,14 +21,14 @@ function io(env: NodeJS.ProcessEnv, editor?: (file: string) => number): KbSkillI
 /** An "editor" that rewrites the file through a function, like a user saving in $EDITOR. */
 const editWith = (fn: (text: string) => string) => (file: string): number => { fs.writeFileSync(file, fn(fs.readFileSync(file, 'utf8'))); return 0; };
 
-test('kb: edit copies the bundled entry into ~/.dexterm, the user edit is in effect, reset restores the bundled one', async () => {
+test('kb: edit copies the bundled entry into ~/.dexterm, the user edit is in effect, reset restores the bundled one', async (t) => {
   const { dir, env } = home();
   try {
     const e = io(env, editWith((t) => t.replace(/\n---\n/, '\n---\n**My note:** wait for the LP burn tx.\n\n')));
     assert.equal(await kbSkillCommand('kb', ['edit', 'lp-burn-vs-lock'], e), 0, e.out + e.err);
     const file = path.join(dir, 'kb', 'entries', 'lp-burn-vs-lock.md');
     assert.ok(fs.existsSync(file));
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    await posixPermissions(t, () => { assert.equal(fs.statSync(file).mode & 0o777, 0o600); });
     assert.match(e.out, /copied the bundled KB entry/);
     assert.match(e.out, /✓ .*lp-burn-vs-lock\.md/);
     assert.match(e.out, /in effect on the next MCP\/analyst\/Jarvis call/);
@@ -69,6 +70,16 @@ test('kb: new writes a starter that passes check; new on a bundled id refuses; a
     const l = io(env); await kbSkillCommand('kb', ['list'], l);
     assert.match(l.out, /! my-exit-rules\s+skipped: no frontmatter/);
     const bad = io(env); assert.equal(await kbSkillCommand('kb', ['bogus'], bad), 2);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('kb: on Windows (no /bin/sh) new/edit print the file to edit instead of failing the editor spawn (task-1423)', async () => {
+  const { dir, env } = home();
+  try {
+    const w = io({ ...env, EDITOR: 'notepad' });
+    w.isTTY = true; w.platform = 'win32';
+    assert.equal(await kbSkillCommand('kb', ['new', 'my-win-notes'], w), 0, w.out + w.err);
+    assert.match(w.out, /no \$EDITOR .*edit .*my-win-notes\.md with any editor/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

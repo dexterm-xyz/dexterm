@@ -45,8 +45,10 @@ export function pickRecorder(): Recorder | null {
 
 /** Synchronous PATH check without spawning (cheap; used by available() and pickRecorder). */
 function which(bin: string): boolean {
-  const paths = (process.env.PATH ?? '').split(':');
-  for (const p of paths) { if (p && existsSync(join(p, bin))) return true; }
+  // Windows (task-1423): `;`-separated PATH and `.exe` binaries, same rule as piper.ts's which()
+  const win = process.platform === 'win32';
+  const paths = (process.env.PATH ?? '').split(win ? ';' : ':');
+  for (const p of paths) { if (p && (existsSync(join(p, bin)) || (win && existsSync(join(p, `${bin}.exe`))))) return true; }
   return false;
 }
 

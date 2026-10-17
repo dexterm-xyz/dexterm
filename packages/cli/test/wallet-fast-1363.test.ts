@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1363 — `dexterm wallet fast …`: the capped DEVNET fast wallet from a shell. Create needs a PHYSICAL TTY
 // keypress (a pipe/agent is refused), never overwrites, writes mode 600; status never prints the seed; airdrop
 // goes to the devnet faucet stand-in; remove refuses while funded unless --force and needs a keypress; --mainnet
@@ -44,7 +45,7 @@ function setup(balance = 0n) {
   return { dir, over, calls, done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-test('fast create: refused on a pipe/non-TTY, refused with --mainnet, created once with a keypress at mode 600; status shows the pubkey and never the seed', async () => {
+test('fast create: refused on a pipe/non-TTY, refused with --mainnet, created once with a keypress at mode 600; status shows the pubkey and never the seed', async (t) => {
   const s = setup();
   try {
     const none = io(); assert.equal(await runWallet(['fast'], none, s.over), 0); assert.match(none.out, /fast wallet: \(none\)/);
@@ -58,7 +59,7 @@ test('fast create: refused on a pipe/non-TTY, refused with --mainnet, created on
     const tty = io(); tty.stdin = fakeStdin(true, ['y']);
     assert.equal(await runWallet(['fast', 'create'], tty, s.over), 0);
     assert.match(tty.out, /✓ fast wallet created: [1-9A-HJ-NP-Za-km-z]{32,44} \(devnet\)/);
-    assert.equal(statSync(s.over.fastWalletPath!).mode & 0o777, 0o600);
+    await posixPermissions(t, () => { assert.equal(statSync(s.over.fastWalletPath!).mode & 0o777, 0o600); });
     const rec = new FastWalletStore(s.over.fastWalletPath!).get()!;
     const seed = JSON.parse(readFileSync(s.over.fastWalletPath!, 'utf8')).seed as string;
     assert.ok(!tty.out.includes(seed), 'the seed is never printed');

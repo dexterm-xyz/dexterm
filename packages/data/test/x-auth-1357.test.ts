@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1357 (lane I-02): Login with X — PKCE + loopback + token store against the loopback MOCK OAuth server.
 // No real X calls: the mock listens on an ephemeral 127.0.0.1 port, the "browser" is a node:http client, and
 // helpers.ts blocks globalThis.fetch for the whole file so any accidental live call fails loudly.
@@ -45,7 +46,7 @@ test('config: scopes are read-only, the callback is 127.0.0.1 on the fixed port,
   assert.ok(X_FORBIDDEN_SCOPE_RE.test('tweet.write'));
   assert.ok(X_FORBIDDEN_SCOPE_RE.test('dm.read'));
   assert.equal(callbackUri(), 'http://127.0.0.1:41287/callback');
-  assert.equal(xDir({ DEXTERM_HOME: '/tmp/dh' }), '/tmp/dh/x');
+  assert.equal(xDir({ DEXTERM_HOME: '/tmp/dh' }), join('/tmp/dh', 'x'));
   assert.ok(isPlausibleClientId('abc123XYZ-_:1:ci'));
   assert.ok(!isPlausibleClientId('has spaces here'));
   assert.ok(!isPlausibleClientId('short'));
@@ -59,7 +60,7 @@ test('redactXSecrets: bearers, form fields and JSON token fields never survive i
   assert.match(r, /"scope":"x"/);
 });
 
-test('token store: files are 0600 in a 0700 dir, meta() never carries the secret, env client id wins', () => {
+test('token store: files are 0600 in a 0700 dir, meta() never carries the secret, env client id wins', async (t) => {
   const dir = tmp();
   try {
     const store = new XTokenStore({ dir: join(dir, 'x'), now: () => 1_000_000 });
@@ -73,10 +74,10 @@ test('token store: files are 0600 in a 0700 dir, meta() never carries the secret
     const rec = store.setTokens({ access_token: 'at-secret-1', refresh_token: 'rt-secret-1', scope: 'tweet.read users.read', expires_in: 7200 }, { id: '1', username: 'u' });
     assert.equal(rec.expires_at, 1_000_000 + 7200 * 1000);
     const modes = store.modes();
-    assert.equal(modes.dir, 0o700);
-    assert.equal(modes.tokens, 0o600);
-    assert.equal(modes.clientId, 0o600);
-    assert.equal(statSync(store.tokensPath).mode & 0o077, 0, 'group/other have no bits');
+    await posixPermissions(t, () => { assert.equal(modes.dir, 0o700); });
+    await posixPermissions(t, () => { assert.equal(modes.tokens, 0o600); });
+    await posixPermissions(t, () => { assert.equal(modes.clientId, 0o600); });
+    await posixPermissions(t, () => { assert.equal(statSync(store.tokensPath).mode & 0o077, 0, 'group/other have no bits'); });
     const meta = store.meta();
     assert.deepEqual(meta, { loggedIn: true, user: { id: '1', username: 'u' }, scopes: ['tweet.read', 'users.read'], expiresAt: 1_000_000 + 7_200_000, hasRefresh: true, obtainedAt: 1_000_000 });
     assert.doesNotMatch(JSON.stringify(meta), /secret/);
@@ -89,7 +90,7 @@ test('token store: files are 0600 in a 0700 dir, meta() never carries the secret
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('login: PKCE round trip against the mock; wrong-state hit ignored; tokens stored 0600; nothing logged', async () => {
+test('login: PKCE round trip against the mock; wrong-state hit ignored; tokens stored 0600; nothing logged', async (t) => {
   const dir = tmp();
   const mock = await startMockX({ clientId: CLIENT });
   const port = nextPort();
@@ -118,7 +119,7 @@ test('login: PKCE round trip against the mock; wrong-state hit ignored; tokens s
     assert.deepEqual(res.scopes, [...X_SCOPES]);
     const rec = store.tokens();
     assert.ok(rec && rec.access_token.startsWith('at-') && rec.refresh_token?.startsWith('rt-'));
-    assert.equal(statSync(store.tokensPath).mode & 0o777, 0o600);
+    await posixPermissions(t, () => { assert.equal(statSync(store.tokensPath).mode & 0o777, 0o600); });
     // the mock's request log carries paths only; the code was used exactly once
     assert.ok(mock.state.log.includes('POST /2/oauth2/token'));
     assert.ok(mock.state.log.includes('GET /2/users/me'));

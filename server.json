@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.dexterm-xyz/dexterm",
+  "title": "dexterm",
+  "description": "Local Solana memecoin research, rug checks, LARP evidence, and holder analysis over MCP.",
+  "repository": {
+    "url": "https://github.com/dexterm-xyz/dexterm",
+    "source": "github"
+  },
+  "websiteUrl": "https://dexterm.xyz/docs/agents/",
+  "version": "0.1.4",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "dexterm-cli",
+      "version": "0.1.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ]
+}

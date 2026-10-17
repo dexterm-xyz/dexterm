@@ -9,6 +9,7 @@ import { Writable } from 'node:stream';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, cpSync, realpathSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parseKeys, type ScreenKey } from '@dexterm/tui';
 import { loadConfig, readJournal, writeLock, saveConfig, defaultConfig } from '@dexterm/custom';
@@ -18,7 +19,7 @@ import { initCustom, workspaceSlots, themeByName } from '../src/custom.ts';
 import { rulesUiOf, toggleSelectedRule } from '../src/rules.ts';
 import { packCommand } from '../src/pack-cmd.ts';
 
-const FIXTURE = realpathSync(new URL('../../custom/test/fixtures/packs/trenches/', import.meta.url).pathname);
+const FIXTURE = realpathSync(fileURLToPath(new URL('../../custom/test/fixtures/packs/trenches/', import.meta.url)));
 const tmp = (p = 'dexterm-pack-'): string => realpathSync(mkdtempSync(join(tmpdir(), p)));
 function copyPack(): string { const d = tmp(); cpSync(FIXTURE, d, { recursive: true }); writeLock(d); return d; }
 function fakeIo(env: NodeJS.ProcessEnv = {}) {
@@ -51,7 +52,7 @@ test('dexterm pack: verify → add (risk card) → list → the app sees the pac
   // accept → installed, journaled (actor user), widget disabled with no capabilities, keymap not merged
   f.reset();
   assert.equal(await packCommand(['add', pack, '--accept-unsigned'], f.io), 0, f.err());
-  assert.match(f.out(), /installed trenches@1\.0\.0 → .*packs\/trenches@1\.0\.0 \(unsigned\)/);
+  assert.match(f.out(), /installed trenches@1\.0\.0 → .*packs[\\/]trenches@1\.0\.0 \(unsigned\)/);
   assert.match(f.out(), /widget trenches\/tips is DISABLED: read widgets\/tips\/tips\.html then "dexterm pack widget trenches tips --enable"/);
   const cfg1 = loadConfig(home);
   assert.equal(cfg1.ok, true, cfg1.errors.join('; '));
@@ -123,7 +124,7 @@ test('dexterm pack: verify → add (risk card) → list → the app sees the pac
   // widget consent: --enable names the page + topics, flips only the enabled flag, never adds a capability
   f.reset();
   assert.equal(await packCommand(['widget', 'trenches', 'tips', '--enable'], f.io), 0, f.err());
-  assert.match(f.out(), /enabling trenches\/tips: the popup host will serve .*widgets\/tips\/tips\.html .*hash-only CSP: only the inline script\/style you just read runs — no remote script, style, frame or import, no fetch, no eval; topics rows, theme/);
+  assert.match(f.out(), /enabling trenches\/tips: the popup host will serve .*widgets[\\/]tips[\\/]tips\.html .*hash-only CSP: only the inline script\/style you just read runs — no remote script, style, frame or import, no fetch, no eval; topics rows, theme/);
   assert.deepEqual(loadConfig(home).config.plugins!['trenches/tips'], { enabled: true, capabilities: [], settings: {} });
   f.reset();
   assert.equal(await packCommand(['widget', 'trenches', 'tips', '--disable'], f.io), 0);
@@ -236,7 +237,7 @@ test('MALICIOUS PACK through the CLI: a rule that arms, a widget that asks for c
   assert.match(f.err(), /widget tips refused: .*unknown key/);
   const link = copyPack();
   const { symlinkSync } = await import('node:fs');
-  symlinkSync('/etc/hosts', join(link, 'themes', 'hosts.json'));
+  symlinkSync(home, join(link, 'themes', 'hosts.json'), process.platform === 'win32' ? 'junction' : 'dir');
   f.reset();
   assert.equal(await packCommand(['verify', link], f.io), 1);
   assert.match(f.out(), /integrity {2}✗ .*hosts\.json is a symlink/);

@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1407 PNL CARDS: a coin's recorded fills → a 16:9 + 1:1 PNG and a text card, stamped PAPER / LIVE / TRACKED,
 // wallet hidden and size as a band by default; share = save + clipboard image + X compose intent (tested with fakes,
 // no network). Offline: fixture fills only, temp DEXTERM_HOME, fetch blocked.
@@ -5,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { Canvas, DEFAULT_KEYMAP, parseKeys, THEMES } from '@dexterm/tui';
 import { decodePng } from '@dexterm/data';
 import {
@@ -173,7 +174,7 @@ function fakeDeps(home: string, platform: NodeJS.Platform, env: NodeJS.ProcessEn
   return { deps, calls };
 }
 
-test('share flow (fakes): save writes 16:9 + 1:1 + txt privately; X = clipboard image + compose intent; text = clipboard text; no network', async () => {
+test('share flow (fakes): save writes 16:9 + 1:1 + txt privately; X = clipboard image + compose intent; text = clipboard text; no network', async (t) => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (() => { throw new Error('network call during share'); }) as typeof fetch;
   const home = tmp();
@@ -183,12 +184,12 @@ test('share flow (fakes): save writes 16:9 + 1:1 + txt privately; X = clipboard 
     const saved = await shareCard(s, {}, 'save', deps);
     assert.equal(calls.run.length + calls.open.length + calls.text.length, 0, 'save only touches files');
     const dir = join(home, 'exports');
-    assert.deepEqual(readdirSync(dir).sort(), [saved.files.square, saved.files.txt, saved.files.wide].map((p) => p.split('/').pop()).sort());
-    for (const f of Object.values(saved.files)) assert.equal(statSync(f).mode & 0o777, 0o600);
-    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    assert.deepEqual(readdirSync(dir).sort(), [saved.files.square, saved.files.txt, saved.files.wide].map((p) => basename(p)).sort());
+    await posixPermissions(t, () => { for (const f of Object.values(saved.files)) assert.equal(statSync(f).mode & 0o777, 0o600); });
+    await posixPermissions(t, () => { assert.equal(statSync(dir).mode & 0o777, 0o700); });
     assert.match(saved.files.wide, /dexterm-pnl-paper-NEON-\d{8}-\d{6}-16x9\.png$/);
     assert.deepEqual([decodePng(readFileSync(saved.files.wide)).w, decodePng(readFileSync(saved.files.square)).h], [1200, 1080]);
-    assert.match(saved.message, /^saved ~\/exports\//);
+    assert.match(saved.message, /^saved ~[\\/]exports[\\/]/);
 
     const x = await shareCard(s, {}, 'x', deps);
     assert.equal(x.clipboard, 'image');
@@ -217,7 +218,7 @@ test('clipboard image per OS: wayland wl-copy (stdin), X11 xclip, none elsewhere
     const win = fakeDeps(home, 'win32');
     const r = await shareCard(s, {}, 'x', win.deps);
     assert.equal(r.clipboard, 'unsupported'); assert.equal(win.calls.run.length, 0);
-    assert.match(r.message, /attach ~\/exports\/dexterm-pnl-live-GLYPH-.*-16x9\.png/);
+    assert.match(r.message, /attach ~[\\/]exports[\\/]dexterm-pnl-live-GLYPH-.*-16x9\.png/);
     assert.equal(new URL(win.calls.open[0]).searchParams.get('text'), shareText('live'));
     const bad = fakeDeps(home, 'darwin', {}, false);
     assert.equal((await shareCard(s, {}, 'x', bad.deps)).clipboard, 'failed');

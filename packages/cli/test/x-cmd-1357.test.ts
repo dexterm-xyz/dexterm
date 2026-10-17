@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1357 — `dexterm x` against the loopback mock OAuth server: status/set-client-id/login/logout, and the
 // invariant that no token ever reaches stdout/stderr. No real X calls (the mock is 127.0.0.1; fetch is blocked).
 import assert from 'node:assert/strict';
@@ -44,7 +45,7 @@ test('x status: nothing stored → tells the user what to create; help text ment
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('x set-client-id: refuses argv-style use without a TTY or --stdin; accepts one piped line; validates the shape', async () => {
+test('x set-client-id: refuses argv-style use without a TTY or --stdin; accepts one piped line; validates the shape', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-xcmd-'));
   try {
     const store = new XTokenStore({ dir: join(dir, 'x') });
@@ -59,7 +60,7 @@ test('x set-client-id: refuses argv-style use without a TTY or --stdin; accepts 
     assert.match(o.out, new RegExp(`stored \\(${CLIENT.length} chars\\)`));
     assert.doesNotMatch(o.out, new RegExp(CLIENT), 'the id itself is not echoed');
     assert.equal(store.clientId({}), CLIENT);
-    assert.equal(statSync(store.clientIdPath).mode & 0o777, 0o600);
+    await posixPermissions(t, () => { assert.equal(statSync(store.clientIdPath).mode & 0o777, 0o600); });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -84,7 +85,11 @@ test('x login → status → logout against the mock; tokens never appear in any
     assert.equal(await runX(['status'], o, { store }), 0);
     assert.match(o.out, /login: @dexterm_tester \(id 1001\)/);
     assert.match(o.out, /access token valid/);
-    assert.match(o.out, /tokens\.json mode 600/);
+    if (process.platform === 'win32') {
+      assert.match(o.out, /tokens\.json present.*Windows ACL isolation is not verified/);
+      assert.match(o.err, /chmod does not enforce owner-only ACLs/);
+      assert.doesNotMatch(o.out, /mode 600/);
+    } else assert.match(o.out, /tokens\.json mode 600/);
     assert.doesNotMatch(o.out + o.err, new RegExp(rec.access_token));
     o = io();
     assert.equal(await runX(['logout'], o, { store, endpoints: mock.endpoints }), 0);

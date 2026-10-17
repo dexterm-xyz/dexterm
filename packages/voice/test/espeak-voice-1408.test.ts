@@ -2,6 +2,7 @@
 // NEVER be passed verbatim to a Linux engine. espeakVoiceFor() drops it so espeak falls back to its own
 // British default, and selectTts('espeak', <mac name>) speaks with that default, not the Mac name.
 
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync } from 'node:fs';
@@ -11,6 +12,7 @@ import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'dexterm-espeak-voice-test-'));
 const fakeBin = join(dir, 'fake-espeak.mjs');
 const log = join(dir, 'log.jsonl');
+useNodeScripts({ [fakeBin]: fakeBin });
 
 const FAKE = `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from 'node:fs';

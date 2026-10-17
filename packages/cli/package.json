@@ -1,13 +1,10 @@
 {
   "name": "dexterm-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
+  "mcpName": "io.github.dexterm-xyz/dexterm",
   "description": "dexterm: terminal DEX screener with a local Claude CLI analyst",
   "author": "The dexterm authors",
   "license": "AGPL-3.0-only",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/dexterm-xyz/dexterm.git"
-  },
   "type": "module",
   "bin": {
     "dexterm": "./dist/packages/cli/bin/dexterm.mjs"
@@ -36,5 +33,9 @@
     "@dexterm/recorder": "0.0.1",
     "@dexterm/tui": "0.0.1",
     "@dexterm/voice": "0.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dexterm-xyz/dexterm.git"
   }
 }

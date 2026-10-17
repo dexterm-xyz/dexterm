@@ -2,6 +2,28 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.4] - 2026-10-16
+
+A visibility and usability release: follow an MCP agent in the terminal, learn the app from a beginner guide, and inspect the evidence behind the checks. Trading remains experimental; this release does not enable mainnet trading.
+
+### Added
+
+- **Follow an MCP agent.** `dexterm --spectate-mcp` shows the connected agent's tool activity and follows accepted screen, feed, filter and token navigation. Ctrl+P pauses or resumes, Ctrl+K stops following, and your input takes control. Refused actions never move the screen; agents still cannot arm, sign or raise caps.
+- **A complete beginner guide.** Terminal basics, platform-specific setup, `doctor`, a read-only first coin review, optional analyst questions, local exports and safe quit are documented and available to the in-app analyst.
+- **A public scorecard.** Published evaluation results include dataset boundaries, frozen canary checks and weak spots. These are measurements of heuristics, not predictions or certificates of safety.
+- **Timestamped follow-up drafts.** `dexterm larp-detected` can turn local recorder evidence into reviewable cards and follow-up drafts. The data source, time, horizon and limitations stay attached; nothing posts or schedules itself.
+- **Agent-directory metadata.** MCP package metadata and client configuration examples are included. Directory listings themselves are not claimed submitted or accepted.
+
+### Changed
+
+- PTY and real-binary tests run in an isolated serial lane, with an unconditional wall-clock performance regression gate.
+- CI adds hosted macOS arm64 and experimental Windows lanes, install smoke tests, and a separate serial PTY test lane. Windows remains experimental.
+
+### Known issues
+
+- Trading remains experimental and no mainnet trading is enabled. Models and voice only propose; signer-side gates remain unchanged.
+- The web LARP checker is a separate test-mode preview, not part of this production release. Real Turnstile/deep-scan deployment gates remain open.
+
 ## [0.1.3] - 2026-10-16
 
 A voice, signals and sharing release: a natural neural voice by default, live holder and rug signals, richer wallet tracking, a one-key copy-trade mirror ticket, shareable PnL cards, a spectator view of an agent at work, and an analyst that knows its way around the app. Trading is still experimental.

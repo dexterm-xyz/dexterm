@@ -6,17 +6,18 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { pickRecorder } from '../src/stt/whisper.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'dexterm-recorder-test-'));
+// A relative fixture PATH has no drive colon while pretending to be Linux/macOS.
+const dir = mkdtempSync(join(process.cwd(), '.dexterm-recorder-test-'));
 const realPlatform = process.platform;
 const realPath = process.env.PATH;
 
 function setPlatform(p: NodeJS.Platform): void { Object.defineProperty(process, 'platform', { value: p, configurable: true }); }
 function putBin(name: string): void { const f = join(dir, name); writeFileSync(f, '#!/bin/sh\n', { mode: 0o755 }); chmodSync(f, 0o755); }
 
-before(() => { process.env.PATH = dir; }); // only the bins we drop in `dir` are "installed"
+before(() => { process.env.PATH = relative(process.cwd(), dir); }); // only the bins we drop in `dir` are "installed"
 after(() => { setPlatform(realPlatform); process.env.PATH = realPath; rmSync(dir, { recursive: true, force: true }); });
 
 test('Linux with only arecord installed → arecord recorder, 16 kHz mono 16-bit WAV argv', () => {

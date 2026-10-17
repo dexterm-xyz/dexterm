@@ -217,7 +217,7 @@ test('doctor: "Login with X" is an optional pass when unset, a warn with the fix
   const home = mkdtempSync(join(tmpdir(), 'dexterm-xdoc-'));
   try {
     const deps: DoctorDeps = {
-      env: { DEXTERM_HOME: home, HOME: home, DEXTERM_OFFLINE: '1' }, isTTY: false, nodeVersion: '24.0.0', platform: 'darwin',
+      env: { DEXTERM_HOME: home, HOME: home, DEXTERM_OFFLINE: '1' }, isTTY: false, nodeVersion: '24.0.0', platform: process.platform,
       claude: async () => 'missing', probe: async () => ({ reachable: false, error: 'offline' }), checkWritable: () => null, offline: true,
     } as unknown as DoctorDeps;
     const find = async () => (await runDoctor(deps)).checks.find((c) => c.name === 'Login with X')!;
@@ -231,7 +231,11 @@ test('doctor: "Login with X" is an optional pass when unset, a warn with the fix
     assert.equal(c.fix, 'dexterm x login');
     store.setTokens({ access_token: 'at-xyz-1234567890', refresh_token: 'rt-1', scope: 'tweet.read users.read list.read offline.access', expires_in: 7200 }, { id: '1', username: 'tester' });
     c = await find();
-    assert.equal(c.status, 'pass');
+    assert.equal(c.status, process.platform === 'win32' ? 'warn' : 'pass');
+    if (process.platform === 'win32') {
+      assert.match(c.detail, /Windows ACL isolation is not verified/);
+      assert.match(c.fix!, /Security permissions in Windows/);
+    }
     assert.match(c.detail, /logged in as @tester · scopes tweet\.read users\.read list\.read offline\.access · refresh yes/);
     assert.doesNotMatch(JSON.stringify(c), /at-xyz/);
   } finally { rmSync(home, { recursive: true, force: true }); }

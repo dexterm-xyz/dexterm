@@ -2,6 +2,7 @@
 // is deterministic on any platform. NOTE: this verifies argv/stdin/sanitise/queue behaviour, NOT real
 // espeak-ng audio — that was not runnable because the Linux (WSL) box was unreachable during the task.
 
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync } from 'node:fs';
@@ -11,6 +12,7 @@ import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'dexterm-espeak-test-'));
 const fakeBin = join(dir, 'fake-espeak.mjs');
 const log = join(dir, 'log.jsonl');
+useNodeScripts({ [fakeBin]: fakeBin });
 
 const FAKE = `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from 'node:fs';

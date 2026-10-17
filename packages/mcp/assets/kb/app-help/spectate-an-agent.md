@@ -15,10 +15,13 @@ tags:
   - replay
   - stream
   - record
+  - mcp
+  - follow
 commands:
   - spectate
 flags:
   - --replay
+  - --spectate-mcp
 confidence: high
 owner: maintainers
 origin: app-help-generated
@@ -31,6 +34,6 @@ sources:
 date: 2026-10-16
 ---
 
-`dexterm spectate --replay FILE` replays a saved agent session so you can watch what an agent did step by step; `dexterm spectate --info` shows the live read-only, token-gated, loopback spectator stream. The stream is redacted — a tool name, refusal, agent line or navigation can never leak a wallet or key — and a spectator can only watch, never act.
+Watch an agent work. For an agent on the loopback bus, `dexterm agent serve --spectator-popup` opens the AGENT ACTIVITY window, `--spectate` starts the read-only, token-gated, loopback stream, and `--record FILE` saves a redacted session. For an agent connected over MCP (`dexterm mcp install`), run the app with `dexterm --spectate-mcp`: the running terminal then follows the agent — a navigation call moves the screen, a status line shows `agent <name>: opened <coin>`, ctrl+p pauses, ctrl+k stops and any key you press takes control. `dexterm spectate --replay FILE` replays a saved session step by step and `dexterm spectate --info` shows the live stream endpoint. Every shared copy is redacted — a tool name, refusal, agent line or navigation can never leak a wallet or key — and a spectator can only watch, never act. Full docs: https://dexterm.xyz/docs/spectator/
 
 CLI: `dexterm spectate`.

@@ -8,7 +8,9 @@
 // already completed. The file is local and token-marked; raw addresses live only on this loopback channel
 // and are redacted before anything leaves the machine.
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 /** The subset of fields the MCP side fills (mirrors @dexterm/agents SpectatorEvent v1; the hub re-seqs on ingest). */
 export interface McpSpectatorRecord {
@@ -62,7 +64,9 @@ export function recordForToolCall(opts: { seq: number; agent: string; tool: stri
   const isErr = typeof opts.result.error === 'string';
   const nav = navFor(opts.tool, opts.args);
   return {
-    v: 1, seq: opts.seq, t: (opts.now ?? Date.now)(), phase: nav ? 'nav' : 'result',
+    // A refused/failed UI tool is observable activity, but it is not navigation.  Keeping it out of the
+    // `nav` phase is the enforcement boundary that prevents a denied MCP call from moving the owner's TUI.
+    v: 1, seq: opts.seq, t: (opts.now ?? Date.now)(), phase: isErr ? 'refused' : nav ? 'nav' : 'result',
     agent: opts.agent, transport: 'mcp', tool: opts.tool,
     summary: isErr ? `error: ${String(opts.result.error).slice(0, 80)}` : `${opts.tool}${shortMint(opts.args)}`,
     ms: opts.ms, dataAgeSec: isErr ? null : maxAgeSec(opts.result), nav, ok: !isErr,
@@ -82,4 +86,73 @@ export function fileSpectatorSinkFromEnv(env: NodeJS.ProcessEnv): { sink: McpSpe
     record(rec) { try { appendFileSync(file, JSON.stringify(rec) + '\n', { mode: 0o600 }); } catch { /* best-effort local channel */ } },
   };
   return { sink, agent, token };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// task-1421: the rendezvous for a `dexterm mcp` server an EXTERNAL client (Claude Code, Cursor, Codex, …)
+// spawned. That server's env is set by the client, not by the running dexterm, so DEXTERM_SPECTATOR_FILE is
+// never set on it. Instead, a running dexterm that has a spectator surface open writes a small rendezvous
+// file under ~/.dexterm naming the JSONL channel + its token; the server reads it (mtime-cached) on each
+// tool call and appends there. When no surface is open the file is absent and the server writes NOTHING — so
+// there is no cost when nobody is watching. The channel is local (0600) and the record describes a completed
+// read / navigation call; it carries nothing an agent could act on, exactly like the env-file sink.
+
+/** The well-known rendezvous file name under ~/.dexterm. */
+export const MCP_SPECTATOR_RENDEZVOUS = 'mcp-spectator.json';
+
+/** The rendezvous a running dexterm writes so an external `dexterm mcp` server knows where to append. */
+export interface McpSpectatorRendezvous { file: string; token?: string; agent?: string }
+
+function spectatorHome(env: NodeJS.ProcessEnv): string {
+  return env.DEXTERM_HOME && env.DEXTERM_HOME.trim() ? env.DEXTERM_HOME : join(homedir(), '.dexterm');
+}
+
+export function rendezvousPath(env: NodeJS.ProcessEnv): string { return join(spectatorHome(env), MCP_SPECTATOR_RENDEZVOUS); }
+
+/** A sink the MCP server calls for EVERY tool call. `active()` is a cheap check of whether any spectator
+ *  surface is listening right now; when it is false the server builds no record and nothing is written. */
+export interface LiveSpectatorSink {
+  active(): boolean;
+  record(opts: { tool: string; args: Record<string, unknown>; result: Record<string, unknown>; ms: number }): void;
+}
+
+/**
+ * Resolve the spectator sink for a `dexterm mcp` server. DEXTERM_SPECTATOR_FILE (the running app spawned us,
+ * e.g. the in-app analyst) wins and is always active; otherwise the sink watches the rendezvous file under
+ * ~/.dexterm and is active only while it exists, re-reading it (mtime-cached) each call. Never throws.
+ */
+export function resolveSpectatorSink(env: NodeJS.ProcessEnv): LiveSpectatorSink {
+  let seq = 0;
+  const fromEnv = fileSpectatorSinkFromEnv(env);
+  if (fromEnv) {
+    return {
+      active: () => true,
+      record: (o) => fromEnv.sink.record(recordForToolCall({ seq: ++seq, agent: fromEnv.agent, token: fromEnv.token, ...o })),
+    };
+  }
+  const path = rendezvousPath(env);
+  let cache: { mtimeMs: number; rv: McpSpectatorRendezvous | null } | null = null;
+  const read = (): McpSpectatorRendezvous | null => {
+    let st: ReturnType<typeof statSync>;
+    try { st = statSync(path); } catch { cache = null; return null; }
+    if (cache && cache.mtimeMs === st.mtimeMs) return cache.rv;
+    let rv: McpSpectatorRendezvous | null = null;
+    try {
+      const o = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      if (o && typeof o.file === 'string' && o.file) {
+        rv = { file: o.file, token: typeof o.token === 'string' ? o.token : undefined, agent: typeof o.agent === 'string' ? o.agent : undefined };
+      }
+    } catch { rv = null; }
+    cache = { mtimeMs: st.mtimeMs, rv };
+    return rv;
+  };
+  return {
+    active: () => read() !== null,
+    record: (o) => {
+      const rv = read();
+      if (!rv) return;
+      const rec = recordForToolCall({ seq: ++seq, agent: rv.agent || 'mcp-agent', token: rv.token, ...o });
+      try { appendFileSync(rv.file, JSON.stringify(rec) + '\n', { mode: 0o600 }); } catch { /* best-effort local channel */ }
+    },
+  };
 }

@@ -1,3 +1,4 @@
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 // task-1363 (card item 5) — the router → TUI seam for EVERY VoiceDecision kind. task-1355's verify found the TUI
 // had no handler for one kind the router emitted and no test crossed that seam; this drives the REAL interactive
 // loop in-process (fake TTY, replay data, fake STT/TTS, a fake `claude` on PATH) once per decision kind and
@@ -23,13 +24,12 @@ const ROUTER_SRC = resolve(HERE, '../../voice/src/router.ts');
 
 // ---- fake claude on PATH (no paid run can ever happen)
 const fc = mkdtempSync(join(tmpdir(), 'voice1363-claude-'));
-writeFileSync(join(fc, 'claude'), [
-  '#!/bin/sh',
-  `printf '%s\\n' '{"type":"system","subtype":"init","model":"fake","session_id":"s1","mcp_servers":[],"skills":[]}'`,
-  `printf '%s\\n' '{"type":"result","subtype":"success","result":"FAKEANSWER.","total_cost_usd":0,"duration_ms":5,"num_turns":1,"is_error":false,"session_id":"s1"}'`,
-  '',
-].join('\n'), { mode: 0o755 });
-process.env.PATH = `${fc}:${process.env.PATH}`;
+const fakeClaude = join(fc, 'claude.cjs');
+writeFileSync(fakeClaude, [
+  `console.log(JSON.stringify({"type":"system","subtype":"init","model":"fake","session_id":"s1","mcp_servers":[],"skills":[]}));`,
+  `console.log(JSON.stringify({"type":"result","subtype":"success","result":"FAKEANSWER.","total_cost_usd":0,"duration_ms":5,"num_turns":1,"is_error":false,"session_id":"s1"}));`,
+].join('\n'));
+useNodeScripts({ claude: fakeClaude });
 process.env.DEXTERM_VOICE_STT = 'fake';
 process.env.DEXTERM_VOICE_TTS = 'fake';
 process.env.DEXTERM_OFFLINE = '1';

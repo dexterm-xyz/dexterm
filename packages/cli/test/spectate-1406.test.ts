@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SpectatorHub, SpectatorRecorder } from '@dexterm/agents';
-import { runSpectate } from '../src/spectate-cmd.ts';
+import { runSpectate, spectatorInfoPath } from '../src/spectate-cmd.ts';
 import type { Io } from '../src/main.ts';
 
 function io(env: NodeJS.ProcessEnv = {}): Io & { out: string; err: string } {
@@ -66,6 +66,16 @@ test('spectate --info reports the live endpoint, or says there is none', async (
     assert.match(live.out, /ws:\/\/127\.0\.0\.1:49999/);
     assert.ok(!live.out.includes('secret'), 'the token is never printed');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// task-1423: --info used join(HOME || '', '.dexterm'), a relative path under cmd.exe / PowerShell (no HOME)
+test('spectate --info looks where the server writes, even with HOME unset (Windows) or a blank DEXTERM_HOME', () => {
+  const home = join(tmpdir(), 'spectate-home');
+  const want = join(home, '.dexterm', 'spectator.json');
+  assert.equal(spectatorInfoPath({}, home), want, 'no HOME: the OS home, not a relative .dexterm');
+  assert.equal(spectatorInfoPath({ HOME: '' }, home), want);
+  assert.equal(spectatorInfoPath({ DEXTERM_HOME: '  ' }, home), want, 'blank DEXTERM_HOME falls back, like the writer');
+  assert.equal(spectatorInfoPath({ DEXTERM_HOME: join(home, 'x') }, home), join(home, 'x', 'spectator.json'));
 });
 
 test('spectate with no args prints usage', async () => {

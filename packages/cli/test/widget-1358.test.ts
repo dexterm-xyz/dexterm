@@ -9,6 +9,7 @@ import { Writable } from 'node:stream';
 import { mkdtempSync, writeFileSync, readFileSync, realpathSync, existsSync, cpSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WIDGET_TOPICS as POPUP_TOPICS, auditWidgetHtml as popupAudit, type PopupManager, type PopupManagerOptions, type WidgetTopic } from '@dexterm/popup';
 import { WIDGET_TOPICS as SCHEMA_TOPICS, POPUP_KINDS, validateWorkspace, captureWorkspace, loadConfig, checkIntegrity, readManifest, auditWidgetHtml as customAudit, writeLock, saveConfig, defaultConfig, loadPacks } from '@dexterm/custom';
 import { makeFixtureState } from '../src/state.ts';
@@ -18,7 +19,7 @@ import { installedWidgets, widgetEnabled, widgetPage, widgetPayload, widgetRowsV
 import { TokenPopups } from '../src/popup.ts';
 import { THEMES } from '@dexterm/tui';
 
-const EXAMPLE = realpathSync(new URL('../../../packs/example-widgets/', import.meta.url).pathname);
+const EXAMPLE = realpathSync(fileURLToPath(new URL('../../../packs/example-widgets/', import.meta.url)));
 const tmp = (p = 'dexterm-widget-'): string => realpathSync(mkdtempSync(join(tmpdir(), p)));
 function fakeIo(env: NodeJS.ProcessEnv = {}) {
   let out = ''; let err = '';
@@ -58,7 +59,7 @@ test('the example pack: verifies clean, the topics agree across packages, the wo
   const vectors = ['<p>hi</p>', '<script nonce="__NONCE__" src="https://evil.example/x.js"></script>', '<link rel=stylesheet href=x>', '<style>@import "x";</style>', '<iframe src=x></iframe>', '<meta http-equiv=refresh content=0>', '<svg><script href=x></script></svg>', '<!-- @import <link> __NONCE__ --><script>ok()</script>', '<script data-x="a>b" src=x></script>', Array.from({ length: 65 }, (_, i) => `<script>${i}</script>`).join('')];
   for (const v of vectors) assert.deepEqual(customAudit(v), popupAudit(v), v);
   const body = (p: string): string => { const t = readFileSync(p, 'utf8'); return t.slice(t.indexOf("import { createHash } from 'node:crypto';")); };
-  assert.equal(body(new URL('../../custom/src/widget-html.ts', import.meta.url).pathname), body(new URL('../../popup/src/widget-html.ts', import.meta.url).pathname), 'custom/src/widget-html.ts mirrors popup/src/widget-html.ts from the import line down — edit the popup copy, then copy it over');
+  assert.equal(body(fileURLToPath(new URL('../../custom/src/widget-html.ts', import.meta.url))), body(fileURLToPath(new URL('../../popup/src/widget-html.ts', import.meta.url))), 'custom/src/widget-html.ts mirrors popup/src/widget-html.ts from the import line down — edit the popup copy, then copy it over');
   assert.deepEqual(validateWorkspace({ name: 'w', popups: [{ kind: 'widget', widget: 'example-widgets/movers' }] }), []);
   assert.match(validateWorkspace({ name: 'w', popups: [{ kind: 'widget' }] })[0].msg, /needs "widget"/);
   assert.match(validateWorkspace({ name: 'w', popups: [{ kind: 'widget', widget: '../x' }] })[0].msg, /does not match/);
@@ -131,7 +132,7 @@ test('install → DISABLED (no page served) → enable → the page is served fr
 });
 
 test('r2 REGRESSION at OPEN time: an installed, hash-valid pack whose page carries a loader is neutralised on load (no widget, the reason in configErrors) and refused by widgetPage even when handed the widget directly; the CLI refuses the same pack at add', async () => {
-  const FIXTURE = realpathSync(new URL('../../custom/test/fixtures/packs/trenches/', import.meta.url).pathname);
+  const FIXTURE = realpathSync(fileURLToPath(new URL('../../custom/test/fixtures/packs/trenches/', import.meta.url)));
   const home = tmp('dexterm-home-');
   // simulate a pack installed BEFORE r2: its directory and record are consistent (lock + hash match), the page has a loader
   const dir = join(home, 'packs', 'trenches@1.0.0');

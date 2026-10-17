@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createScanSession, applyAnalystAction, scanCommand, scanScreenState } from '../src/main.ts';
 import { AnalystSession } from '../src/analyst/session.ts';
@@ -78,7 +78,7 @@ test('static: the RUNTIME import closure of src/scan/** never loads trade/paper/
   // @dexterm/data re-exports the paper wallet + executor: the scan must not load it at runtime.
   assert.ok(!external.has('@dexterm/data'), `runtime externals: ${[...external].join(', ')}`);
   for (const e of external) assert.ok(e === '@dexterm/tui' || e.startsWith('node:'), `unexpected runtime dependency ${e}`);
-  const rel = [...seen].map((f) => f.replace(SRC + '/', '')).sort();
+  const rel = [...seen].map((f) => relative(SRC, f).split(sep).join('/')).sort();
   assert.deepEqual(rel, ['live/flow.ts', 'scan/command.ts', 'scan/engine.ts', 'scan/observe.ts', 'scan/ui.ts', 'screener/rows.ts'], 'the whole runtime closure');
 });
 

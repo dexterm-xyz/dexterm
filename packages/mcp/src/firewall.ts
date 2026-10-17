@@ -1,7 +1,7 @@
 // Prompt firewall (CL-06), spec'd in SPEC §5.3. Kept tiny and total. Every untrusted string — token text,
 // web pages, RugCheck risks, and (task-1377) user- or pack-edited KB entries and skills — passes through
-// here before a model sees it.
-export const LIMITS: Record<string, number> = { name: 64, symbol: 16, description: 512, risk: 160, kb: 4000, page: 1600, link: 40, skill: 8000 };
+// here before a model sees it. (task-1420) The generated docs KB sections pass through as kind `docs`.
+export const LIMITS: Record<string, number> = { name: 64, symbol: 16, description: 512, risk: 160, kb: 4000, page: 1600, link: 40, skill: 8000, docs: 6000 };
 export function firewall(text: unknown, source: string, kind = 'description', opts: { keepUrls?: boolean; keepAddresses?: boolean } = {}): string | null {
   if (text === null || text === undefined) return null;
   let s = String(text).normalize('NFC');

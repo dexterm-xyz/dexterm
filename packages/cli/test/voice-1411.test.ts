@@ -1,3 +1,4 @@
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 // task-1411 part A — the screener "Jarvis silence". A tester, on the MAIN SCREENER, said "what do you think
 // of this one" (a row highlighted) and heard only a tiny useless fragment; on a token screen the same
 // works. ROOT CAUSE: a voice analyst question on a non-token screen started a context-free `trench-scan`
@@ -22,13 +23,12 @@ const SAMPLE = resolve(HERE, '../../data/fixtures/live-sample.json');
 // ---- fake claude on PATH: a realistic multi-sentence chat answer (no paid run can ever happen).
 const ANSWER = 'This token looks risky. Liquidity is thin and the top holders control most of the supply. Keep any position small.';
 const fc = mkdtempSync(join(tmpdir(), 'voice1411-claude-'));
-writeFileSync(join(fc, 'claude'), [
-  '#!/bin/sh',
-  `printf '%s\\n' '{"type":"system","subtype":"init","model":"fake","session_id":"s1","mcp_servers":[],"skills":[]}'`,
-  `printf '%s\\n' '{"type":"result","subtype":"success","result":"${ANSWER}","total_cost_usd":0,"duration_ms":5,"num_turns":1,"is_error":false,"session_id":"s1"}'`,
-  '',
-].join('\n'), { mode: 0o755 });
-process.env.PATH = `${fc}:${process.env.PATH}`;
+const fakeClaude = join(fc, 'claude.cjs');
+writeFileSync(fakeClaude, [
+  `console.log(JSON.stringify({"type":"system","subtype":"init","model":"fake","session_id":"s1","mcp_servers":[],"skills":[]}));`,
+  `console.log(JSON.stringify({"type":"result","subtype":"success","result":"${ANSWER}","total_cost_usd":0,"duration_ms":5,"num_turns":1,"is_error":false,"session_id":"s1"}));`,
+].join('\n'));
+useNodeScripts({ claude: fakeClaude });
 process.env.DEXTERM_VOICE_STT = 'fake';
 process.env.DEXTERM_VOICE_TTS = 'fake';
 process.env.DEXTERM_OFFLINE = '1';

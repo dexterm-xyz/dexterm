@@ -184,7 +184,7 @@ test('dexterm workspace list | init | show | remove', async () => {
   assert.match(io.out(), /morning-hud\s+built-in.*4 popup\(s\): narrative, feeds, plans, chart/);
   io = fakeIo(env);
   assert.equal(await workspaceCommand(['init'], io.io), 0);
-  assert.match(io.out(), /wrote .*workspaces\/default\.json/);
+  assert.match(io.out(), /wrote .*workspaces[\\/]default\.json/);
   assert.equal(listWorkspaces(home).find((w) => w.name === 'default')?.builtin, false);
   io = fakeIo(env);
   assert.equal(await workspaceCommand(['show', 'default'], io.io), 0);

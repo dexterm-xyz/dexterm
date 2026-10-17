@@ -8,13 +8,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, cpSync, realpathSync, existsSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   listPackFiles, computeLock, writeLock, checkIntegrity, readManifest, signPack, verifySignature, trustOf, pinSigner, inspectPack, installPack, removePack, loadPacks, setWidgetEnabled, exportPack, scanForSecrets, PackError, PACK_LIMITS, allowedSignersPath,
 } from '../src/packs.ts';
 import { defaultConfig, validateConfig, saveConfig, loadConfig, applyKeymapConfig, type DextermConfig } from '../src/index.ts';
 
-const SRC = new URL('./fixtures/packs/trenches/', import.meta.url).pathname;
+const SRC = fileURLToPath(new URL('./fixtures/packs/trenches/', import.meta.url));
 const tmp = (p: string): string => realpathSync(mkdtempSync(join(tmpdir(), p)));
 function copyPack(): string { const d = tmp('dexterm-pack-'); cpSync(SRC, d, { recursive: true }); return d; }
 /** Ephemeral signing key for the test only (never a real one). */
@@ -64,7 +65,8 @@ test('lock: deterministic hash, tamper detection (changed + missing + added); sy
   assert.ok(!t2.ok && t2.missing?.includes('keymap.json') && t2.added?.includes('extra.json'));
   // a symlink anywhere in the pack is a refusal (it would be followed after install)
   const s = copyPack();
-  symlinkSync('/etc/hosts', join(s, 'themes', 'hosts.json'));
+  // A directory junction is an actual symlink on Windows without requiring Developer Mode.
+  symlinkSync(d, join(s, 'themes', 'outside'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => listPackFiles(s), /symlink/);
   assert.equal(checkIntegrity(s).ok, false);
   const h = copyPack();

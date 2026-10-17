@@ -121,7 +121,7 @@ test('dexterm theme list | init | show | check and dexterm keymap', async () => 
   const env = { DEXTERM_HOME: home };
   let io = fakeIo(env);
   assert.equal(await themeCommand(['init', 'mine', '--extends', 'ember'], io.io), 0);
-  assert.match(io.out(), /wrote .*themes\/mine\.json/);
+  assert.match(io.out(), /wrote .*themes[\\/]mine\.json/);
   io = fakeIo(env);
   assert.equal(await themeCommand(['list'], io.io), 0);
   assert.match(io.out(), /cyberspace\s+built-in/);
