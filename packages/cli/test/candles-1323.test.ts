@@ -19,13 +19,15 @@ function ohlcv(periodS: number, n: number, nowMs: number): string {
 }
 
 /** Gecko answers OHLCV/trades; every other source 404s (those panels fail; irrelevant here). */
-function fakeNet(clock: { now(): number }, log: { at: number; path: string }[]): Transport {
+function fakeNet(clock: { now(): number }, log: { at: number; path: string }[], delayMs: Partial<Record<string, number>> = {}): Transport {
   return async (req) => {
     const u = new URL(req.url);
     const res = (status: number, body: string): HttpResponse => ({ status, headers: { 'content-type': 'application/json' }, body, latencyMs: 1 });
     if (u.host !== 'api.geckoterminal.com') return res(404, '{}');
     const kind = u.pathname.includes('/ohlcv/minute') ? 'ohlcv/minute' : u.pathname.includes('/ohlcv/hour') ? 'ohlcv/hour' : u.pathname.includes('/ohlcv/day') ? 'ohlcv/day' : u.pathname.endsWith('/trades') ? 'trades' : u.pathname;
     log.push({ at: clock.now(), path: kind });
+    const delay = delayMs[kind] ?? 0;
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     if (kind === 'ohlcv/minute') return res(200, ohlcv(60, 300, clock.now()));
     if (kind === 'ohlcv/hour') return res(200, ohlcv(3600, 300, clock.now()));
     if (kind === 'trades') return res(200, JSON.stringify({ data: [] }));
@@ -80,7 +82,7 @@ test('hover prefetch: a fast scroll sends nothing; resting sends ONE idle reques
     await new Promise((r) => setTimeout(r, 8)); // 8 ms per row: faster than the debounce
   }
   assert.equal(log.length, 0, 'scrolling past rows sends nothing');
-  await new Promise((r) => setTimeout(r, 150)); // rest on the last row
+  await pf.settled(); // rest on the last row; wait for both sequential base attempts
   assert.deepEqual(log.map((l) => l.path), ['ohlcv/hour'], 'the rested row gets its default base');
   assert.ok(pf.deferred >= 1, 'the second base was deferred: the bucket is no longer idle (reserve kept)');
   assert.equal(bucket.stats().queued, 0, 'a deferred idle request leaves nothing queued');
@@ -94,9 +96,11 @@ test('hover prefetch: soft cap per minute, cached bases skipped, close() stops p
   const log: { at: number; path: string }[] = [];
   // Unlimited Gecko bucket so only the prefetcher's own soft cap can hold it back.
   const buckets = { ...DEFAULT_BUCKETS, geckoterminal: { rpm: 1e6, burst: 1e6, reserve: 1 } };
-  const dl = createDataLayer({ transport: fakeNet({ now: () => Date.now() }, log), buckets, disabled: ['pumpfun'], rpcFallbackUrl: null });
+  // Reproduce the hosted macOS failure deterministically: the second request cannot start before this
+  // first sequential request finishes, which is later than the removed fixed 60 ms sleep.
+  const dl = createDataLayer({ transport: fakeNet({ now: () => Date.now() }, log, { 'ohlcv/minute': 80 }), buckets, disabled: ['pumpfun'], rpcFallbackUrl: null });
   const pf = new CandlePrefetcher(dl, { interval: () => '5m', debounceMs: 5, maxPerMin: 3 });
-  const rest = async (i: number) => { pf.hover({ mint: `m${i}`, pair: `p${i}` }); await new Promise((r) => setTimeout(r, 60)); };
+  const rest = async (i: number) => { pf.hover({ mint: `m${i}`, pair: `p${i}` }); await pf.settled(); };
   await rest(0);
   assert.deepEqual(log.map((l) => l.path), ['ohlcv/minute', 'ohlcv/hour'], '5m → its 1m base first, then the other base');
   await rest(0);
@@ -106,8 +110,9 @@ test('hover prefetch: soft cap per minute, cached bases skipped, close() stops p
   assert.equal(pf.requests, 3, 'capped at 3 sent per rolling minute');
   assert.equal(pf.rate(), 3);
   pf.hover({ mint: 'm9', pair: 'p9' });
+  const pending = pf.settled();
   pf.close();
-  await new Promise((r) => setTimeout(r, 40));
+  await pending;
   assert.equal(pf.requests, 3, 'close() cancelled the pending debounce');
   dl.close();
 });
