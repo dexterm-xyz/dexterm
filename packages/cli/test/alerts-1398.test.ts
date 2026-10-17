@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1398 — ALERTS + RULES delivery. The four headline triggers (price level, holder-concentration change,
 // LARP grade change, new-pair match) fire in a scripted replay and are PUSHED through the notifier; each
 // delivery adapter (toast / desktop / telegram / discord) is exercised with a FAKE — no real network call to
@@ -253,12 +254,12 @@ test('config: an alerts section validates; a credential-shaped key is refused; /
   assert.equal(policyCheck([{ op: 'replace', path: '/alerts/channels/telegram/enabled', value: true }], 'user').length, 0);
 });
 
-test('creds are written 0600 to ~/.dexterm and never returned in cleartext anywhere printable', () => {
+test('creds are written 0600 to ~/.dexterm and never returned in cleartext anywhere printable', async (t) => {
   const home = tmp();
   writeTelegramCreds(home, { token: '99:TOKENVALUE1234567890AB', chatId: '-100123' });
   const read = readTelegramCreds(home);
   assert.deepEqual(read, { token: '99:TOKENVALUE1234567890AB', chatId: '-100123' });
-  assert.equal(statSync(telegramCredsPath(home)).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(telegramCredsPath(home)).mode & 0o777, 0o600); });
   writeDiscordCreds(home, { webhook: 'https://discord.com/api/webhooks/1/abcDEFghiJKL' });
   assert.ok(readDiscordCreds(home));
   // a bad chat id / webhook is refused

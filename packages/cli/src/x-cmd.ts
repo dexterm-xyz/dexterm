@@ -60,8 +60,13 @@ function printStatus(io: XIo, store: XTokenStore, now: number): void {
   } else {
     io.stdout.write(`login: ${meta.user ? `@${meta.user.username} (id ${meta.user.id})` : 'logged in (handle unknown)'} · scopes ${meta.scopes.join(' ') || '—'} · access token ${meta.expiresAt !== null ? (meta.expiresAt > now ? `valid ${fmtIn(meta.expiresAt - now)}` : 'expired (refreshes on next use)') : '?'} · refresh ${meta.hasRefresh ? 'yes' : 'no (login again)'}\n`);
   }
-  io.stdout.write(`files: ${store.dir} (mode ${oct(modes.dir)}) · tokens.json ${modes.tokens === null ? 'absent' : `mode ${oct(modes.tokens)}`} · client-id ${modes.clientId === null ? 'absent' : `mode ${oct(modes.clientId)}`}\n`);
-  if ((modes.tokens !== null && modes.tokens !== 0o600) || (modes.dir !== null && modes.dir !== 0o700)) io.stderr.write('⚠ permissions are looser than 0600/0700; dexterm will tighten them on the next write (or chmod them now)\n');
+  if (process.platform === 'win32') {
+    io.stdout.write(`files: ${store.dir} · tokens.json ${modes.tokens === null ? 'absent' : 'present'} · client-id ${modes.clientId === null ? 'absent' : 'present'} · Windows ACL isolation is not verified\n`);
+    io.stderr.write('Review the token directory Security permissions in Windows; chmod does not enforce owner-only ACLs.\n');
+  } else {
+    io.stdout.write(`files: ${store.dir} (mode ${oct(modes.dir)}) · tokens.json ${modes.tokens === null ? 'absent' : `mode ${oct(modes.tokens)}`} · client-id ${modes.clientId === null ? 'absent' : `mode ${oct(modes.clientId)}`}\n`);
+    if ((modes.tokens !== null && modes.tokens !== 0o600) || (modes.dir !== null && modes.dir !== 0o700)) io.stderr.write('⚠ permissions are looser than 0600/0700; dexterm will tighten them on the next write (or chmod them now)\n');
+  }
   io.stdout.write(`callback: ${callbackUri()} · tokens are never printed, logged, or sent to a model · X reads are user-context only (your rate limits, your bill)\n`);
 }
 
@@ -79,7 +84,7 @@ export async function runX(argv: string[], io: XIo, over: XCmdOverrides = {}): P
     const v = await readLine(io, 'paste your X app Client ID and press enter: ');
     if (!v) { io.stderr.write('dexterm x set-client-id: nothing read\n'); return 2; }
     try { store.setClientId(v); } catch (e) { io.stderr.write(`dexterm x set-client-id: ${e instanceof Error ? e.message : String(e)}\n`); return 2; }
-    io.stdout.write(`stored (${v.length} chars) at ${store.clientIdPath} (mode 600). Next: dexterm x login\n`);
+    io.stdout.write(`stored (${v.length} chars) at ${store.clientIdPath} (${process.platform === 'win32' ? 'Windows ACL isolation unverified' : 'mode 600'}). Next: dexterm x login\n`);
     return 0;
   }
 
@@ -93,7 +98,7 @@ export async function runX(argv: string[], io: XIo, over: XCmdOverrides = {}): P
       const res = await oauth.login({ env: io.env });
       clearTimeout(t);
       io.stdout.write(`✓ logged in${res.user ? ` as @${res.user.username}` : ''} · scopes ${res.scopes.join(' ')} · access token valid ${fmtIn(res.expiresAt - now())} · refresh ${res.hasRefresh ? 'yes' : 'no'} · browser ${Math.round(res.callbackMs / 100) / 10}s · exchange ${res.exchangeMs}ms\n`);
-      io.stdout.write(`tokens: ${store.tokensPath} (mode 600). The SOCIAL panel and TRENDING board now read X with your own limits.\n`);
+      io.stdout.write(`tokens: ${store.tokensPath} (${process.platform === 'win32' ? 'Windows ACL isolation unverified' : 'mode 600'}). The SOCIAL panel and TRENDING board now read X with your own limits.\n`);
       return 0;
     } catch (e) {
       clearTimeout(t);

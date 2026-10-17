@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1326: coin images — the pure-TS decoders (PNG every colour type / depth / interlace, baseline +
 // progressive JPEG, GIF first frame), the magic-byte sniff + caps, the SSRF-safe binary fetch (policy,
 // redirects, caps), the on-disk LRU cache and the ImageService (sync get, queue priority, offline, worker
@@ -246,7 +247,7 @@ test('thumbnailUrl: DexScreener CDN gets a 128 px rendition, every other host is
 });
 
 // ---------------------------------------------------------------------------------------------- disk cache
-test('disk cache: put/get round-trip, fail markers with TTL, LRU eviction by mtime under the byte cap', () => {
+test('disk cache: put/get round-trip, fail markers with TTL, LRU eviction by mtime under the byte cap', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-imgcache-'));
   try {
     let now = 1_000_000;
@@ -267,7 +268,7 @@ test('disk cache: put/get round-trip, fail markers with TTL, LRU eviction by mti
     assert.equal(c.failed(k2), false, 'expired marker');
     c.put(k2, new Uint8Array(10));
     assert.ok(!readdirSync(dir).includes(`${k2}.fail`), 'a successful put clears the marker');
-    assert.ok((statSync(join(dir, `${k2}.png`)).mode & 0o077) === 0, 'cache files are 0600');
+    await posixPermissions(t, () => { assert.ok((statSync(join(dir, `${k2}.png`)).mode & 0o077) === 0, 'cache files are 0600'); });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

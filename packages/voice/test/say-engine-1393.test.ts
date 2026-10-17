@@ -6,6 +6,7 @@
 // The env must be set BEFORE say.ts is evaluated, and ES `import` is hoisted above top-level code, so
 // this file uses a dynamic import() after wiring up the fake binary.
 
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'dexterm-say-test-'));
 const fakeSay = join(dir, 'fake-say.mjs');
 const log = join(dir, 'log.jsonl');
+useNodeScripts({ [fakeSay]: fakeSay });
 
 // A stand-in for macOS `say`: records argv + stdin, then "speaks" for 300 ms. On SIGTERM it dies before
 // writing its END line, which is how the test sees that an utterance was interrupted (not overlapped).

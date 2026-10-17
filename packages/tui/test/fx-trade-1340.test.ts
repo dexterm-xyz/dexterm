@@ -2,6 +2,7 @@
 // only be fired from a SETTLED outcome, the tiers behave, and the sound cues follow the moment (muted by default).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { join } from 'node:path';
 import { Canvas, THEMES, makeVfx, type CueName, applyFx, stepVfx, pulse, fireMoment, fireInflight, skipMoment, momentP, momentKindFor, MOMENT_SECONDS, momentFrames, cuesFor, playMoment, play, synth, wav, soundOn, soundDir, type SettledTx, type Vfx } from '../src/index.ts';
 
 const T = THEMES.cyberspace;
@@ -165,5 +166,5 @@ test('sound: cues follow the moment, play nothing while muted, and the synth pro
   assert.equal(soundOn(false, {}), false);
   assert.equal(soundOn(true, {}), true);
   assert.equal(soundOn(false, { DEXTERM_SOUND: '1' }), true);
-  assert.match(soundDir({ DEXTERM_HOME: '/tmp/dx' }), /^\/tmp\/dx\/sounds$/);
+  assert.equal(soundDir({ DEXTERM_HOME: '/tmp/dx' }), join('/tmp/dx', 'sounds'));
 });

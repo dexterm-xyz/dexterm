@@ -1,3 +1,4 @@
+import { posixPermissions, closeTestSigner, closeTestSignerStores } from '../../../scripts/test-support.ts';
 // task-1363 — the capped FAST WALLET and the signer's DEVNET FILL path (the live fire path for order plans).
 // No network, no real wallet, no funds: the fast wallet here is a throwaway devnet key in a tmp dir, the RPC
 // is the fake, and every transaction is decoded by the real decoder, Ed25519-verified against the real key,
@@ -78,7 +79,7 @@ function mk(o: Opts = {}) {
 
 // ------------------------------------------------------------------------------------ the store + signer
 
-test('fast wallet: devnet only, mode 600, never overwritten, the seed never leaves the store, the signer signs for itself only', async () => {
+test('fast wallet: devnet only, mode 600, never overwritten, the seed never leaves the store, the signer signs for itself only', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-fastwallet-'));
   try {
     const store = new FastWalletStore(join(dir, 'fast-wallet.json'));
@@ -87,7 +88,7 @@ test('fast wallet: devnet only, mode 600, never overwritten, the seed never leav
     const info = store.create({ network: 'devnet', now: T0 });
     assert.match(info.publicKey, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
     assert.equal(info.network, 'devnet');
-    assert.equal(statSync(store.path).mode & 0o777, 0o600, 'the record is mode 600');
+    await posixPermissions(t, () => { assert.equal(statSync(store.path).mode & 0o777, 0o600, 'the record is mode 600'); });
     assert.throws(() => store.create({ network: 'devnet' }), /already exists/);
     const pub = store.get()!;
     assert.deepEqual(Object.keys(pub).sort(), ['createdAt', 'network', 'publicKey'], 'get() exposes public fields only');
@@ -297,21 +298,24 @@ test('channel: a real child signer with --fast serves fast → fill → confirm 
     assert.equal(out.kind, 'filled', show(out));
     const again = await c.confirm(v.hash);
     assert.equal(again.kind, 'refused');
-  } finally { c.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await closeTestSigner(c); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('signer process args: --fast-wallet PATH is honoured; the production builder loads the fast wallet on devnet and never on mainnet', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-fast-args-'));
+  const services: ReturnType<typeof buildSignerService>[] = [];
   try {
     const path = join(dir, 'fw.json');
     new FastWalletStore(path).create({ network: 'devnet' });
     const dev = parseSignerArgs(['--fast-wallet', path, '--ledger', join(dir, 'c.sqlite'), '--live-ledger', join(dir, 'l.sqlite'), '--link', join(dir, 'link.json'), '--panic-file', join(dir, 'p')]);
     assert.equal(dev.fastWalletPath, path);
     const devSvc = buildSignerService(dev, () => {});
+    services.push(devSvc);
     assert.equal(devSvc.status().fastWallet?.publicKey, new FastWalletStore(path).get()!.publicKey, 'devnet signer loads the fast wallet');
     const main = parseSignerArgs(['--mainnet', '--rpc', MAINNET_RPC, '--fast-wallet', path, '--ledger', join(dir, 'c2.sqlite'), '--live-ledger', join(dir, 'l2.sqlite'), '--link', join(dir, 'link.json'), '--panic-file', join(dir, 'p')]);
     const mainSvc = buildSignerService(main, () => {});
+    services.push(mainSvc);
     assert.equal(mainSvc.status().fastWallet, null, 'a mainnet signer never loads the fast wallet');
     assert.equal(parseSignerArgs([]).fastWalletPath.endsWith('fast-wallet.json'), true);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { for (const service of services) closeTestSignerStores(service); rmSync(dir, { recursive: true, force: true }); }
 });

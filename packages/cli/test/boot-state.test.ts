@@ -50,12 +50,11 @@ test('malformed or hostile state is a first launch, never a crash', (t) => {
 
 test('an unwritable home does not throw: recordBoot reports false and the next launch is still a first launch', (t) => {
   const dir = home();
-  t.after(() => { chmodSync(dir, 0o700); rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
   const locked = join(dir, 'ro');
-  mkdirSync(locked);
-  chmodSync(locked, 0o500);
+  // A file in the parent path makes this unwritable on NTFS, POSIX, and root-run CI.
+  writeFileSync(locked, 'not a directory');
   const env = { DEXTERM_HOME: join(locked, 'deeper') };
-  if (process.getuid && process.getuid() === 0) return; // root ignores modes
   assert.equal(recordBoot(env), false);
   assert.equal(bootPlan(readBootState(env)).full, true);
 });

@@ -4,6 +4,7 @@
 // stop() kills synth + player, degrade when no player) — NOT real Piper audio, which is proven
 // separately (Docker on Linux; the managed venv + afplay + whisper on a real Mac, see the handoff).
 
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync } from 'node:fs';
@@ -16,6 +17,7 @@ const fakePlayer = join(dir, 'fake-player.mjs');
 const model = join(dir, 'en_GB-alan-medium.onnx');
 const piperLog = join(dir, 'piper.jsonl');
 const playerLog = join(dir, 'player.jsonl');
+useNodeScripts({ [fakePiper]: fakePiper, [fakePlayer]: fakePlayer });
 
 // Fake piper: two modes, matching the real CLI.
 //  --output_file OUT : write one WAV to OUT and exit (synthToFile).

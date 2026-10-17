@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1355 — plan/mandate engine tests, ported from research/task-1292/sim/sim.test.mjs (22 tests).
 // These assert the TS port is behaviourally identical to the design's reference simulation:
 // the north-star lifecycle, every failure case, all three confirmation tiers, plan-hash binding,
@@ -549,13 +550,13 @@ test('audit log: hash chain verifies; redaction scrubs key-shaped strings; every
   assert.equal(redact('[' + Array(64).fill(7).join(',') + ']'), '[REDACTED]');
 });
 
-test('task-1376: a journal whose directory does not exist yet (a fresh HOME) creates it owner-only on the first write', () => {
+test('task-1376: a journal whose directory does not exist yet (a fresh HOME) creates it owner-only on the first write', async (t) => {
   const dir = join(mkdtempSync(join(tmpdir(), 'journal-1376-')), 'no', 'dexterm');
   const path = join(dir, 'copy.journal');
   const j = new Journal({ path, clock: new SimClock() });
   j.append('copy.policy', { data: { wallet: 'w' } });
   j.append('copy.recovered');
-  assert.equal(statSync(dir).mode & 0o777, 0o700);
+  await posixPermissions(t, () => { assert.equal(statSync(dir).mode & 0o777, 0o700); });
   assert.equal(readFileSync(path, 'utf8').trim().split('\n').length, 2);
   assert.deepEqual(new Journal({ path, clock: new SimClock() }).verify(), { ok: true, count: 2 });
 });

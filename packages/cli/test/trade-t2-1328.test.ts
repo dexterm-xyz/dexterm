@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPairSync, sign as edSign } from 'node:crypto';
 import {
@@ -357,7 +357,7 @@ test('LOCKOUT (static): src/scan, src/analyst and the MCP server never import th
     const importLines = [...text.matchAll(/^\s*(?:import|export)[^;]*?from\s*['"][^'"]+['"]/gms)].map((m) => m[0]);
     return importLines.some((l) => /\b(SignerClient|SignerPort|SignerService|SignerUnavailableError|serveSigner|buildSignerService|parseSignerArgs)\b|\/signer\//.test(l));
   };
-  const importers = all.filter(importsSigner).map((f) => f.replace(SRC + '/', '')).sort();
+  const importers = all.filter(importsSigner).map((f) => relative(SRC, f).split(sep).join('/')).sort();
   for (const f of importers) assert.ok(allowed.has(f), `${f} imports the signer`);
   assert.ok(importers.includes('live/index.ts') && importers.includes('wallet-cmd.ts'), importers.join(','));
 });

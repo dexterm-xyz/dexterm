@@ -186,7 +186,9 @@ test('wallet resume: refused without a real TTY (piped/scripted input cannot re-
   const { dir, ks, ledgerPath } = panicSetup();
   const { store } = tmpStore();
   try {
-    ks.engage('x'); new CapLedger({ path: ledgerPath }).lock('x');
+    ks.engage('x');
+    const seeded = new CapLedger({ path: ledgerPath });
+    try { seeded.lock('x'); } finally { seeded.close(); }
     for (const stdin of [undefined, fakeStdin(false, ['y']), { isTTY: undefined, once() { return this; } } as unknown as KeyInput]) {
       const o = io(); o.stdin = stdin;
       assert.equal(await runWallet(['resume'], o, { store, killSwitch: ks, ledgerPath }), 2);
@@ -201,7 +203,9 @@ test('wallet resume: a TTY keypress of Y releases both locks; any other key (or 
   const { dir, ks, ledgerPath } = panicSetup();
   const { store } = tmpStore();
   try {
-    ks.engage('x'); new CapLedger({ path: ledgerPath }).lock('x');
+    ks.engage('x');
+    const seeded = new CapLedger({ path: ledgerPath });
+    try { seeded.lock('x'); } finally { seeded.close(); }
     const no = io(); no.stdin = fakeStdin(true, ['n']);
     assert.equal(await runWallet(['resume'], no, { store, killSwitch: ks, ledgerPath }), 1);
     assert.match(no.out, /aborted; still panicked/);

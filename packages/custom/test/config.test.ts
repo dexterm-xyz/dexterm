@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1358 Tier 1 — config.json loader: defaults, migration with key extraction (never printed), broken files,
 // the journal/undo, and workspace persistence on disk.
 import { test } from 'node:test';
@@ -19,18 +20,18 @@ test('a missing config is the defaults and nothing is written', () => {
   assert.ok(!existsSync(configPath(home)));
 });
 
-test('saveConfig writes 0600 and loadConfig reads it back unchanged', () => {
+test('saveConfig writes 0600 and loadConfig reads it back unchanged', async (t) => {
   const home = tmp();
   const cfg = { ...defaultConfig(), theme: { name: 'ember', overrides: {}, user: {} } };
   saveConfig(home, cfg);
-  assert.equal(statSync(configPath(home)).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(configPath(home)).mode & 0o777, 0o600); });
   const l = loadConfig(home);
   assert.equal(l.ok, true);
   assert.deepEqual(l.config, cfg);
   assert.throws(() => saveConfig(home, { ...cfg, keys: {} } as never), /config invalid: \/keys unknown key/);
 });
 
-test('a v1 config with a key inside migrates: backup written, key moved to helius.key (0600), config and journal never contain it', () => {
+test('a v1 config with a key inside migrates: backup written, key moved to helius.key (0600), config and journal never contain it', async (t) => {
   const home = tmp();
   const SECRET = 'hlx-TEST-NOT-A-REAL-KEY-0123456789';
   writeFileSync(configPath(home), JSON.stringify({ theme: 'midnight', keys: { helius: SECRET }, alerts: [{ kind: 'liq', op: '<', value: 1000 }] }));
@@ -42,7 +43,7 @@ test('a v1 config with a key inside migrates: backup written, key moved to heliu
   assert.deepEqual(l.extractedKeyFiles, ['helius.key']);
   assert.ok(l.notes.some((n) => /migrated config.json v1/.test(n)));
   const kf = join(home, 'helius.key');
-  assert.equal(statSync(kf).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(kf).mode & 0o777, 0o600); });
   assert.equal(readFileSync(kf, 'utf8').trim(), SECRET);
   assert.ok(existsSync(`${configPath(home)}.bak-v1`), 'backup of the old file');
   assert.ok(!readFileSync(configPath(home), 'utf8').includes(SECRET), 'the new config.json has no key');
@@ -92,13 +93,13 @@ test('applyAndJournal applies ops with an inverse; undoLast restores and refuses
   assert.ok(undoLast(tmp()).ok === false);
 });
 
-test('workspaces: built-ins listed first, a user file round-trips, a bad file is reported not thrown, remove works', () => {
+test('workspaces: built-ins listed first, a user file round-trips, a bad file is reported not thrown, remove works', async (t) => {
   const home = tmp();
   let list = listWorkspaces(home);
   assert.deepEqual(list.map((w) => w.name), ['default', 'morning-hud']);
   assert.ok(list.every((w) => w.builtin));
   const path = writeWorkspace(home, { name: 'evening', start: 'watchlist', theme: 'ember', popups: [{ kind: 'narrative' }] });
-  assert.equal(statSync(path).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(path).mode & 0o777, 0o600); });
   assert.deepEqual(readWorkspace(home, 'evening'), { name: 'evening', start: 'watchlist', theme: 'ember', popups: [{ kind: 'narrative' }] });
   // a user file that overrides a built-in replaces it in place
   writeWorkspace(home, { name: 'default', start: 'newpairs' });

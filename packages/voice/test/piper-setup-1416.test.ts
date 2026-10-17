@@ -120,7 +120,7 @@ test('uninstall removes the venv + record; absent when nothing is there; --purge
   try {
     assert.equal((await uninstallPiperRuntime(home)).status, 'absent');
     const paths = piperRuntimePaths(home);
-    mkdirSync(join(paths.venv, 'bin'), { recursive: true }); writeFileSync(paths.python, 'x');
+    mkdirSync(dirname(paths.python), { recursive: true }); writeFileSync(paths.python, 'x');
     writeFileSync(paths.record, '{"kind":"venv"}');
     const modelFile = join(home, 'models', 'en_GB-alan-medium.onnx');
     mkdirSync(dirname(modelFile), { recursive: true }); writeFileSync(modelFile, 'onnx');

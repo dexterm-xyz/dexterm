@@ -10,10 +10,11 @@ const laneTest = serialLane(import.meta.url);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 // the QA pty driver vendored into the repo (task-1319); task-1415 dropped the out-of-repo evidence path
 const driver = resolve(root, 'packages/cli/test/measure/drive.py');
+const hasPty = spawnSync('python3', ['-c', 'import pty'], { stdio: 'ignore', timeout: 5000 }).status === 0;
 // task-1424: serial lane. The key script waits on the screen (drive.py WAIT:text@secs shifts every later key by
 // the time it waited) instead of fixed offsets, and the bounds are generous: the old 16 s spawn / 20 s test
 // limits were exceeded by a slow start-up at high load (it passes alone in ~9 s at load 84).
-laneTest('pty: explicit V runs larp-check and renders the computed badge; L opens a navigable menu', { skip: !existsSync(driver), timeout: 120_000 }, () => {
+laneTest('pty: explicit V runs larp-check and renders the computed badge; L opens a navigable menu', { skip: !existsSync(driver) ? 'vendored PTY driver missing' : !hasPty ? 'python3 POSIX pty module unavailable (not a native Windows ConPTY test)' : false, timeout: 120_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'task1315-pty-'));
   const answer = { type: 'result', structured_output: { skill: 'larp-check', verdict: 'UNVERIFIABLE', confidence: 0.2,
     summary: 'FIXTURE product evidence unavailable', claims: [], missing_data: ['fixture'], flags: [], injection_detected: false } };

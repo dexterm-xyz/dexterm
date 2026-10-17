@@ -286,8 +286,10 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
     const modes = xs.modes();
     const clientId = xs.clientId(deps.env);
     if (meta.loggedIn) {
+      const windows = deps.platform === 'win32';
       const loose = (modes.tokens !== null && modes.tokens !== 0o600) || (modes.dir !== null && modes.dir !== 0o700);
-      checks.push({ name: 'Login with X', status: loose ? 'warn' : 'pass', detail: `logged in${meta.user ? ` as @${meta.user.username}` : ''} · scopes ${meta.scopes.join(' ') || '?'} · refresh ${meta.hasRefresh ? 'yes' : 'no'}${loose ? ' · token file permissions are looser than 0600' : ''}`, ...(loose ? { fix: `chmod 700 ${xs.dir} && chmod 600 ${xs.tokensPath}` } : {}) });
+      const warning = windows ? ' · Windows ACL isolation is not verified' : loose ? ' · token file permissions are looser than 0600' : '';
+      checks.push({ name: 'Login with X', status: windows || loose ? 'warn' : 'pass', detail: `logged in${meta.user ? ` as @${meta.user.username}` : ''} · scopes ${meta.scopes.join(' ') || '?'} · refresh ${meta.hasRefresh ? 'yes' : 'no'}${warning}`, ...(windows ? { fix: 'Review the token directory Security permissions in Windows; chmod does not enforce owner-only ACLs.' } : loose ? { fix: `chmod 700 ${xs.dir} && chmod 600 ${xs.tokensPath}` } : {}) });
     } else if (clientId) {
       checks.push({ name: 'Login with X', status: 'warn', detail: 'client id stored, not logged in — X posts stay off (keyless venues, news and on-chain rows still work)', fix: 'dexterm x login' });
     } else {

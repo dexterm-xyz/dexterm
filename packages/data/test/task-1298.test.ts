@@ -42,7 +42,7 @@ test('rpc config: DEXTERM_RPC_URL wins, else the key file builds the Helius URL,
   assert.equal(env.provider, 'custom');
   assert.equal(env.url, 'https://rpc.example/x');
   assert.equal(env.fallbackUrl, SOLANA_PUBLIC_RPC);
-  const keyed = resolveRpcUrl({ env: {}, home: '/home/x', readFile: (p) => { assert.equal(p, '/home/x/.dexterm/helius.key'); return `${FAKE_KEY}\n`; } });
+  const keyed = resolveRpcUrl({ env: {}, home: '/home/x', readFile: (p) => { assert.equal(p, join('/home/x', '.dexterm', 'helius.key')); return `${FAKE_KEY}\n`; } });
   assert.equal(keyed.provider, 'helius');
   assert.equal(keyed.basis, '~/.dexterm/helius.key');
   assert.equal(keyed.url, `https://mainnet.helius-rpc.com/?api-key=${FAKE_KEY}`);

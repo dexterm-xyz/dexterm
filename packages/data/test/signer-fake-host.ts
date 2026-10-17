@@ -36,6 +36,11 @@ const deps: LiveExecutorDeps = {
   fastSigner,
 };
 const service = new SignerService({ executor: new LiveExecutor(deps), deps, linkStore, liveLedger, fastStore });
+// Deterministic real-pipe timeout fixture: Windows has no SIGSTOP/SIGCONT.
+if (process.argv.includes('--stall-status')) {
+  const call = service.call.bind(service);
+  service.call = (method, params) => method === 'status' ? new Promise(() => {}) : call(method, params);
+}
 process.stderr.write(`fake-host: user ${USER.address}${fastSigner ? ` fast ${fastSigner.publicKey}` : ''}\n`);
 serveSigner({ service, input: process.stdin, output: process.stdout, log: (l) => process.stderr.write(`${l}\n`) }).then((why) => {
   process.stderr.write(`fake-host: stopped (${why})\n`);

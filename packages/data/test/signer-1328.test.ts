@@ -2,6 +2,7 @@
 // Lighthouse tolerance, the devnet probe, caps-only-downward, SOL/USD freshness, refund-after-broadcast.
 // No network, no wallet, no funds: every transaction is hand-built and signed with a throwaway key.
 import assert from 'node:assert/strict';
+import { closeTestSigner } from '../../../scripts/test-support.ts';
 import { test } from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -371,7 +372,7 @@ test('channel: a real child process serves status → plan → confirm over the 
     const again = await c.confirm(v.hash);
     assert.equal(again.kind, 'refused');
     await c.drop('a'.repeat(64));
-  } finally { c.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await closeTestSigner(c); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('channel: unknown methods (sign/submit) are refused; a bad-mac frame and a replayed frame are dropped and the session continues', async () => {
@@ -396,7 +397,7 @@ test('channel: unknown methods (sign/submit) are refused; a bad-mac frame and a 
     const replay = encodeFrame(priv.secret, priv.outSeq - 1, { id: 5000, method: 'status', params: {} });
     priv.child.stdin.write(replay);
     assert.equal((await c.status()).network, 'devnet');
-  } finally { c.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await closeTestSigner(c); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('channel: a dead signer fails closed — every call refuses, nothing respawns; a request timeout refuses', async () => {
@@ -411,19 +412,15 @@ test('channel: a dead signer fails closed — every call refuses, nothing respaw
     await assert.rejects(c.status(), SignerUnavailableError);
     await assert.rejects(c.confirm('a'.repeat(64)), SignerUnavailableError);
     await assert.rejects(c.start(), SignerUnavailableError, 'start() after death rejects (no respawn)');
-  } finally { c.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await closeTestSigner(c); rmSync(dir, { recursive: true, force: true }); }
   const dir2 = mkdtempSync(join(tmpdir(), 'dexterm-signer-chan-'));
-  const t = clientFor(dir2);
+  const t = clientFor(dir2, ['--stall-status']);
   try {
     await t.start();
     const priv = t as unknown as { request: (m: string, p: unknown, timeoutMs: number) => Promise<unknown> };
-    // Freeze the host so it cannot answer inside the deadline (a 1 ms timeout alone raced a fast host: the answer sometimes won).
-    const pid2 = t.pid!;
-    process.kill(pid2, 'SIGSTOP');
-    try {
-      await assert.rejects(priv.request('status', {}, 100), (e: Error) => e instanceof SignerUnavailableError && /timed out/.test(e.message));
-    } finally { try { process.kill(pid2, 'SIGCONT'); } catch { /* already gone */ } }
-  } finally { t.close(); rmSync(dir2, { recursive: true, force: true }); }
+    // The authenticated host accepts the request but never replies; keep the real deadline assertion.
+    await assert.rejects(priv.request('status', {}, 100), (e: Error) => e instanceof SignerUnavailableError && /timed out/.test(e.message));
+  } finally { await closeTestSigner(t); rmSync(dir2, { recursive: true, force: true }); }
 });
 
 test('channel: a bad hello ends the host; the child never serves without the secret', async () => {
@@ -448,7 +445,7 @@ test('channel: without a linked wallet in the signer\'s store, plan over the cha
     await assert.rejects(c.plan({ ...PLAN, userPublicKey: keypair().address } as never), (e: Error) => /no-wallet/.test(e.message));
     writeFileSync(join(dir, 'wallet-link.json'), JSON.stringify({ publicKey: 'not a key' }));
     await assert.rejects(c.plan(PLAN), (e: Error) => /no-wallet/.test(e.message), 'a malformed link file is no link');
-  } finally { c.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await closeTestSigner(c); rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ------------------------------------------------------------------------------------ the sign page's web3.js

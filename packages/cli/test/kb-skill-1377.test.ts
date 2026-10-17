@@ -1,3 +1,4 @@
+import { posixPermissions } from '../../../scripts/test-support.ts';
 // task-1377: `dexterm kb|skill list|show|new|edit|check|reset|path`, the analyst's per-turn plugin dir (the merged
 // skills the analyst and Jarvis run), and the doctor's KB + skills line. Hermetic: a temp DEXTERM_HOME, an injected
 // editor (no TTY, no $EDITOR), no network, no claude.
@@ -20,14 +21,14 @@ function io(env: NodeJS.ProcessEnv, editor?: (file: string) => number): KbSkillI
 /** An "editor" that rewrites the file through a function, like a user saving in $EDITOR. */
 const editWith = (fn: (text: string) => string) => (file: string): number => { fs.writeFileSync(file, fn(fs.readFileSync(file, 'utf8'))); return 0; };
 
-test('kb: edit copies the bundled entry into ~/.dexterm, the user edit is in effect, reset restores the bundled one', async () => {
+test('kb: edit copies the bundled entry into ~/.dexterm, the user edit is in effect, reset restores the bundled one', async (t) => {
   const { dir, env } = home();
   try {
     const e = io(env, editWith((t) => t.replace(/\n---\n/, '\n---\n**My note:** wait for the LP burn tx.\n\n')));
     assert.equal(await kbSkillCommand('kb', ['edit', 'lp-burn-vs-lock'], e), 0, e.out + e.err);
     const file = path.join(dir, 'kb', 'entries', 'lp-burn-vs-lock.md');
     assert.ok(fs.existsSync(file));
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    await posixPermissions(t, () => { assert.equal(fs.statSync(file).mode & 0o777, 0o600); });
     assert.match(e.out, /copied the bundled KB entry/);
     assert.match(e.out, /✓ .*lp-burn-vs-lock\.md/);
     assert.match(e.out, /in effect on the next MCP\/analyst\/Jarvis call/);

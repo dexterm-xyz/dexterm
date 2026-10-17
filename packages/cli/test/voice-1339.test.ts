@@ -1,3 +1,4 @@
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 // task-1339 JARVIS voice: drive the REAL interactive loop in-process (fake TTY, replay data, fake
 // STT/TTS, a fake `claude` first on PATH so no paid run is possible) with the trade machinery
 // booby-trapped, and prove the hard rules from ROADMAP.md:
@@ -25,16 +26,16 @@ const SAMPLE = resolve(HERE, '../../data/fixtures/live-sample.json');
 const fc = mkdtempSync(join(tmpdir(), 'voice1339-claude-'));
 const LOG = join(fc, 'spawn.log'); writeFileSync(LOG, '');
 const MODEF = join(fc, 'mode'); writeFileSync(MODEF, 'ok');
-writeFileSync(join(fc, 'claude'), [
-  '#!/bin/sh',
-  'printf "spawned bytes=%s\\n" "$(printf "%s" "$*" | wc -c | tr -d " ")" >> "$V1339_LOG"',
-  'if [ "$(cat "$V1339_MODE" 2>/dev/null)" = error ]; then echo "boom" >&2; exit 1; fi',
-  `printf '%s\\n' '{"type":"system","subtype":"init","model":"fake","session_id":"s1","mcp_servers":[],"skills":[]}'`,
-  `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"FAKEANSWER. Second sentence."}}}'`,
-  `printf '%s\\n' '{"type":"result","subtype":"success","result":"FAKEANSWER. Second sentence.","total_cost_usd":0,"duration_ms":5,"num_turns":1,"is_error":false,"session_id":"s1"}'`,
-  '',
-].join('\n'), { mode: 0o755 });
-process.env.PATH = `${fc}:${process.env.PATH}`;
+const fakeClaude = join(fc, 'claude.cjs');
+writeFileSync(fakeClaude, [
+  "const fs = require('node:fs');",
+  "fs.appendFileSync(process.env.V1339_LOG, 'spawned bytes=' + Buffer.byteLength(process.argv.slice(2).join(' ')) + '\\n');",
+  "if (fs.readFileSync(process.env.V1339_MODE, 'utf8').trim() === 'error') { console.error('boom'); process.exit(1); }",
+  `console.log(JSON.stringify({"type":"system","subtype":"init","model":"fake","session_id":"s1","mcp_servers":[],"skills":[]}));`,
+  `console.log(JSON.stringify({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"FAKEANSWER. Second sentence."}}}));`,
+  `console.log(JSON.stringify({"type":"result","subtype":"success","result":"FAKEANSWER. Second sentence.","total_cost_usd":0,"duration_ms":5,"num_turns":1,"is_error":false,"session_id":"s1"}));`,
+].join('\n'));
+useNodeScripts({ claude: fakeClaude });
 process.env.V1339_LOG = LOG; process.env.V1339_MODE = MODEF;
 process.env.DEXTERM_VOICE_STT = 'fake';
 process.env.DEXTERM_VOICE_TTS = 'fake';

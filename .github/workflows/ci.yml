@@ -45,10 +45,8 @@ jobs:
       - name: install smoke (npm pack -> npm i -g temp prefix -> dexterm --version, dexterm doctor)
         run: scripts/release/install-smoke.sh "$RUNNER_TEMP/install-smoke"
 
-  # task-1423: the same leg on macOS (macos-14 is Apple Silicon, arm64) and Windows. Not required checks yet:
-  # add "typecheck + tests (macos-14)" to the ruleset once it has been green on a few runs. Windows is
-  # EXPERIMENTAL: its test step may fail (the suite asserts POSIX file modes like 0600, which NTFS does not
-  # have) without failing the run; typecheck and the install smoke must pass on both.
+  # Native platforms are truthful gates: any supported-suite failure fails its job.
+  # POSIX mode-bit subtests identify NTFS limitations explicitly; no suite-wide ignore.
   platforms:
     name: typecheck + tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -58,9 +56,7 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            experimental: false
           - os: windows-latest
-            experimental: true
     defaults:
       run:
         shell: bash
@@ -82,9 +78,9 @@ jobs:
       - name: typecheck
         run: npm run typecheck
       - name: "tests (offline: no live data source is contacted in CI)"
-        continue-on-error: ${{ matrix.experimental }}
         env:
           DEXTERM_OFFLINE: '1'
+          DEXTERM_TEST_NO_RETRY: '1'
         # no GNU `timeout` on macOS: the step timeout bounds the run instead
         timeout-minutes: 25
         run: npm test

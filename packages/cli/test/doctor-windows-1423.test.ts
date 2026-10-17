@@ -5,11 +5,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { onPath, claudeProbe } from '../src/doctor.ts';
 
 function binDir(...files: string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dexterm-doctor-1423-'));
+  // Keep artificial POSIX PATH entries on cwd's drive, even when Windows TEMP is on C: and cwd on D:.
+  const dir = mkdtempSync(join(process.cwd(), '.dexterm-doctor-1423-'));
   for (const f of files) writeFileSync(join(dir, f), '');
   return dir;
 }
@@ -37,7 +38,7 @@ test('onPath off Windows keeps the : split and exact names (claude.cmd is not cl
   const bare = binDir('claude');
   try {
     assert.equal(onPath('claude', { PATH: cmd } as NodeJS.ProcessEnv, 'linux'), false);
-    assert.equal(onPath('claude', { PATH: `/nonexistent:${bare}` } as NodeJS.ProcessEnv, 'darwin'), true);
+    assert.equal(onPath('claude', { PATH: `nonexistent:${relative(process.cwd(), bare)}` } as NodeJS.ProcessEnv, 'darwin'), true);
   } finally {
     for (const d of [cmd, bare]) rmSync(d, { recursive: true, force: true });
   }
