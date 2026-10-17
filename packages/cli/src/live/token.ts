@@ -562,6 +562,8 @@ export class CandlePrefetcher {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
   private closed = false;
+  private settledPromise: Promise<void> = Promise.resolve();
+  private resolveSettled: (() => void) | null = null;
   private readonly stamps: number[] = [];
   /** Requests actually sent (granted by the limiter). */
   requests = 0;
@@ -583,8 +585,20 @@ export class CandlePrefetcher {
   hover(t: HoverTarget | null): void {
     if (this.closed) return;
     if (t && this.target && t.mint === this.target.mint && t.pair === this.target.pair) return; // same row: keep waiting
+    this.finishSettled(); // a replaced target can no longer do useful work for its caller
     this.target = t;
+    if (t?.pair) this.settledPromise = new Promise<void>((resolve) => { this.resolveSettled = resolve; });
     this.schedule(this.opts.debounceMs);
+  }
+
+  /**
+   * Resolve after the current hover pass has warmed every immediately available base, explicitly
+   * deferred the next attempt, failed a real request, been replaced, or been cancelled by close(). This
+   * is the completion contract for callers that need to observe the pass result; a debounce timer firing
+   * alone does not mean its sequential requests have finished.
+   */
+  settled(): Promise<void> {
+    return this.settledPromise;
   }
 
   /** Requests sent in the trailing 60 s. */
@@ -598,6 +612,7 @@ export class CandlePrefetcher {
     this.closed = true;
     this.target = null;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.finishSettled();
   }
 
   private schedule(ms: number): void {
@@ -620,7 +635,11 @@ export class CandlePrefetcher {
     for (const base of this.bases()) {
       const req = { limit: this.opts.limit, token: t.mint };
       if (this.dl.detail.candleStore.has(t.pair, base, req)) continue;
-      if (this.rate() >= this.opts.maxPerMin) { this.schedule(this.stamps[0] + 60_000 - this.opts.now() + 50); return; }
+      if (this.rate() >= this.opts.maxPerMin) {
+        this.schedule(this.stamps[0] + 60_000 - this.opts.now() + 50);
+        this.finishSettled(t);
+        return;
+      }
       this.busy = true;
       try {
         await withPriority('idle', () => this.dl.detail.candles(t.pair as string, base, req));
@@ -631,15 +650,25 @@ export class CandlePrefetcher {
           // Try again when the bucket could be idle again (still only if the cursor stays here).
           const wait = this.dl.limiter.bucket('geckoterminal').delayFor('idle', this.opts.now());
           this.schedule(Number.isFinite(wait) ? Math.max(250, wait) : 60_000);
+          this.finishSettled(t);
           return;
         }
         this.sent(); // a real request that failed (HTTP error) still counts against the budget
+        this.finishSettled(t);
         return;
       } finally {
         this.busy = false;
       }
       if (this.closed || this.target !== t) return; // the cursor moved on: its own debounce takes over
     }
+    this.finishSettled(t);
+  }
+
+  private finishSettled(t?: HoverTarget): void {
+    if (t && this.target !== t) return;
+    const resolve = this.resolveSettled;
+    this.resolveSettled = null;
+    resolve?.();
   }
 
   private sent(): void {
