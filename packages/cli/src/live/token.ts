@@ -564,6 +564,7 @@ export class CandlePrefetcher {
   private closed = false;
   private settledPromise: Promise<void> = Promise.resolve();
   private resolveSettled: (() => void) | null = null;
+  private waitingForSettled = false;
   private readonly stamps: number[] = [];
   /** Requests actually sent (granted by the limiter). */
   requests = 0;
@@ -598,6 +599,10 @@ export class CandlePrefetcher {
    * alone does not mean its sequential requests have finished.
    */
   settled(): Promise<void> {
+    if (this.resolveSettled) {
+      this.waitingForSettled = true;
+      (this.timer as { ref?: () => void } | null)?.ref?.();
+    }
     return this.settledPromise;
   }
 
@@ -620,7 +625,8 @@ export class CandlePrefetcher {
     const t = this.target;
     if (!t || !t.pair || this.closed) return;
     this.timer = setTimeout(() => { this.timer = null; void this.step(t); }, Math.max(0, ms));
-    (this.timer as { unref?: () => void }).unref?.();
+    if (this.waitingForSettled) (this.timer as { ref?: () => void }).ref?.();
+    else (this.timer as { unref?: () => void }).unref?.();
   }
 
   private bases(): CandleInterval[] {
@@ -668,6 +674,8 @@ export class CandlePrefetcher {
     if (t && this.target !== t) return;
     const resolve = this.resolveSettled;
     this.resolveSettled = null;
+    if (this.waitingForSettled) (this.timer as { unref?: () => void } | null)?.unref?.();
+    this.waitingForSettled = false;
     resolve?.();
   }
 
