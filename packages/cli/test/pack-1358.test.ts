@@ -52,7 +52,7 @@ test('dexterm pack: verify → add (risk card) → list → the app sees the pac
   // accept → installed, journaled (actor user), widget disabled with no capabilities, keymap not merged
   f.reset();
   assert.equal(await packCommand(['add', pack, '--accept-unsigned'], f.io), 0, f.err());
-  assert.match(f.out(), /installed trenches@1\.0\.0 → .*packs\/trenches@1\.0\.0 \(unsigned\)/);
+  assert.match(f.out(), /installed trenches@1\.0\.0 → .*packs[\\/]trenches@1\.0\.0 \(unsigned\)/);
   assert.match(f.out(), /widget trenches\/tips is DISABLED: read widgets\/tips\/tips\.html then "dexterm pack widget trenches tips --enable"/);
   const cfg1 = loadConfig(home);
   assert.equal(cfg1.ok, true, cfg1.errors.join('; '));
@@ -124,7 +124,7 @@ test('dexterm pack: verify → add (risk card) → list → the app sees the pac
   // widget consent: --enable names the page + topics, flips only the enabled flag, never adds a capability
   f.reset();
   assert.equal(await packCommand(['widget', 'trenches', 'tips', '--enable'], f.io), 0, f.err());
-  assert.match(f.out(), /enabling trenches\/tips: the popup host will serve .*widgets\/tips\/tips\.html .*hash-only CSP: only the inline script\/style you just read runs — no remote script, style, frame or import, no fetch, no eval; topics rows, theme/);
+  assert.match(f.out(), /enabling trenches\/tips: the popup host will serve .*widgets[\\/]tips[\\/]tips\.html .*hash-only CSP: only the inline script\/style you just read runs — no remote script, style, frame or import, no fetch, no eval; topics rows, theme/);
   assert.deepEqual(loadConfig(home).config.plugins!['trenches/tips'], { enabled: true, capabilities: [], settings: {} });
   f.reset();
   assert.equal(await packCommand(['widget', 'trenches', 'tips', '--disable'], f.io), 0);
