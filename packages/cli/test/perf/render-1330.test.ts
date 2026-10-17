@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { makeFixtureState, renderFrame, type AppState } from '../../src/state.ts';
 import { socialOf } from '../../src/social/view.ts';
 import { serialLane } from '../serial/lane.ts';
-import { assertFrameBudget as assertBudget } from './budget.ts';
+import { FRAME_BUDGET_MS, cpuBudgetBound } from './budget.ts';
 
 const laneTest = serialLane(import.meta.url);
 
@@ -51,6 +51,15 @@ type Budget = { p50: number; p95: number; max: number; cpuP95: number; preempted
 function budget(wall: number[], cpu: number[], vol: number): Budget {
   const preempted = wall.filter((w, i) => w - cpu[i] > PREEMPT_MS).length;
   return { p50: quantile(wall, 0.5), p95: quantile(wall, 0.95), max: quantile(wall, 1), cpuP95: quantile(cpu, 0.95), preempted, n: wall.length, blocked: vol > 0 };
+}
+/** The frame budget on two clocks. The wall-clock line is the product requirement and stays a literal, unconditional
+ *  assertion in THIS file (lanes-1424 guards the text). The CPU line judges cpuBudgetBound(): the thread CPU p95 on
+ *  POSIX; on Windows, whose thread CPU counter is quantized (~16 ms), the wall p95 as a conservative upper bound (a
+ *  single thread cannot consume more CPU than elapsed time). Nothing is relaxed on any platform. */
+function assertBudget(name: string, b: Budget, detail: string): void {
+  const cpu = cpuBudgetBound(b);
+  assert.ok(cpu.value < FRAME_BUDGET_MS, `${name} ${cpu.label} ${cpu.value.toFixed(2)} ms (${detail}) must be under ${FRAME_BUDGET_MS} ms`);
+  assert.ok(b.p95 < FRAME_BUDGET_MS, `${name} wall p95 ${b.p95.toFixed(2)} ms (${detail}) must be under ${FRAME_BUDGET_MS} ms`);
 }
 const wallNote = (b: Budget): string => process.platform === 'win32'
   ? 'wall p95 asserted; CPU bounded by wall time; raw Windows CPU counter is quantized, preemption count unavailable'
