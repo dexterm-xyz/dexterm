@@ -1,9 +1,11 @@
 // dexterm 0.1.5: the analyst on the user's own Codex CLI. Offline: a fake `codex` (an injected child, and a real
 // fake binary on PATH like the fake-claude harness). The real CLI is never called here; the real-binary proof
 // against a local mock model is test/measure/codex-015a (manual).
+import { posixPermissions } from '../../../scripts/test-support.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -161,7 +163,7 @@ test('event parser: thread id, allowed tool calls, messages, usage; tripwire on 
   }
 });
 
-test('runAnalyst engine:codex spawns `codex` with the lock, the prompt (skill + context) on stdin, the token only in env', () => {
+test('runAnalyst engine:codex spawns `codex` with the lock, the prompt (skill + context) on stdin, the token only in env', async (t) => {
   const child = fakeChild();
   const { calls, spawn } = spawnCapture(child);
   const res: unknown[] = [];
@@ -171,7 +173,7 @@ test('runAnalyst engine:codex spawns `codex` with the lock, the prompt (skill + 
   const argv = calls[0].args;
   const schemaPath = flagValues(argv, '--output-schema')[0];
   assert.ok(schemaPath && fs.existsSync(schemaPath), 'strict schema written to the 0600 temp dir');
-  assert.equal(fs.statSync(schemaPath).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(fs.statSync(schemaPath).mode & 0o777, 0o600); });
   assert.equal(JSON.parse(fs.readFileSync(schemaPath, 'utf8')).additionalProperties, false);
   assert.match(child.stdin.data, /=== DEXTERM SKILL rug-check/);
   assert.match(child.stdin.data, /=== DEXTERM LIVE CONTEXT/);
@@ -263,12 +265,13 @@ test('AnalystSession on codex: footer says codex, the follow-up resumes the code
   }
 });
 
-// ---- a real fake `codex` binary on PATH (like the fake-claude pty harness): the action channel round-trips
+// ---- a real fake `codex` process (like the fake-claude harnesses): the action channel round-trips. The script runs
+// through Node because Windows does not execute a Unix shebang; argv, pipes, env and exit still go through a real spawn.
 test('fake codex binary: real spawn, argv + stdin captured, an allowed UI action reaches the app over the channel', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex015a-fakebin-'));
   const log = path.join(dir, 'log.json');
-  fs.writeFileSync(path.join(dir, 'codex'), `#!/usr/bin/env node
-const fs = require('fs');
+  const script = path.join(dir, 'codex.cjs');
+  fs.writeFileSync(script, `const fs = require('fs');
 let stdin = '';
 process.stdin.on('data', (d) => { stdin += d; });
 process.stdin.on('end', () => {
@@ -284,10 +287,10 @@ process.stdin.on('end', () => {
   say({ type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: 'putting it on your screen' } });
   say({ type: 'turn.completed', usage: { input_tokens: 5, cached_input_tokens: 0, output_tokens: 2 } });
 });
-`, { mode: 0o755 });
-  const oldPath = process.env.PATH;
-  process.env.PATH = `${dir}${path.delimiter}${oldPath}`;
-  try {
+`);
+  const viaNode = ((cmd: string, args: readonly string[], opts: childProcess.SpawnOptions) =>
+    childProcess.spawn(cmd === 'codex' ? process.execPath : cmd, cmd === 'codex' ? [script, ...args] : [...args], opts)) as typeof childProcess.spawn;
+  {
     const actions: Record<string, unknown>[] = [];
     const result = await new Promise<{ text: string; tools: string[] }>((resolve, reject) => {
       let text = ''; const tools: string[] = [];
@@ -295,7 +298,7 @@ process.stdin.on('end', () => {
       runAnalyst({ prompt: 'put it on my screen', screenState: { screen: 'screener', selected: { mint: MINT, symbol: 'ABC' }, actions: { mints: [MINT] } }, engine: 'codex' }, {
         onText: (d) => { text += d; }, onToolCall: (e) => tools.push(e.name), onAction: (e) => actions.push(e.action),
         onResult: () => { clearTimeout(t); resolve({ text, tools }); }, onError: (m, d) => { clearTimeout(t); reject(new Error(`${m}: ${d}`)); },
-      });
+      }, { spawn: viaNode });
     });
     assert.equal(result.text, 'putting it on your screen');
     assert.deepEqual(result.tools, ['open_token']);
@@ -305,7 +308,7 @@ process.stdin.on('end', () => {
     assert.ok(seen.hasToken);
     assert.match(seen.stdin, /put it on my screen/);
     assert.match(seen.stdin, /ANSWER LENGTH: SHORT/);
-  } finally { process.env.PATH = oldPath; }
+  }
 });
 
 // ---- wiring: flag, env/config order, /engine, doctor, config policy
@@ -398,6 +401,7 @@ test('analystCliOnPath: Windows counts only a spawnable .exe/.com, never an npm 
     fs.writeFileSync(path.join(dir, 'codex.exe'), '');
     assert.equal(analystCliOnPath('codex', { PATH: dir }, 'win32'), true);
     fs.writeFileSync(path.join(dir, 'codex'), '');
-    assert.equal(analystCliOnPath('codex', { PATH: dir }, 'darwin'), true);
+    // a Windows host's temp dir has a drive-letter colon, which a simulated POSIX ':' split cannot carry
+    if (process.platform !== 'win32') assert.equal(analystCliOnPath('codex', { PATH: dir }, 'darwin'), true);
   });
 });
