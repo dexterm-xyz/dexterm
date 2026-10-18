@@ -8,6 +8,7 @@ export * from './export.ts';
 export * from './open.ts';
 export * from './verdicts.ts';
 export * from './schedule.ts';
+export * from './dev-history.ts';
 export { recorderCli, RECORDER_HELP, type CliIo } from './cli.ts';
 
 /** `--no-recorder` / `DEXTERM_RECORDER=0` resolution: the recorder is on in live mode unless either says no. */

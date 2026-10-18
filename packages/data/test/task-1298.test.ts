@@ -57,7 +57,7 @@ test('rpc config: DEXTERM_RPC_URL wins, else the key file builds the Helius URL,
   assert.ok(!isPlausibleKey(''));
 });
 
-test('key hygiene: redaction covers URLs, error messages, fixture keys and entries; save() refuses a leak', () => {
+test('key hygiene: redaction covers URLs, error messages, fixture keys and entries; save() never writes a key value', async () => {
   const url = `https://mainnet.helius-rpc.com/?api-key=${FAKE_KEY}&x=1`;
   assert.equal(redactSecrets(url), 'https://mainnet.helius-rpc.com/?api-key=REDACTED&x=1');
   assert.equal(redactSecrets(`HTTP 429 for ${url}`), 'HTTP 429 for https://mainnet.helius-rpc.com/?api-key=REDACTED&x=1');
@@ -71,10 +71,26 @@ test('key hygiene: redaction covers URLs, error messages, fixture keys and entri
   const entry = toEntry({ method: 'POST', url, body: '{"jsonrpc":"2.0"}' }, { status: 200, headers: {}, body: '{}', latencyMs: 1 });
   assert.ok(!entry.url.includes(FAKE_KEY));
   const store = new FixtureStore();
-  store.add({ ...entry, body: { leaked: url }, bodyIsJson: true });
+  store.add({ ...entry, body: { leaked: url, note: `line\n${url}"quoted"` }, bodyIsJson: true });
+  // task-1443: live bodies echo third-party key-shaped params (DexScreener image `&key=`); the save scrubs them
+  // instead of throwing the whole recording away, and a scrubbed URL still replays.
+  const img = 'https://dd.dexscreener.com/ds-data/tokens/solana/abc.png?size=lg&key=ad6a9a';
+  store.add(toEntry({ method: 'GET', url: 'https://api.dexscreener.com/tokens/v1/solana/abc' }, { status: 200, headers: {}, body: JSON.stringify([{ info: { imageUrl: img } }]), latencyMs: 1 }));
+  store.add(toEntry({ method: 'GET', url: img }, { status: 200, headers: {}, body: 'png', latencyMs: 1 }));
+  store.streams.push({ url: 'wss://pumpportal.fun/api/data', startedAt: 'x', sent: [], messages: [{ tMs: 1, text: `{"uri":"${img}"}` }] });
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-1298-'));
   try {
-    assert.throws(() => store.save(join(dir, 'leak.json')), /refusing to save/);
+    const out = join(dir, 'leak.json');
+    store.save(out);
+    const text = readFileSync(out, 'utf8');
+    assert.ok(!text.includes(FAKE_KEY), 'a key echoed in a body is never written');
+    assert.ok(!text.includes('ad6a9a'));
+    const back = FixtureStore.load(out);
+    assert.equal(back.size, 3);
+    assert.deepEqual(back.streams[0]!.messages[0], { tMs: 1, text: '{"uri":"https://dd.dexscreener.com/ds-data/tokens/solana/abc.png?size=lg&key=REDACTED"}' });
+    const listed = JSON.parse((await replayTransport(back)({ method: 'GET', url: 'https://api.dexscreener.com/tokens/v1/solana/abc' })).body);
+    const res = await replayTransport(back)({ method: 'GET', url: listed[0].info.imageUrl });
+    assert.equal(res.body, 'png', 'the scrubbed image URL replays');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

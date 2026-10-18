@@ -37,6 +37,12 @@ export interface RuleRow {
   fresh?: number | null; mintable?: number | null; freezable?: number | null;
   /** LARP-detector grade (task-1398): higher = more real (REAL_PRODUCT 3 · EARLY_BUT_REAL 2 · UNVERIFIABLE 1 · LARP 0); null = no verdict yet. `larp.delta` detects a grade change. */
   larp?: number | null;
+  /**
+   * 0.1.5 dev history (task-1425): how many of this coin's creator's prior launches dexterm recorded as `rug`
+   * (keyless-proxy labels, local history). null = unknown (no creator link or nothing labelled) → clauses are false.
+   * e.g. `when devrugs >= 2 then alert(warn, "new coin from a wallet that rugged before") scope newpairs`.
+   */
+  devRugs?: number | null;
   ageMin?: number | null;
   chg?: { m5?: number | null; h1?: number | null; h6?: number | null; h24?: number | null } | null;
   buys?: number | null; sells?: number | null; bonding?: number | null;
@@ -52,13 +58,13 @@ export const FIELDS: Record<string, FieldFn> = {
   vol5m: (r) => r.vol5m, vol1h: (r) => r.vol1h, vol24: (r) => r.vol24,
   holders: (r) => r.holders, org: (r) => r.org, top10: (r) => r.top10, dev: (r) => r.dev,
   lplocked: (r) => r.lpLocked, bundled: (r) => r.bundled, snipers: (r) => r.snipers,
-  cluster: (r) => r.cluster, larp: (r) => r.larp,
+  cluster: (r) => r.cluster, larp: (r) => r.larp, devrugs: (r) => r.devRugs,
   fresh: (r) => r.fresh, mintable: (r) => r.mintable, freezable: (r) => r.freezable,
   age: (r) => r.ageMin, m5: (r) => r.chg?.m5, h1: (r) => r.chg?.h1, h6: (r) => r.chg?.h6, h24: (r) => r.chg?.h24,
   buys: (r) => r.buys, sells: (r) => r.sells, bonding: (r) => r.bonding,
 };
 export const FIELD_NAMES = Object.keys(FIELDS);
-const ALIASES: Record<string, string> = { vol: 'vol24', volume: 'vol24', liquidity: 'liq', cap: 'mcap', mc: 'mcap', holder: 'holders', organic: 'org', top: 'top10', locked: 'lplocked', 'cluster%': 'cluster', clusterpct: 'cluster', freshwallets: 'fresh', mintauth: 'mintable', freezeauth: 'freezable' };
+const ALIASES: Record<string, string> = { vol: 'vol24', volume: 'vol24', liquidity: 'liq', cap: 'mcap', mc: 'mcap', holder: 'holders', organic: 'org', top: 'top10', locked: 'lplocked', 'cluster%': 'cluster', clusterpct: 'cluster', freshwallets: 'fresh', mintauth: 'mintable', freezeauth: 'freezable', devrug: 'devrugs', serialrugger: 'devrugs' };
 type Op = '>' | '>=' | '<' | '<=' | '=' | '==' | '!=';
 const OPS: Record<Op, (a: number, b: number) => boolean> = { '>': (a, b) => a > b, '>=': (a, b) => a >= b, '<': (a, b) => a < b, '<=': (a, b) => a <= b, '=': (a, b) => a === b, '==': (a, b) => a === b, '!=': (a, b) => a !== b };
 const TAGS: Record<string, (r: RuleRow, v: string) => boolean> = {

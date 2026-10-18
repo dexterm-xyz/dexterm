@@ -246,6 +246,10 @@ export const SCHEMAS: Record<string, SchemaNode> = {
       /** Reserved: the trading gate is NOT here (signer policy owns it); listed so a proposal that tries gets a precise refusal. */
       gate: { type: 'string', enum: ['keypress'] },
     } },
+    /** 0.1.5: which of the user's own CLIs runs the analyst. `/analyst` is user-only (DENIED_FOR_MODELS): a model never picks its own engine. */
+    analyst: { type: 'object', additional: false, props: {
+      engine: { type: 'string', enum: ['auto', 'claude', 'codex'] },
+    } },
     /** task-1393: voice-out preferences. `/voice` is user-only (DENIED_FOR_MODELS), so only the keyboard sets it. */
     voice: { type: 'object', additional: false, props: {
       name: { type: 'string', max: 64 },
@@ -337,6 +341,8 @@ export interface DextermConfig {
   jarvis?: { configAssistant?: boolean; proposalTtlS?: number; gate?: 'keypress' };
   /** JARVIS voice-out preferences (task-1393). `name` is a `say` voice; the resolver falls back safely if it is missing. */
   voice?: { name?: string; rate?: number; pitch?: number };
+  /** The analyst engine (0.1.5): the user's own `claude` or `codex` CLI, or `auto` (claude if installed, else codex). */
+  analyst?: { engine?: 'auto' | 'claude' | 'codex' };
   /** Alert delivery routing (task-1398). Enable flags + per-channel `levels` filter only; credentials live in ~/.dexterm/*.json. */
   alerts?: AlertsConfig;
   scan?: Record<string, unknown>;
@@ -431,7 +437,7 @@ export function applyOps<T>(doc: T, ops: PatchOp[]): { doc: T; inverse: PatchOp[
 export const DENIED_FOR_MODELS: RegExp[] = [
   /^\/signer(\/|$)/, /^\/trading(\/|$)/, /^\/keys(\/|$)/, /^\/caps(\/|$)/, /^\/mandates?(\/|$)/, /^\/wallet(\/|$)/,
   /^\/packs(\/|$)/, /^\/plugins\/[^/]+\/(capabilities|enabled)(\/|$)/, /^\/plugins\/[^/]+$/, /^\/plugins$/,
-  /^\/jarvis\/gate(\/|$)/, /^\/jarvis\/configAssistant$/, /^\/voice(\/|$)/, /^\/alerts(\/|$)/, /^\/agents(\/|$)/, /^\/version$/,
+  /^\/jarvis\/gate(\/|$)/, /^\/jarvis\/configAssistant$/, /^\/voice(\/|$)/, /^\/analyst(\/|$)/, /^\/alerts(\/|$)/, /^\/agents(\/|$)/, /^\/version$/,
   /^\/rules\/(\d+|-)\/then\/(\d+|-)\/args\/(arm|armed|auto|autoArm|confirm|execute|sign|send)(\/|$)/,
 ];
 /** Keys a model-authored VALUE may never contain at any depth (money/secret-shaped), whatever the path. */

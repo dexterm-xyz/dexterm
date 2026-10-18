@@ -2,6 +2,28 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.5] - 2026-10-18
+
+An agents-and-analyst release: let an agent you connected paper trade inside a mandate you armed, run the analyst on your own Codex login, and see a coin creator's recorded history. Trading remains experimental; agent trading is paper only, and this release does not enable mainnet trading.
+
+### Added
+
+- **Agent paper trading (experimental, off by default).** Arm a mandate yourself, start `dexterm --spectate-mcp --agent-paper <mandate-id>`, and an agent connected over `dexterm mcp` can open, size, confirm and close simulated (paper) trades inside your caps with six `paper_*` tools. It can never sign or send a real transaction, touch a wallet or key, or raise a cap. The agent's tools never carry caps: the server re-reads the armed mandate on every call, and a size over any cap is refused. Ctrl+P pauses, Ctrl+K stops, and any key takes over. The in-app analyst never gets these tools. Paper figures are simulated, not results.
+- **Codex as the analyst engine.** `--analyst-engine codex`, `analyst.engine` in `config.json` or `/engine codex` runs the analyst on your own Codex CLI login (0.163.0 or newer) instead of Claude. The Codex run is locked read-only in the Codex CLI itself: no shell, no file edits, no web search, only the read-only dexterm tools and the UI actions the session allows. `dexterm doctor` gains a Codex line. No key ships and no credential is read.
+- **Dev history.** The token screen shows a coin creator's recorded track record from your local history (labelled rugs out of prior launches with the sample size, launches seen, how fast the dev sold, linked wallets), the `devrugs` rule field can alert on a new coin from a wallet that rugged before, and the read-only `dev_history` MCP tool returns the same report. It says `unknown` when there is no record. The published measurement currently has too few repeat deployers to rate the signal.
+
+### Fixed
+
+- A live `--record` session is no longer discarded at quit when a third-party URL carries a `key=` parameter; the recording is scrubbed instead.
+- Quitting by SIGTERM or SIGHUP runs the normal teardown.
+- A terminal following an external MCP agent moves with its view-only navigation and shows its paper calls.
+
+### Known issues
+
+- Trading remains experimental and no mainnet trading is enabled. Models and voice only propose; signer-side gates remain unchanged.
+- The Codex engine was verified against codex-cli 0.163.0 with a local mock model. On Windows only `codex.exe` is detected, so an npm-installed `codex.cmd` reads as not installed.
+- Dev history only knows what your own recorder has seen.
+
 ## [0.1.4] - 2026-10-16
 
 A visibility and usability release: follow an MCP agent in the terminal, learn the app from a beginner guide, and inspect the evidence behind the checks. Trading remains experimental; this release does not enable mainnet trading.

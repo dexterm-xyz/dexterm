@@ -25,8 +25,6 @@ date: 2026-10-16
 
 **The part of the LARP check that can be replayed on history is weak, and the model stage cannot be replayed at all. dexterm prints only what it measured, including the weak numbers.**
 
-The public measurement scorecard (https://dexterm.xyz/scorecard/) is generated directly from the checked-in research JSON. It includes the held-out dataset, confidence intervals, rolling skill-care result, frozen canary and every currently unmeasured stage; the weak 0.054 links-only MCC is not rounded into a favorable claim.
-
 **Skills backtest (0.1.2).** `dexterm backtest --subject skills` replays the replayable parts of the default analyst skills on recorded history: 1,054 coins from the project's recorder, labelled by a 72 h keyless outcome (bad = rug or dead). Tuning only ever sees the train split; the numbers below are the later, held-out test split of 328 coins, of which 18.6 % went bad.
 
 - **LARP check, links only.** The links-based baseline is a weak signal: MCC 0.039 before tuning, 0.054 after. Its tuned `LARP` grade caught 4 of 14 bad coins, too few to rate. `EARLY_BUT_REAL` coins still went bad 10.3 % of the time, and coins with no website 29.2 %. The skill now treats the baseline as a weak prior and never calls `LARP` from links alone.

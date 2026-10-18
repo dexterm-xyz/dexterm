@@ -9,6 +9,7 @@
 // sizes and confirms there, signer caps apply); acting on an ask proposal sends a question to the analyst. Nothing
 // in this module can arm, sign, confirm, open a live ticket or touch a mandate — there is no code path for it.
 import type { AppState } from './state.ts';
+import { devBookOf } from './live/dev-history.ts';
 import type { CustomUi } from './custom.ts';
 import type { ScreenerRow } from './screener/rows.ts';
 import {
@@ -131,10 +132,13 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
     return c ? c.pct : null;
   };
   const openMint = state.live?.token?.view.mint ?? null;
+  // 0.1.5 dev history: the creator's recorded rugs as the `devrugs` field (local recorder only; null = unknown).
+  const book = devBookOf(state);
+  const devRugsOf = (mint: string): number | null => book ? book.rugsFor(mint) : null;
   for (const r of state.screener.rows as ScreenerRow[]) {
     if (!r.mint || r.skeleton || seen.has(r.mint)) continue;
     seen.add(r.mint);
-    const row = Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict) }) as RuleRow;
+    const row = Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict), devRugs: devRugsOf(r.mint) }) as RuleRow;
     if (r.mint === openMint) overlaySignalFields(row, state, r.mint);
     out.push(row);
   }
@@ -144,11 +148,28 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
     const row = Object.assign(Object.create(null), {
       mint: v.mint, symbol: v.symbol, price: v.price, mcap: v.mcap, fdv: v.fdv, liq: v.liq, vol24: v.vol24,
       holders: v.holders, org: v.org, top10: v.top10, dev: v.dev, lpLocked: v.lpLocked,
-      cluster: clusterOf(v.mint), larp: larpGrade(state.larpByMint?.get(v.mint)?.verdict),
+      cluster: clusterOf(v.mint), larp: larpGrade(state.larpByMint?.get(v.mint)?.verdict), devRugs: devRugsOf(v.mint),
       ageMin: v.ageMin, chg: v.chg, launchpad: v.launchpad, flags: v.flags, verified: v.verified, sus: v.sus,
     }) as RuleRow;
     overlaySignalFields(row, state, v.mint);
     out.push(row);
+  }
+  // 0.1.5 dev history: a brand-new pair (PumpPortal / RugCheck) whose creator has a labelled record becomes a rule
+  // row too, so `devrugs >= N scope newpairs` can alert on a new coin from a wallet that rugged before. Only pairs
+  // with a known record are added (no flood of unknowns); every other field is what the new-pairs feed knows.
+  const np = state.live?.newpairs;
+  if (book && np) {
+    const now = Date.now();
+    for (const p of np.rows.values()) {
+      if (seen.has(p.mint) || !p.creator) continue;
+      const devRugs = devRugsOf(p.mint);
+      if (devRugs === null) continue;
+      seen.add(p.mint);
+      out.push(Object.assign(Object.create(null), {
+        mint: p.mint, symbol: p.symbol, mcap: p.mcap, liq: p.liq, holders: p.holders, launchpad: p.launchpad,
+        ageMin: p.createdAt ? Math.max(0, (now - p.createdAt) / 60_000) : null, bonding: p.bonding, devRugs,
+      }) as RuleRow);
+    }
   }
   return out;
 }

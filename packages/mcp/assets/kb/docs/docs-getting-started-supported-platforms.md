@@ -30,8 +30,8 @@ This table says what each platform has actually been through, not what we expect
 |---|---|---|
 | Linux x64, Node 22 and 24 | tested | the full suite on every push in CI (Ubuntu), and the same steps in Docker (`node:22-bookworm`, `node:24-bookworm`), including the install smoke |
 | macOS on Intel | tested | the full suite on every change, the install smoke, and a Homebrew install (slow: Homebrew builds Node from source on Intel) |
-| macOS on Apple Silicon | not yet tested | a CI leg on an Apple Silicon runner (`macos-14`) and a manual Homebrew job (tap, trust, install, `brew test`) are written and lint clean; they run for the first time with the next release |
-| Windows x64 | experimental, not yet tested | a CI leg (`windows-latest`) is written: typecheck and the install smoke must pass, the test suite may fail without failing the run. It has not run yet. Known gaps are listed below |
+| macOS on Apple Silicon | tested in CI (0.1.4) | the full suite on an Apple Silicon runner (`macos-14`) passed on the 0.1.4 release candidate. The manual Homebrew job (tap, trust, install, `brew test`) has not run yet |
+| Windows x64 | experimental, tested in CI (0.1.4) | the `windows-latest` leg runs the full suite and it passed on the 0.1.4 release candidate (a few tests that need POSIX file permissions or Unix-only tools are skipped, and ACL-based file isolation is not verified). Known gaps are listed below |
 | WSL2 | not tested separately | it is Linux, so expect the Linux behaviour |
 
 Known gaps on Windows (none of them affect key safety: dexterm never holds a wallet key on any platform):

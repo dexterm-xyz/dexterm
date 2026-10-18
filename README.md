@@ -13,10 +13,10 @@
 - **Token screen**: price, candles, trade tape or buy/sell flow, holders, mint/freeze authority, RugCheck and GoPlus safety reads, links, and a LARP check on the project's website and socials.
 - **New pairs**: a live push feed of launches and migrations with launch forensics.
 - **Watchlist and alerts**, persisted locally in SQLite.
-- **The analyst**: press `a` and your own Claude Code login reads the same tool results (through dexterm's read-only MCP server) and answers in plain language. Every answer is labelled model output with the age of every number. Token names, descriptions and fetched pages reach the model wrapped as untrusted text.
+- **The analyst**: press `a` and your own Claude Code login reads the same tool results (through dexterm's read-only MCP server) and answers in plain language (from 0.1.5 it can run on your own Codex login instead, locked read-only). Every answer is labelled model output with the age of every number. Token names, descriptions and fetched pages reach the model wrapped as untrusted text.
 - **Trading, paper by default**: a simulated (paper) wallet priced from live quotes, for tickets, positions, order plans and copy trading. Both paper and live trading are experimental in 0.1.0 and have known bugs. A **live** path, still maturing, sends a capped transaction to your own Phantom wallet to sign: devnet by default, mainnet only when you start dexterm with `--mainnet`. Every run starts on paper.
 - **A docked chart window** (TradingView Lightweight Charts, vendored, served from a loopback-only server) when you opt into building the small native shell.
-- **An MCP server** (`dexterm mcp`) so your own agents can use the same read-only tools.
+- **An MCP server** (`dexterm mcp`) so your own agents can use the same read-only tools. From 0.1.5, and only if you start `--agent-paper` on a mandate you armed, an agent you connected can also paper trade (simulated only) inside that mandate.
 
 ## Install
 
@@ -82,7 +82,7 @@ What dexterm **never does**, on any published version:
 - see, store or import your wallet's private key or seed phrase: a real trade is signed in your own wallet (Phantom, on a one-shot loopback page in your browser), and dexterm stores only your public key;
 - sign or send without you: models, voice, agents and pipes can only propose; arming a plan or sending a trade takes a physical keypress, and a Phantom trade also takes your approval in the wallet;
 - trade outside the caps: a separate signer process enforces per-trade and daily USD caps, price-impact, slippage and SOL-out ceilings on every transaction, and refuses anything out of policy even if the UI, the model or a popup is compromised; devnet by default, mainnet only with `--mainnet` and a red banner;
-- give the model a way to trade: the analyst and the MCP server have no build, sign or send tool; the most the analyst can do is navigate and open a PAPER ticket;
+- give the model a way to trade: the analyst and the MCP server have no build, sign or send tool; the most the analyst can do is navigate and open a PAPER ticket, and an agent you opt in with `--agent-paper` can only book simulated (paper) trades inside a mandate you armed (its tools never carry caps);
 - open a server reachable from outside your machine (the chart server and the wallet bridge bind `127.0.0.1` with per-use tickets);
 - phone home: no telemetry, no crash reports, no account, no update check.
 

@@ -51,18 +51,19 @@ export function renderAnalyst(c: Canvas, state: AppState): void {
   // next to live data — in live mode the empty tab says how to start a real conversation instead.
   if (state.screener.source !== 'fixtures') {
     const live = state.aiFocused === true;
-    const b = c.box(0, top, chatW, bottom - top, { title: '✦ ANALYST · claude', titleFg: t.ai, caption: 'read-only · local claude CLI · on demand', captionFg: t.dim, border: bc });
+    const eng = state.analystEngine ?? 'claude'; // 0.1.5: the user's own CLI that will answer (claude | codex)
+    const b = c.box(0, top, chatW, bottom - top, { title: `✦ ANALYST · ${eng}`, titleFg: t.ai, caption: `read-only · local ${eng} CLI · on demand`, captionFg: t.dim, border: bc });
     const bbg = b.bg; const bin = b.w - 2; let by = b.y + 1;
     const say2 = (s: string): void => { for (const w2 of wrap(s, bin - 2)) { if (by >= b.y + b.h - 3) break; c.text(b.x + 2, by, w2, { fg: t.muted, bg: bbg }, bin - 2); by += 1; } };
     say2('No conversation yet.'); by += 1;
-    say2("Press  i  to ask claude about the market, a token, or your watchlist. It can read the live screener, a token's holders / tape / RugCheck, and your watchlist — read-only, never trades.");
+    say2(`Press  i  to ask ${eng} about the market, a token, or your watchlist. It can read the live screener, a token's holders / tape / RugCheck, and your watchlist — read-only, never trades.`);
     const iy = b.y + b.h - 2;
     c.hline(b.x, iy - 1, b.w, { fg: bc, bg: bbg, soft: true });
     c.put(b.x, iy - 1, '├', { fg: bc, bg: bbg, soft: true }); c.put(b.x + b.w - 1, iy - 1, '┤', { fg: bc, bg: bbg, soft: true });
     const typed = state.aiInput ?? '';
     c.text(b.x + 1, iy, '▌', { fg: t.ai, bg: bbg, b: true, soft: true });
     if (typed) c.text(b.x + 2, iy, typed + (live ? '█' : ''), { fg: t.text, bg: bbg }, bin - 2);
-    else c.text(b.x + 2, iy, live ? '█ type your question…  ⏎ send · esc blur' : 'press i to ask claude · ⏎ to focus', { fg: t.dim, bg: bbg, i: true }, bin - 2);
+    else c.text(b.x + 2, iy, live ? '█ type your question…  ⏎ send · esc blur' : `press i to ask ${eng} · ⏎ to focus`, { fg: t.dim, bg: bbg, i: true }, bin - 2);
     if (railW) renderCoinList(c, chatW, top, railW, bottom - top, state);
     footer(c, analystFooter(state, live), state.theme.name, isCalm(state.vfx));
     return;

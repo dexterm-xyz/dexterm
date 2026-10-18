@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at e0030ad and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 123393b and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -355,6 +355,14 @@ can be overridden or extended from `~/.dexterm` (`dexterm kb|skill …`, see Cus
 - **Standalone server.** `dexterm mcp` is a plain stdio MCP server; add it to any Claude Code with
   `claude mcp add dexterm -- node packages/mcp/bin/dexterm-mcp.mjs`. (It runs its own in-memory data layer;
   sharing the TUI's live cache over a socket is a later card.)
+- **Or on Codex (0.1.5).** `--analyst-engine codex` (or `DEXTERM_ANALYST_ENGINE`, `analyst.engine` in
+  `config.json`, `/engine codex` in the chat; `auto` prefers claude, then codex) runs the same turns on **your own
+  `codex exec`** login. The lock lives in the Codex CLI itself: user config and rules ignored, shell/exec, apps,
+  plugins, hooks and sub-agents disabled (`--disable` fails closed on an unknown name), sandbox read-only,
+  approvals never, web search off, one `dexterm` MCP server with an `enabled_tools` allow-list (read tools + the
+  session's UI actions, never a paper/trade tool), and a tripwire that stops a turn on any other item. Proof:
+  `packages/cli/test/codex-engine-015a.test.ts` (fake codex) and `packages/cli/test/measure/codex-015a` (the real
+  codex-cli against a local mock model). Codex also works as an MCP client: `dexterm mcp install codex`.
 
 **RPC and the Helius key.** `DEXTERM_RPC_URL` wins; else `~/.dexterm/helius.key` (mode 600, outside every repo) is
 read *in code* and the Helius URL is built in memory; else the public RPC (holders usually 429 there). The key is

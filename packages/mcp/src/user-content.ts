@@ -110,6 +110,7 @@ export function parseEntryFile(file: string, origin: Origin = 'bundled'): Conten
 const MONEY_WORDS = new Set([
   'trade', 'swap', 'sign', 'signer', 'send', 'arm', 'ticket', 'order', 'transfer', 'withdraw', 'buy', 'sell',
   'confirm', 'execute', 'submit', 'panic', 'cap', 'caps', 'mandate', 'mandates', 'approve', 'pay', 'payment', 'fund',
+  'close', // task-1443: paper_close books a (simulated) sell — a skill may never name it
 ]);
 /** Tools that exist in dexterm and are money-adjacent by name, refused even though the server knows them. */
 export const MONEY_TOOLS = ['open_ticket'] as const;

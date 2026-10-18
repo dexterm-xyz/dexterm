@@ -64,6 +64,8 @@ export const GOLDEN: Array<[string, string]> = [
   ['customize the keymap and rebind a key', 'custom-keymap'],
   ['paper trade a coin', 'paper-trade'],
   ['how do I paper buy a token', 'paper-trade'],
+  ['let an agent paper trade for me', 'agent-paper-trade'],
+  ['how do I let an agent confirm paper trades within my mandate', 'agent-paper-trade'],
   ['diagnose problems with doctor', 'run-doctor'],
   ['update dexterm to the latest version', 'update-dexterm'],
   ['edit an analyst skill', 'edit-kb-or-skill'],
@@ -110,4 +112,9 @@ export const GOLDEN: Array<[string, string]> = [
   ['login with twitter', 'login-with-x'],
   ['get help on how the app works', 'app-help-command'],
   ['run the popup self-test', 'chart-popup-selftest'],
+  // 0.1.5: codex engine + dev history
+  ['use codex instead of claude for the analyst', 'use-codex-analyst'],
+  ['switch the analyst engine to codex', 'use-codex-analyst'],
+  ['has this deployer rugged before', 'dev-history'],
+  ['show the dev rugs on the token screen', 'dev-history'],
 ];

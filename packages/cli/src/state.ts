@@ -6,6 +6,8 @@ import {
 } from '@dexterm/tui';
 import { makeFixtures, type Fixtures, type FixtureToken, type TranscriptLine } from './fixtures.ts';
 import type { AnalystSession, AnalystOpts } from './analyst/session.ts';
+import type { AnalystEngine } from './analyst/codex.ts';
+import type { DevHistoryBook } from './live/dev-history.ts';
 import { fromFixture } from './screener/rows.ts';
 import { makeScreenerState, screenerView, type ScreenerState } from './screener/view.ts';
 import type { ScreenerFeed } from './feed.ts';
@@ -94,6 +96,14 @@ export interface AppState {
    * of cancelling it; `state.analyst` points at the session for whatever is on screen.
    */
   analystByMint?: Map<string, AnalystSession>;
+  /**
+   * 0.1.5: which of the user's own CLIs runs NEW analyst conversations (`claude` or `codex`), resolved at start
+   * from `--analyst-engine` / DEXTERM_ANALYST_ENGINE / config `analyst.engine` / auto, switchable with `/engine`.
+   * Absent = claude (one-shot renders, fixtures and tests).
+   */
+  analystEngine?: AnalystEngine;
+  /** 0.1.5 dev history: the per-mint cache over the recorder DB (created on first use in live mode). */
+  devBook?: DevHistoryBook;
   /**
    * Cached LARP-detector verdict per mint (task-1315), set when a `larp-check` analyst turn settles.
    * The screener column and token-screen badge are drawn ONLY for a mint present here — never a guess.

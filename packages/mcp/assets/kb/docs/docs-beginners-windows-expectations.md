@@ -26,4 +26,4 @@ sources:
 date: 2026-10-16
 ---
 
-Windows x64 is experimental and has not yet run the written CI job. File permissions rely on your Windows user profile; voice has no Windows speech engine; browser-opening actions show a URL instead; `doctor` may print a macOS/Linux repair command; and the npm-installed `claude.cmd` is not detected as a usable analyst binary. These limits do not change the key rule: dexterm never holds your wallet keys.
+Windows x64 is experimental: the full CI suite passed for 0.1.4, though some file-permission checks are skipped. File permissions rely on your Windows user profile; voice has no Windows speech engine; browser-opening actions show a URL instead; `doctor` may print a macOS/Linux repair command; and the npm-installed `claude.cmd` is not detected as a usable analyst binary. These limits do not change the key rule: dexterm never holds your wallet keys.

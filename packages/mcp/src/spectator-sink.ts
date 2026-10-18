@@ -8,7 +8,7 @@
 // already completed. The file is local and token-marked; raw addresses live only on this loopback channel
 // and are redacted before anything leaves the machine.
 
-import { appendFileSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -31,13 +31,21 @@ export interface McpSpectatorRecord {
 }
 
 /** The UI-action tools that move the screen (so follow mode can visibly perform them). */
-const NAV_TOOLS = new Set(['open_token', 'show_in_screener', 'switch_feed', 'add_to_watchlist', 'open_ticket']);
+const NAV_TOOLS = new Set(['open_token', 'show_in_screener', 'switch_feed', 'switch_screen', 'add_to_watchlist', 'open_ticket']);
+
+/**
+ * task-1443: the view-only UI tools an EXTERNAL agent may use to move a terminal that follows it over MCP. Nothing
+ * here changes user data or settings (no watchlist add, no ticket, no theme/workspace): the screen only moves.
+ */
+export const FOLLOW_NAV_ACTIONS = ['open_token', 'show_in_screener', 'switch_feed', 'switch_screen'] as const;
 
 function navFor(tool: string, args: Record<string, unknown>): McpSpectatorRecord['nav'] {
   const s = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
   if (tool === 'open_token') return { screen: 'token', mint: s(args.mint) };
   if (tool === 'switch_feed') return { screen: 'screener', feed: s(args.feed) };
-  if (tool === 'show_in_screener') return { screen: 'screener', filter: s(args.filter), highlight: s(args.highlight) };
+  if (tool === 'show_in_screener') return { screen: 'screener', feed: s(args.preset), filter: s(args.filter), highlight: s(args.highlight) };
+  // task-1443: the task-1413 view-only screen switch moves a following terminal too (e.g. to positions).
+  if (tool === 'switch_screen') return s(args.screen) ? { screen: s(args.screen) } : null;
   if (tool === 'add_to_watchlist') return { screen: 'watchlist', mint: s(args.mint) };
   if (tool === 'open_ticket') return { screen: 'ticket', mint: s(args.mint), side: s(args.side) };
   return null;
@@ -59,6 +67,28 @@ function shortMint(args: Record<string, unknown>): string {
   return m ? ` ${m.length > 10 ? m.slice(0, 6) + '…' : m}` : '';
 }
 
+/**
+ * task-1443: a readable, PAPER-labelled summary for an agent paper-trading call, so the activity panel says what
+ * the agent did to the simulated ledger (side, size, symbol), not just the tool name. null for any other tool.
+ */
+export function paperSummary(tool: string, args: Record<string, unknown>, result: Record<string, unknown>): string | null {
+  if (!tool.startsWith('paper_')) return null;
+  const s = (v: unknown) => (typeof v === 'string' ? v.slice(0, 16) : '');
+  const t = (result.ticket ?? {}) as Record<string, unknown>;
+  const f = (result.fill ?? {}) as Record<string, unknown>;
+  switch (tool) {
+    case 'paper_open_ticket': return `PAPER open ${s(args.side)} ticket ${s(args.symbol)}`.trim();
+    case 'paper_size_ticket': return typeof t.usd === 'number' ? `PAPER size ${s(t.symbol)} $${t.usd.toFixed(2)}` : typeof t.fraction === 'number' ? `PAPER size ${s(t.symbol)} ${Math.round(t.fraction * 100)}%` : 'PAPER size';
+    case 'paper_confirm': case 'paper_close': {
+      const sol = typeof f.solDelta === 'number' ? ` ${f.solDelta > 0 ? '+' : ''}${f.solDelta.toFixed(4)} SOL` : '';
+      return `PAPER ${tool === 'paper_close' ? 'close' : s(f.side) || 'fill'} ${s(f.symbol)}${sol}`;
+    }
+    case 'paper_positions': return `PAPER positions (${Array.isArray(result.positions) ? result.positions.length : 0})`;
+    case 'paper_pnl': return 'PAPER pnl';
+    default: return null;
+  }
+}
+
 /** Build one spectator record for a completed MCP tool call. */
 export function recordForToolCall(opts: { seq: number; agent: string; tool: string; args: Record<string, unknown>; result: Record<string, unknown>; ms: number; token?: string; now?: () => number }): McpSpectatorRecord {
   const isErr = typeof opts.result.error === 'string';
@@ -68,7 +98,7 @@ export function recordForToolCall(opts: { seq: number; agent: string; tool: stri
     // `nav` phase is the enforcement boundary that prevents a denied MCP call from moving the owner's TUI.
     v: 1, seq: opts.seq, t: (opts.now ?? Date.now)(), phase: isErr ? 'refused' : nav ? 'nav' : 'result',
     agent: opts.agent, transport: 'mcp', tool: opts.tool,
-    summary: isErr ? `error: ${String(opts.result.error).slice(0, 80)}` : `${opts.tool}${shortMint(opts.args)}`,
+    summary: isErr ? `error: ${String(opts.result.error).slice(0, 80)}` : paperSummary(opts.tool, opts.args, opts.result) ?? `${opts.tool}${shortMint(opts.args)}`,
     ms: opts.ms, dataAgeSec: isErr ? null : maxAgeSec(opts.result), nav, ok: !isErr,
     ...(opts.token ? { token: opts.token } : {}),
   };
@@ -108,6 +138,40 @@ function spectatorHome(env: NodeJS.ProcessEnv): string {
 }
 
 export function rendezvousPath(env: NodeJS.ProcessEnv): string { return join(spectatorHome(env), MCP_SPECTATOR_RENDEZVOUS); }
+
+// task-1443: an EXTERNAL `dexterm mcp` server has no DEXTERM_SCREEN_STATE (the running app did not spawn it), so it
+// could never validate a navigation call against "the tokens currently on screen" and every nav tool failed — the
+// following terminal never moved. While a terminal follows over MCP it publishes a reduced snapshot of its screen
+// (screen, visible rows, selection, the action allow-list; no wallet, positions, tickets or app settings) here,
+// refreshed about once a second; the server validates nav calls against it exactly as it does for the in-app analyst.
+
+/** The follow-mode screen snapshot file name under ~/.dexterm. */
+export const MCP_FOLLOW_SCREEN = 'mcp-screen.json';
+/** A snapshot older than this is ignored (the terminal quit or froze): nav calls then fail closed. */
+export const FOLLOW_SCREEN_MAX_AGE_MS = 10_000;
+
+export function followScreenPath(env: NodeJS.ProcessEnv): string { return join(spectatorHome(env), MCP_FOLLOW_SCREEN); }
+
+/** Write the follow-mode snapshot (0600). Best-effort: a write failure only means nav calls fail closed. */
+export function writeFollowScreen(env: NodeJS.ProcessEnv, snapshot: Record<string, unknown>): void {
+  try { writeFileSync(followScreenPath(env), JSON.stringify(snapshot) + '\n', { mode: 0o600 }); } catch { /* fail closed */ }
+}
+
+/** Remove the follow-mode snapshot (the terminal quit or stopped following). */
+export function clearFollowScreen(env: NodeJS.ProcessEnv): void {
+  try { rmSync(followScreenPath(env), { force: true }); } catch { /* ignore */ }
+}
+
+/** Read the follow-mode screen snapshot, or null when absent, malformed or stale. Never throws. */
+export function readFollowScreen(env: NodeJS.ProcessEnv, now: number = Date.now()): Record<string, unknown> | null {
+  const path = followScreenPath(env);
+  try {
+    const st = statSync(path);
+    if (now - st.mtimeMs > FOLLOW_SCREEN_MAX_AGE_MS) return null;
+    const o = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    return o && typeof o === 'object' && !Array.isArray(o) ? o as Record<string, unknown> : null;
+  } catch { return null; }
+}
 
 /** A sink the MCP server calls for EVERY tool call. `active()` is a cheap check of whether any spectator
  *  surface is listening right now; when it is false the server builds no record and nothing is written. */

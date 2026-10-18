@@ -136,4 +136,15 @@ CREATE TABLE IF NOT EXISTS verdicts (
   run_file     TEXT
 );
 CREATE INDEX IF NOT EXISTS verdicts_mint_t ON verdicts (mint, t);
+
+-- 0.1.5 dev history: which wallet created a coin, as a keyless source named it when dexterm saw the coin
+-- (Jupiter tokens v2 \`dev\`, a PumpPortal create, RugCheck new_tokens). First writer wins; never a guess.
+CREATE TABLE IF NOT EXISTS creators (
+  mint        TEXT PRIMARY KEY,
+  creator     TEXT NOT NULL,
+  source      TEXT NOT NULL,             -- 'jupiter-tokens' | 'pumpportal' | 'rugcheck' | 'goplus'
+  first_t     INTEGER NOT NULL,          -- unix ms dexterm first recorded the link
+  created_at  INTEGER                    -- the coin's creation time when the source gave one
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS creators_creator ON creators (creator, first_t);
 `;

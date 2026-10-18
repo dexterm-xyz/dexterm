@@ -22,7 +22,7 @@ import {
   SpectatorHub, FollowController, SpectatorServer,
   type AgentControls, type SpectatorEvent, type SpectatorNav, type FollowView,
 } from '@dexterm/agents';
-import { rendezvousPath } from '@dexterm/mcp';
+import { rendezvousPath, writeFollowScreen, clearFollowScreen } from '@dexterm/mcp';
 
 /** One record the MCP server appends (mirrors @dexterm/mcp McpSpectatorRecord; the hub re-seqs on ingest). */
 interface IngestRecord {
@@ -51,6 +51,17 @@ export interface McpFollowOptions {
   onStatus?: (line: string) => void;
   /** Called after any folded event so the caller can redraw. */
   onEvent?: () => void;
+  /**
+   * task-1443: called with the owner's control after every pause / take-over / resume / kill, so agent paper
+   * trading (when the user enabled it) halts with the follow controls. Never called for a follow-only session.
+   */
+  onControl?: (state: 'running' | 'paused' | 'takeover' | 'stopped') => void;
+  /**
+   * task-1443: a reduced snapshot of what this terminal shows (screen, visible rows, selection, the nav allow-list;
+   * never wallet, positions, tickets or settings). Published about once a second so an EXTERNAL `dexterm mcp`
+   * server can answer screen_state and validate view-only nav calls against it. Omitted → nothing is published.
+   */
+  snapshot?: () => Record<string, unknown>;
   /** Also start the read-only, loopback, token-gated spectator stream (redacted). Default off. */
   stream?: boolean;
   now?: () => number;
@@ -87,6 +98,7 @@ export class McpFollowSession {
   private stream: SpectatorServer | null = null;
   private armed = false;
   private paused = false;
+  private lastSnapshot = 0;
 
   constructor(opts: McpFollowOptions) {
     this.opts = opts;
@@ -113,9 +125,18 @@ export class McpFollowSession {
       catch { this.stream = null; }
     }
     if (!this.timer) {
-      this.timer = setInterval(() => this.pump(), Math.max(30, this.opts.pollMs ?? 150));
+      this.timer = setInterval(() => { this.pump(); this.publish(); }, Math.max(30, this.opts.pollMs ?? 150));
       (this.timer as { unref?: () => void }).unref?.();
     }
+  }
+
+  /** Publish the follow-mode screen snapshot (throttled to ~1/s; only while armed). Never throws. */
+  publish(force = false): void {
+    if (!this.opts.snapshot || !this.armed) return;
+    const now = (this.opts.now ?? Date.now)();
+    if (!force && now - this.lastSnapshot < 1000) return;
+    this.lastSnapshot = now;
+    try { writeFollowScreen(this.opts.env, this.opts.snapshot()); } catch { /* fail closed: stale → nav refused */ }
   }
 
   /** Write (or re-write) the channel + rendezvous so the server emits here. */
@@ -134,7 +155,7 @@ export class McpFollowSession {
       // A second follow surface may have replaced the rendezvous after this session started.  Never remove
       // another surface's live handle when this one pauses, is killed, or exits.
       const current = JSON.parse(readFileSync(this.rvPath, 'utf8')) as { token?: unknown };
-      if (current.token === this.token) rmSync(this.rvPath, { force: true });
+      if (current.token === this.token) { rmSync(this.rvPath, { force: true }); if (this.opts.snapshot) clearFollowScreen(this.opts.env); }
     } catch { /* absent/malformed/another surface owns it */ }
     this.armed = false;
   }
@@ -185,6 +206,12 @@ export class McpFollowSession {
       try { this.opts.onNav?.(ev.nav, label); } catch { /* a bad hook never breaks the tail */ }
       try { this.opts.onStatus?.(label); } catch { /* ignore */ }
     }
+    // task-1443: every agent PAPER write (fill, close, size, or a refusal) is toasted in the terminal, whatever the
+    // follow state, so the watcher always sees what the agent did to the simulated ledger.
+    if (typeof ev.tool === 'string' && /^paper_(open_ticket|size_ticket|confirm|close)$/.test(ev.tool)) {
+      const what = ev.ok === false ? `PAPER ${ev.tool.slice(6).replace('_', ' ')} refused · ${String(ev.summary ?? '').replace(/^error: /, '').slice(0, 70)}` : String(ev.summary ?? ev.tool);
+      try { this.opts.onStatus?.(`agent ${this.currentAgent}: ${what}`); } catch { /* ignore */ }
+    }
     try { this.opts.onEvent?.(); } catch { /* ignore */ }
   }
 
@@ -196,10 +223,11 @@ export class McpFollowSession {
   }
 
   // ----- the owner's controls. Each returns a short line to toast. -----
-  pause(): string { const l = this.follow.pause(this.currentAgent); this.paused = l.startsWith('paused '); this.opts.onStatus?.(l); return l; }
-  takeOver(): string { const l = this.follow.takeOver(this.currentAgent); this.paused = false; this.opts.onStatus?.(l); return l; }
-  resume(): string { const l = this.follow.resume(this.currentAgent); this.paused = false; this.opts.onStatus?.(l); return l; }
-  kill(): string { const l = this.follow.kill(this.currentAgent); this.paused = false; this.opts.onStatus?.(l); return l; }
+  pause(): string { const l = this.follow.pause(this.currentAgent); this.paused = l.startsWith('paused '); this.control('paused'); this.opts.onStatus?.(l); return l; }
+  takeOver(): string { const l = this.follow.takeOver(this.currentAgent); this.paused = false; this.control('takeover'); this.opts.onStatus?.(l); return l; }
+  resume(): string { const l = this.follow.resume(this.currentAgent); this.paused = false; this.control('running'); this.opts.onStatus?.(l); return l; }
+  kill(): string { const l = this.follow.kill(this.currentAgent); this.paused = false; this.control('stopped'); this.opts.onStatus?.(l); return l; }
+  private control(state: 'running' | 'paused' | 'takeover' | 'stopped'): void { try { this.opts.onControl?.(state); } catch { /* never breaks the key loop */ } }
 
   /** Any physical keypress while the agent is driving: the human takes over (no fight over the screen). */
   userKey(): void { if (this.follow.controlState === 'agent') this.takeOver(); }

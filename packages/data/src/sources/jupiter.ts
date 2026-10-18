@@ -195,6 +195,7 @@ export function normalizeJupToken(raw: JupRawToken, fetchedAt: number): JupToken
     top10Pct: numOrNull(raw.audit?.topHoldersPercentage),
     devPct: numOrNull(raw.audit?.devBalancePercentage),
     devMints: numOrNull(raw.audit?.devMints),
+    devAddress: typeof raw.dev === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw.dev) ? raw.dev : null,
     lpLockedPct: null,
     rugRisks: [],
     rugScore: null,

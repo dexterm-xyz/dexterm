@@ -36,4 +36,4 @@ date: 2026-10-16
 npm i -g dexterm-cli
 ```
 
-Linux x64 with Node 22 and 24 and macOS on Intel processors have passed the full automated tests plus a clean install-and-start check. Apple Silicon macOS has not yet run the project's written automated test. No `sudo` (the command that grants administrator power) is required for this npm path.
+Linux x64 with Node 22 and 24 and macOS on Intel processors have passed the full automated tests plus a clean install-and-start check. Apple Silicon macOS passed the same automated tests in CI for 0.1.4. No `sudo` (the command that grants administrator power) is required for this npm path.

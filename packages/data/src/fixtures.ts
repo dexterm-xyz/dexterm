@@ -103,18 +103,36 @@ export class FixtureStore {
 
   save(path: string, note?: string): void {
     mkdirSync(dirname(path), { recursive: true });
-    const file: FixtureFile = {
+    const raw: FixtureFile = {
       version: 1,
       recordedAt: new Date().toISOString(),
       note: note ?? this.note,
       entries: this.list(),
     };
-    if (this.streams.length) file.streams = this.streams;
-    const text = JSON.stringify(file, null, 1) + '\n';
-    // Belt and braces: the key is redacted at capture time; refuse to write a file that still carries one.
-    if (containsSecret(text)) throw new Error('refusing to save a recording that contains an api-key value');
-    writeFileSync(path, text);
+    if (this.streams.length) raw.streams = this.streams;
+    // Request URLs are redacted at capture time, but live response bodies echo third-party URLs with key-shaped
+    // params (DexScreener image URLs carry `&key=<cache id>`); refusing those threw away whole live sessions at
+    // quit (task-1443). Redact every string instead. Replay still matches: requestKey() redacts the same way.
+    const file = scrubSecrets(raw);
+    // Belt and braces: never write a file that still carries a key value (checked per string, so escaping is moot).
+    if (anyString(file, containsSecret)) throw new Error('refusing to save a recording that contains an api-key value');
+    writeFileSync(path, JSON.stringify(file, null, 1) + '\n');
   }
+}
+
+/** A deep copy of `v` with redactSecrets() applied to every string. */
+function scrubSecrets<T>(v: T): T {
+  if (typeof v === 'string') return redactSecrets(v) as T;
+  if (Array.isArray(v)) return v.map(scrubSecrets) as T;
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrubSecrets(x)])) as T;
+  return v;
+}
+
+function anyString(v: unknown, pred: (s: string) => boolean): boolean {
+  if (typeof v === 'string') return pred(v);
+  if (Array.isArray(v)) return v.some((x) => anyString(x, pred));
+  if (v && typeof v === 'object') return Object.values(v).some((x) => anyString(x, pred));
+  return false;
 }
 
 export function toEntry(req: HttpRequest, res: HttpResponse, recordedAt = new Date().toISOString()): FixtureEntry {

@@ -364,7 +364,15 @@ test('LOCKOUT (static): src/scan, src/analyst and the MCP server never import th
 
 test('LOCKOUT (MCP + validator): no tool can plan, confirm, sign, swap or panic; the only trade-shaped action is open_ticket, and it is PAPER-only', () => {
   const tools = TOOLS as unknown as readonly { name: string }[];
-  for (const tool of tools) assert.doesNotMatch(tool.name, /sign|confirm|plan|swap|wallet|panic|execute|submit|live|probe/i, tool.name);
+  // task-1443 changes this on purpose: the opt-in agent PAPER tools may confirm/close a SIMULATED trade inside an
+  // armed mandate (guarded by no-sign-registry-1443). They are exactly these four, and even they are never named
+  // like a real sign / swap / wallet / live / plan op.
+  const PAPER_WRITE = ['paper_open_ticket', 'paper_size_ticket', 'paper_confirm', 'paper_close'];
+  for (const tool of tools) {
+    if (PAPER_WRITE.includes(tool.name)) assert.doesNotMatch(tool.name, /sign|plan|swap|wallet|panic|execute|submit|live|probe/i, tool.name);
+    else assert.doesNotMatch(tool.name, /sign|confirm|plan|swap|wallet|panic|execute|submit|live|probe/i, tool.name);
+  }
+  assert.deepEqual(tools.filter((t) => /confirm|close|size|ticket/.test(t.name) && t.name !== 'open_ticket').map((t) => t.name).sort(), [...PAPER_WRITE].sort());
   assert.ok(tools.some((t) => t.name === 'open_ticket'));
   assert.deepEqual([...ANALYST_ACTION_TYPES].filter((t) => /confirm|sign|live|plan|panic/i.test(t)), []);
   const allow = { mints: [MINT], feeds: ['new'], sortKeys: ['vol24'] };

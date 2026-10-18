@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { ACTION_FILE_ENV, ACTION_TOKEN_ENV, ANALYST_ACTION_TYPES, parseActionLine } from '@dexterm/data';
 import { firewall, userSkillPreamble, type ContentEntry } from '@dexterm/mcp';
 import { skillStore } from '../kb-skill-cmd.ts';
+import { applyCodexEvent, buildCodexArgv, codexAllowedTools, codexDeveloperInstructions, codexFailure, expandSkillPrompt, newCodexTurn, strictSchema, type AnalystEngine } from './codex.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** assets/claude ships the plugin dir, the analyst system prompt and the output schemas. */
@@ -58,6 +59,11 @@ export interface AnalystRequest {
    * injected model cannot open a ticket (or navigate) from a scan session at any layer.
    */
   actionTypes?: readonly string[];
+  /**
+   * Which of the user's own CLIs runs the turn (0.1.5). Absent = `claude`, the original path, unchanged. A
+   * resumed session id belongs to the engine that created it, so a session keeps one engine for its life.
+   */
+  engine?: AnalystEngine;
 }
 
 /** The excluded action tools for a restricted session, as CLI tool names (task-1324). */
@@ -391,6 +397,8 @@ export function runAnalyst(req0: AnalystRequest, handlers: AnalystHandlers, deps
   actionPoll.unref?.();
   const stopActions = (): void => { drainActions(); if (actionPoll) { clearInterval(actionPoll); actionPoll = null; } };
 
+  if (req.engine === 'codex') return runCodexTurn(req, handlers, deps, { tmp, env, cleanup });
+
   let argv: string[];
   // A broken overlay never blocks a turn: fall back to the bundled skills (the loader already skipped bad files).
   let pluginDir = PLUGIN_DIR;
@@ -527,6 +535,147 @@ export function runAnalyst(req0: AnalystRequest, handlers: AnalystHandlers, deps
       try { child.stderr?.destroy(); } catch { /* ignore */ }
       try { child.unref(); } catch { /* ignore */ }
       cleanup();
+    },
+  };
+}
+
+/** The per-turn setup runAnalyst already did (temp dir, MCP env, action-channel tail) that a codex turn reuses. */
+interface TurnSetup { tmp: string; env: Record<string, string>; cleanup: () => void }
+
+/**
+ * One analyst turn on the user's own `codex exec --json` (0.1.5). Same handlers, same action channel, same
+ * firewalled context; the locks are in codex.ts. Codex reports whole messages (no token deltas), so text arrives
+ * per message; a structured turn's final JSON message becomes the result, never streamed as prose.
+ */
+function runCodexTurn(req: AnalystRequest, handlers: AnalystHandlers, deps: AnalystDeps, s: TurnSetup): AnalystHandle {
+  const allowed = codexAllowedTools(req.actionTypes);
+  let argv: string[];
+  let prompt: string;
+  try {
+    let schemaPath: string | undefined;
+    if (req.schema) {
+      const schema = JSON.parse(fs.readFileSync(path.join(ASSETS, 'schemas', path.basename(req.schema)), 'utf8'));
+      schemaPath = path.join(s.tmp, 'output.schema.json');
+      fs.writeFileSync(schemaPath, JSON.stringify(strictSchema(schema)), { mode: 0o600 });
+    }
+    let pluginDir = PLUGIN_DIR;
+    try { pluginDir = analystPluginDir(s.tmp); } catch { pluginDir = PLUGIN_DIR; }
+    // The claude CLI expands `/dexterm:<skill>` from the plugin dir; codex has none, so the playbook goes inline.
+    const expanded = expandSkillPrompt(turnPrompt(req), pluginDir, materializeUserSkill);
+    prompt = expanded;
+    argv = buildCodexArgv(req, {
+      nodePath: process.execPath, mcpBin: MCP_BIN, schemaPath,
+      developerInstructions: codexDeveloperInstructions(path.join(ASSETS, 'analyst-system.md')),
+    });
+  } catch (e) {
+    s.cleanup();
+    handlers.onError?.('analyst assets missing', (e as Error).message);
+    return { cancel() {} };
+  }
+
+  let child: ChildProcess;
+  try {
+    child = (deps.spawn ?? spawn)('codex', argv, { cwd: s.tmp, env: { ...process.env, ...s.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (e) {
+    s.cleanup();
+    handlers.onError?.('codex not found', (e as Error).message);
+    return { cancel() {} };
+  }
+
+  const t0 = Date.now();
+  const st = newCodexTurn();
+  let settled = false;
+  let stderr = '';
+  let buf = '';
+  let initSent = false;
+
+  const kill = (): void => {
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+    try { child.stdout?.destroy(); } catch { /* ignore */ }
+    try { child.stderr?.destroy(); } catch { /* ignore */ }
+    try { child.unref?.(); } catch { /* ignore */ }
+  };
+  const settle = (): void => { settled = true; s.cleanup(); };
+
+  child.on('error', (e: NodeJS.ErrnoException) => {
+    if (settled) return;
+    settle();
+    if (e.code === 'ENOENT') handlers.onError?.('codex not installed', 'npm i -g @openai/codex && codex login');
+    else handlers.onError?.('could not start codex', e.message);
+  });
+  try {
+    child.stdin?.on?.('error', () => { /* a dead child must not crash the app on EPIPE */ });
+    child.stdin?.end?.(prompt);
+  } catch { /* the close/error path reports it */ }
+
+  child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); if (stderr.length > 65536) stderr = stderr.slice(-32768); });
+  child.stdout?.on('data', (d: Buffer) => {
+    if (settled) return;
+    buf += d.toString();
+    let i: number;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1);
+      if (!line.trim()) continue;
+      let ev: Record<string, unknown>;
+      try { ev = JSON.parse(line); } catch { continue; }
+      step(ev);
+      if (settled) return;
+    }
+  });
+
+  child.on('close', (code) => {
+    if (settled) return;
+    settle();
+    if (st.failure) { handlers.onError?.('codex returned an error', st.failure); return; }
+    const f = codexFailure(stderr, code);
+    handlers.onError?.(f.message, f.detail);
+  });
+
+  function step(ev: Record<string, unknown>): void {
+    applyCodexEvent(st, ev, allowed, {
+      onSession: (id) => {
+        if (initSent) return;
+        initSent = true;
+        handlers.onInit?.({ model: req.model ?? null, skills: [], mcp: ['dexterm:connected'], sessionId: id });
+      },
+      onToolCall: (name, input) => handlers.onToolCall?.({ name, input }),
+      // A structured turn's messages are the JSON answer: they become the result, not streamed prose.
+      onMessage: (text) => { if (!req.schema) handlers.onText?.(st.messages.length > 1 ? `\n\n${text}` : text); },
+    });
+    if (st.violation) {
+      kill(); settle();
+      handlers.onError?.('codex tried a tool outside the read-only analyst; turn stopped', st.violation);
+      return;
+    }
+    if (st.done) {
+      kill(); settle();
+      const rawText = st.messages.length ? st.messages[st.messages.length - 1] : null;
+      let structured: Record<string, unknown> | null = null;
+      if (req.schema && rawText) { try { const v = JSON.parse(rawText); structured = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null; } catch { structured = null; } }
+      handlers.onResult?.({
+        structured,
+        rawText: req.schema ? rawText : st.messages.join('\n\n') || null,
+        // The user's codex login bills its own plan; codex exec reports tokens, not a dollar cost.
+        costUsd: null,
+        durationMs: Date.now() - t0,
+        turns: 1,
+        model: req.model ?? null,
+        isError: false,
+        sessionId: st.sessionId,
+      });
+      return;
+    }
+    if (st.failure && ev.type === 'turn.failed') {
+      kill(); settle();
+      handlers.onError?.('codex returned an error', st.failure);
+    }
+  }
+
+  return {
+    cancel() {
+      if (settled) return;
+      kill();
+      settle();
     },
   };
 }

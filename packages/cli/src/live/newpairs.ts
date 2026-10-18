@@ -99,6 +99,8 @@ export class NewPairsLive {
   readonly dl: DataLayer;
   private readonly now: () => number;
   private readonly onChange?: NewPairsLiveOptions['onChange'];
+  /** 0.1.5 dev history: called once per row when its creator becomes known (the recorder stores the link). */
+  onCreator?: (mint: string, creator: string, source: 'pumpportal' | 'rugcheck', createdAt: number | null) => void;
   private readonly limit: number;
   private readonly polls: Required<NonNullable<NewPairsLiveOptions['polls']>>;
   readonly rows = new Map<string, NewPairRow>();
@@ -162,6 +164,10 @@ export class NewPairsLive {
     return this.client.replay(rec, speed);
   }
 
+  private tellCreator(mint: string, creator: string, source: 'pumpportal' | 'rugcheck', createdAt: number | null): void {
+    try { this.onCreator?.(mint, creator, source, createdAt); } catch { /* the recorder must never break the feed */ }
+  }
+
   private addCreate(c: Create): void {
     const rowAt = this.now();
     const existing = this.rows.get(c.mint);
@@ -181,6 +187,7 @@ export class NewPairsLive {
       if (!existing.via.includes('pumpportal')) existing.via.push('pumpportal');
     } else {
       this.rows.set(c.mint, row);
+      if (row.creator) this.tellCreator(c.mint, row.creator, c.creator ? 'pumpportal' : 'rugcheck', row.createdAt);
       this.latencies.push(row.latencyMs!);
       if (this.latencies.length > 500) this.latencies.shift();
     }
@@ -294,6 +301,7 @@ export class NewPairsLive {
         this.fresh.set(t.mint, t);
         const row = this.rows.get(t.mint);
         if (!row) continue;
+        if (!row.creator && t.creator) this.tellCreator(t.mint, t.creator, 'rugcheck', row.createdAt);
         row.creator = row.creator ?? t.creator;
         if (t.mintAuthority !== null) row.mintAuth = t.mintAuthority;
         if (t.freezeAuthority !== null) row.freezeAuth = t.freezeAuthority;

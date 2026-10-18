@@ -137,7 +137,7 @@ export class LiveContext {
    * History recorder (task-1329): attached by main.ts in live mode when enabled; closed with the context.
    * Typed structurally so this package does not import @dexterm/recorder (the CLI package owns the wiring).
    */
-  recorder: { maintain(deps: { dexscreener: DataLayer['dexscreener']; limiter: DataLayer['limiter'] }): Promise<unknown>; close(): void; readonly database?: import('node:sqlite').DatabaseSync } | null = null;
+  recorder: { maintain(deps: { dexscreener: DataLayer['dexscreener']; limiter: DataLayer['limiter'] }): Promise<unknown>; close(): void; readonly database?: import('node:sqlite').DatabaseSync; recordCreator?(mint: string, creator: string, source: string, now?: number, createdAt?: number | null): boolean } | null = null;
   /** Transient one-liner for screens that have no notice slot of their own; cleared on the next key. */
   notice: string | null = null;
   /** Set by the UI loop: called whenever a binding changed something worth drawing. */

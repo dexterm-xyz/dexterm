@@ -40,7 +40,9 @@ import { LiveContext, INTERVALS, WATCH_REFRESH_MS, POSITIONS_REFRESH_MS, popupBu
 import type { BubbleVM, NarrativeBoardVM, PlansVM, TokenDetailVM } from '@dexterm/popup';
 import type { NarrativeBoard } from '@dexterm/packs';
 import type { SpectatorNav } from '@dexterm/agents';
+import { FOLLOW_NAV_ACTIONS } from '@dexterm/mcp';
 import { McpFollowSession } from './mcp-follow.ts';
+import { AgentPaperSwitch } from './agent-paper.ts';
 import { TOKEN_REFRESH_MS, CandlePrefetcher } from './live/token.ts';
 import { PRESETS, presetSpec, type PresetId } from './screener/presets.ts';
 import { parseSortArg, SORT_KEYS, type SortDir } from './screener/sort.ts';
@@ -59,6 +61,7 @@ import { copyAlertToDelivery } from './alerts/format.ts';
 import { readTelegramCreds, readDiscordCreds } from './alerts/creds.ts';
 import { launchIntelCells, launchRetryable } from './live/intel.ts';
 import { AnalystSession } from './analyst/session.ts';
+import { analystCliOnPath, parseEngineChoice, resolveEngine, type AnalystEngine, type EngineChoice } from './analyst/codex.ts';
 import type { AnalystDeps } from './analyst/backend.ts';
 import { resolveAnalystResults, type ResolvedResult } from './analyst/results.ts';
 import { parseScanCommand, SCAN_FLAGS, checkScanFlag, SCAN_HELP, type ScanCommand } from './scan/command.ts';
@@ -120,6 +123,22 @@ export function appStateBlock(state: AppState): Record<string, unknown> | null {
     voice: { name: cfg.voice?.name ?? null, rate: cfg.voice?.rate ?? null },
     scan: { on: state.scan?.engine.on ?? false },
     alerts, // booleans only — never a token, webhook or key
+  };
+}
+
+/**
+ * task-1443: the reduced screen snapshot a terminal following an EXTERNAL agent (`--spectate-mcp`) publishes for
+ * that agent's `dexterm mcp` server: what is on screen plus a VIEW-ONLY nav allow-list. Never the watchlist,
+ * tickets, positions or app settings, and only the four follow nav action types (no watchlist add, no ticket).
+ */
+export function followSnapshot(state: AppState): Record<string, unknown> {
+  const ss = buildScreenState(state);
+  const a = ss.actions as Record<string, unknown>;
+  return {
+    screen: ss.screen, selected: ss.selected, selectedDetail: ss.selectedDetail, filter: ss.filter, sort: ss.sort,
+    visible: ss.visible, visibleMints: ss.visibleMints,
+    actions: { enabled: a.enabled, mints: a.mints, feeds: a.feeds, sortKeys: a.sortKeys, screens: a.screens, workspaces: [], themes: [], types: [...FOLLOW_NAV_ACTIONS] },
+    now: ss.now,
   };
 }
 
@@ -248,6 +267,8 @@ export interface CliArgs {
   selected: number;
   seed: number;
   noAi: boolean;
+  /** 0.1.5: `--analyst-engine auto|claude|codex` (null = DEXTERM_ANALYST_ENGINE / config / auto). */
+  analystEngine: EngineChoice | null;
   title: string | null;
   plain: boolean;
   ansi: boolean;
@@ -286,6 +307,8 @@ export interface CliArgs {
   priceMode: PriceMode | null;
   /** task-1421: follow an agent driving over MCP — the terminal moves with it, and a read-only stream opens. */
   spectateMcp: boolean;
+  /** task-1443: let the MCP agent PAPER-trade inside this armed mandate (needs --spectate-mcp). Paper only. */
+  agentPaper: string | null;
   help: boolean;
   version: boolean;
   unknown: string[];
@@ -392,6 +415,9 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   --record FILE             save every live response (and the PumpPortal session) to FILE (replay it with --replay)
   --spectate-mcp            follow an MCP agent's allowed navigation in this terminal; Ctrl+P pauses, Ctrl+K stops,
                             and any normal user keypress takes control (refused actions never move the UI)
+  --agent-paper MANDATE_ID  (experimental, with --spectate-mcp) let that MCP agent PAPER-trade inside a mandate you
+                            armed: simulated fills only, never signs or sends, never raises a cap; Ctrl+P / Ctrl+K /
+                            any key also pause, stop or take over its paper trading
   --max-requests N          hard cap on live requests for this run (default: none)
   --max-credits N           hard cap on Helius credits for this run (default: 5000)
   --mint MINT|LINK          token to open on the token screen (a CA or a dexscreener / pump.fun / solscan / birdeye link)
@@ -406,6 +432,8 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   --selected N              highlighted row / token index
   --seed N                  fixture PRNG seed (default 7)
   --no-ai                   hide the analyst panel on the token screen
+  --analyst-engine E        auto | claude | codex: which of YOUR installed CLIs runs the analyst (default auto = claude
+                            if installed, else codex; DEXTERM_ANALYST_ENGINE or config analyst.engine too; /engine in chat)
 
   --intensity LEVEL         off | normal | fever (default fever: rain, trails, glitch, blink, scanlines at 30 fps;
                             normal: 15 fps, sparser rain, no idle aberration; off = calm: neon theme, no motion)
@@ -494,14 +522,14 @@ export function parseArgs(argv: string[]): CliArgs {
     screen: null, fixtures: false, replay: null, record: null, filter: null, sort: null, preset: null, maxRequests: 0, maxCredits: 0, db: null,
     mint: null, interval: '1h', listen: 20, verbose: false,
     width: null, height: null, html: null, export: null, theme: DEFAULT_THEME, selected: 0, seed: 7,
-    noAi: false, title: null, plain: false, ansi: false, color: null, tz: null,
+    noAi: false, analystEngine: null, title: null, plain: false, ansi: false, color: null, tz: null,
     calm: false, intensity: null, fps: null, frame: 0, t: 1, event: null, ai: null, mood: null, activity: null, noBoot: false, fit: null, fontPx: null, asciiRain: false, noImages: false,
     scan: false, scanConfig: {},
     noRecorder: false,
     sound: false,
     trade: [], live: true,
     workspace: null, priceMode: null,
-    spectateMcp: false,
+    spectateMcp: false, agentPaper: null,
     help: false, version: false, unknown: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -545,6 +573,7 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--tz') a.tz = str();
     else if (k === '--color') { const s = str(); const d = parseColorDepth(s); if (!d) throw new Error(`unknown color depth ${s} (expected truecolor|256|none)`); a.color = d; }
     else if (k === '--no-ai') a.noAi = true;
+    else if (k === '--analyst-engine') { const s = str(); const e = parseEngineChoice(s); if (!e) throw new Error(`unknown analyst engine ${s} (expected auto|claude|codex)`); a.analystEngine = e; }
     else if (k === '--calm') a.calm = true;
     else if (k === '--intensity') { const s = str(); if (s !== 'off' && s !== 'normal' && s !== 'fever') throw new Error(`unknown intensity ${s} (expected off|normal|fever)`); a.intensity = s; }
     else if (k === '--fps') { const n = num(); if (n < 1 || n > MAX_FPS) throw new Error(`--fps expects 1..${MAX_FPS}`); a.fps = Math.round(n); }
@@ -571,6 +600,8 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--price-mode') { const s = str(); if (!isPriceMode(s)) throw new Error(`--price-mode expects price|mcap, got ${JSON.stringify(s.slice(0, 20))}`); a.priceMode = s; }
     // task-1421: follow an agent driving over MCP (the running terminal moves with it; a read-only stream opens).
     else if (k === '--spectate-mcp') a.spectateMcp = true;
+    // task-1443: agent PAPER trading inside a mandate the user armed (validated against the plans journal at start).
+    else if (k === '--agent-paper') { const s = str(); if (!/^[A-Za-z0-9_-]{1,64}$/.test(s)) throw new Error(`--agent-paper expects a mandate id (see \`dexterm mandate list\`), got ${JSON.stringify(s.slice(0, 20))}`); a.agentPaper = s; }
     else if (k === '--workspace') { const s = str(); if (!/^[a-z][a-z0-9-]{0,39}(\/[a-z][a-z0-9-]{0,39})?$/.test(s)) throw new Error(`--workspace expects a name like morning-hud, got ${JSON.stringify(s.slice(0, 40))}`); a.workspace = s; }
     else if (Object.hasOwn(SCAN_FLAGS, k)) {
       const key = SCAN_FLAGS[k];
@@ -591,6 +622,8 @@ export function parseArgs(argv: string[]): CliArgs {
   if (a.event && !a.fixtures) throw new Error('--event is a fixture demo event (add --fixtures)');
   if (a.scan && a.fixtures) throw new Error('--scan needs live data or a recording (drop --fixtures)');
   if (a.scan && a.screen) throw new Error('--scan is interactive (drop --screen)');
+  if (a.agentPaper && !a.spectateMcp) throw new Error('--agent-paper needs --spectate-mcp (every agent paper trade must be visible in this terminal)');
+  if (a.agentPaper && a.db === ':memory:') throw new Error('--agent-paper needs an on-disk --db (the agent books into the same paper wallet)');
   return a;
 }
 
@@ -968,6 +1001,8 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
           });
           recorder.attach(feed.dl.store);
           ctx.recorder = recorder;
+          // 0.1.5 dev history: PumpPortal / RugCheck creators of new pairs go into the creator index too.
+          ctx.newpairs.onCreator = (mint, creator, source, createdAt) => { recorder.recordCreator(mint, creator, source, undefined, createdAt); };
         }
         if (args.verbose) io.stderr.write(`dexterm: rpc ${rpc.provider} (${rpc.basis}) · db ${dbPath} · recorder ${ctx.recorder ? 'on' : 'off'} · live trading ${args.live && !io.env.DEXTERM_OFFLINE ? 'available' : 'off'}\n`);
       }
@@ -2023,6 +2058,44 @@ export function applyScanAnalystAction(state: AppState, raw: Record<string, unkn
 }
 
 /**
+ * The analyst engine for a run (0.1.5): `--analyst-engine`, then DEXTERM_ANALYST_ENGINE, then config
+ * `analyst.engine`, then auto (claude when installed, else codex). Only the user picks it; models cannot.
+ */
+export function analystEngineFor(flag: string | null | undefined, env: NodeJS.ProcessEnv, configured: string | null | undefined, has: (bin: string) => boolean = (b) => analystCliOnPath(b, env)): AnalystEngine {
+  const choice = parseEngineChoice(flag) ?? parseEngineChoice(env.DEXTERM_ANALYST_ENGINE) ?? parseEngineChoice(configured) ?? 'auto';
+  return resolveEngine(choice, has);
+}
+
+/** `/engine [auto|claude|codex]` in the chat box (0.1.5). Null when the input is not this command. */
+export function parseEngineCommand(q: string): { show: true } | { choice: EngineChoice } | { error: string } | null {
+  const m = /^\/engine(?:\s+(\S+))?\s*$/i.exec(q.trim());
+  if (!m) return null;
+  if (!m[1]) return { show: true };
+  const c = parseEngineChoice(m[1]);
+  return c ? { choice: c } : { error: `unknown analyst engine "${m[1].slice(0, 16)}" (use /engine auto|claude|codex)` };
+}
+
+/**
+ * Apply `/engine`: switch the CLI for NEW conversations this run (cached per-coin chats are dropped so the next
+ * `a` starts on the chosen engine; a running turn finishes where it started). Returns the line to show.
+ */
+export function engineCommand(state: AppState, cmd: NonNullable<ReturnType<typeof parseEngineCommand>>, env: NodeJS.ProcessEnv, has: (bin: string) => boolean = (b) => analystCliOnPath(b, env)): string {
+  const installed = (['claude', 'codex'] as const).filter((b) => has(b));
+  const list = installed.length ? installed.join(' + ') : 'neither claude nor codex';
+  if ('error' in cmd) return cmd.error;
+  const cur = state.analystEngine ?? 'claude';
+  if ('show' in cmd) return `analyst engine: ${cur} · installed: ${list} · /engine claude|codex|auto switches (config analyst.engine keeps it)`;
+  const next = resolveEngine(cmd.choice, has);
+  if (cmd.choice !== 'auto' && !has(next)) return `${next} is not installed (installed: ${list}); ${next === 'codex' ? 'npm i -g @openai/codex && codex login' : 'install Claude Code, then run claude once to log in'}`;
+  if (next !== cur) {
+    for (const [k, sess] of state.analystByMint ?? []) { if (!sess.busy) state.analystByMint!.delete(k); }
+    if (state.analyst && !state.analyst.busy && state.analyst.engine !== next) state.analyst = null;
+  }
+  state.analystEngine = next;
+  return `analyst engine: ${next} (your own ${next} CLI and login) for new conversations · set analyst.engine in config.json to keep it`;
+}
+
+/**
  * The ONE way a scan-driven analyst conversation is built (task-1324; the loop and the safety tests both
  * use it): the locked coin as the selected coin, `actionTypes: []` (observe-only at the validator, the
  * MCP server and the CLI's --disallowedTools), short reads only, and every UI action the model emits
@@ -2035,7 +2108,7 @@ export function createScanSession(state: AppState, mint: string, symbol: string,
     const type = typeof raw.type === 'string' ? raw.type.replace(/[^a-z_]/gi, '').slice(0, 24) : '?';
     hooks.onBlocked?.(type, r.error ?? 'refused');
   };
-  return new AnalystSession({ skill: 'token-dossier', mint, symbol, screenState: ss, onAction, actionTypes: SCAN_ACTION_TYPES, scan: true }, hooks.onChange ?? (() => {}), deps);
+  return new AnalystSession({ skill: 'token-dossier', mint, symbol, screenState: ss, onAction, actionTypes: SCAN_ACTION_TYPES, scan: true, ...(state.analystEngine === 'codex' ? { engine: 'codex' as const } : {}) }, hooks.onChange ?? (() => {}), deps);
 }
 
 /** The outcome of applying one analyst UI action: a human label to show, or a rejection reason. */
@@ -2618,7 +2691,7 @@ export function describeError(err: unknown): string {
  * uncaught error left the terminal in the alternate screen with raw input (task-1279 verification).
  * `onFatal` runs after the restore for the error paths; the guard then exits with code 1.
  */
-export function terminalGuard(io: Pick<Io, 'stdout' | 'stdin' | 'stderr'>, onFatal: (err: unknown) => void = () => {}, proc: GuardProcess = process, hooks: { /** task-1326: bytes to write before leaving the alternate screen (kitty image cleanup). */ beforeLeave?: () => string } = {}): TerminalGuard {
+export function terminalGuard(io: Pick<Io, 'stdout' | 'stdin' | 'stderr'>, onFatal: (err: unknown) => void = () => {}, proc: GuardProcess = process, hooks: { /** task-1326: bytes to write before leaving the alternate screen (kitty image cleanup). */ beforeLeave?: () => string; /** task-1443: cleanup to run on SIGTERM/SIGHUP before the exit (never throws out). */ onSignal?: () => void } = {}): TerminalGuard {
   let restored = false;
   const restore = () => {
     if (restored) return;
@@ -2635,7 +2708,11 @@ export function terminalGuard(io: Pick<Io, 'stdout' | 'stdin' | 'stderr'>, onFat
     proc.exit(1);
   };
   const onExit = () => restore();
-  const onSignal = (sig: 'SIGTERM' | 'SIGHUP') => { restore(); proc.exit(sig === 'SIGTERM' ? 143 : 129); };
+  const onSignal = (sig: 'SIGTERM' | 'SIGHUP') => {
+    restore();
+    try { hooks.onSignal?.(); } catch { /* cleanup is best-effort; the exit still happens */ }
+    proc.exit(sig === 'SIGTERM' ? 143 : 129);
+  };
   const onTerm = () => onSignal('SIGTERM');
   const onHup = () => onSignal('SIGHUP');
   let installed = false;
@@ -2673,6 +2750,8 @@ const SYNC_ON = '\x1b[?2026h';
 const SYNC_OFF = '\x1b[?2026l';
 
 export function interactive(state: AppState, io: Io, depth: ColorDepth, args: CliArgs, proc: GuardProcess = process): Promise<number> {
+  // 0.1.5: the analyst engine for new conversations (the user's own claude or codex CLI; never a shipped key).
+  state.analystEngine ??= analystEngineFor(args.analystEngine, io.env, state.custom?.config.analyst?.engine);
   const out = io.stdout;
   const inp = io.stdin;
   const rnd = mulberry32(99);
@@ -2895,6 +2974,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     // task-1421: the MCP follow session (set below when `--spectate-mcp` is on). Declared here so the quit /
     // terminal-guard teardown closures can stop it.
     let followSession: McpFollowSession | null = null;
+    // task-1443: `--agent-paper <mandate-id>` (with --spectate-mcp) lets that agent PAPER-trade inside the mandate.
+    const agentPaper = args.spectateMcp && args.agentPaper ? new AgentPaperSwitch({ env: io.env, mandateId: args.agentPaper, db: args.db ?? defaultDbPath(io.env) }) : null;
     // Idle economy (task-1303, retuned for task-1319 AC3): between events the ambient rain redraws at
     // IDLE_FPS instead of the full frame cap, cutting idle CPU. A keypress opens a KEY_WAKE_S full-rate
     // window (`wakeUntil`) so input and transitions stay smooth; data landings paint at once on their own
@@ -2918,7 +2999,10 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         wake(5);
       } catch (e) { say(`trade moment failed: ${describeError(e)}`, 'warn'); }
     };
-    const guard = terminalGuard(io, () => { done = true; prefetcher?.close(); if (timer) clearInterval(timer); void followSession?.stop(); state.analyst?.cancel(); if (state.analystByMint) for (const s of state.analystByMint.values()) s.cancel(); state.popups?.shutdown(); voice?.disable(); images?.close(); live?.close(); feed?.close(); }, proc, { beforeLeave: () => layer?.teardown() ?? '' });
+    const teardown = () => { done = true; prefetcher?.close(); if (timer) clearInterval(timer); void followSession?.stop(); agentPaper?.stop(); state.analyst?.cancel(); if (state.analystByMint) for (const s of state.analystByMint.values()) s.cancel(); state.popups?.shutdown(); voice?.disable(); images?.close(); live?.close(); feed?.close(); };
+    // task-1443: SIGTERM/SIGHUP (a closed terminal window) runs the same teardown as a fatal error, so the agent-paper
+    // rendezvous, the spectator rendezvous and the --record file never outlive the terminal that owns them.
+    const guard = terminalGuard(io, teardown, proc, { beforeLeave: () => layer?.teardown() ?? '', onSignal: teardown });
     let lastTokenRefresh = 0;
     let lastWatchRefresh = 0;
     let lastPositionsRefresh = 0;
@@ -3056,9 +3140,12 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         },
         onStatus: (line) => { say(line, 'ai', 4); scheduleDraw(); },
         onEvent: () => scheduleDraw(),
+        onControl: agentPaper ? (st) => agentPaper!.control(st) : undefined,
+        snapshot: () => followSnapshot(state),
       });
       void followSession.start();
       say('following agents over MCP · ctrl+p pause · ctrl+k stop · any key takes over', 'ai', 6);
+      if (agentPaper) say(agentPaper.start(), 'ai', 8);
     }
     // Launch a real Claude analyst session when a key asked for one (applyAction cannot spawn). A
     // `question` means start it as a chat turn, not a paid structured skill run (task-1311, QA B3).
@@ -3112,7 +3199,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           maybeSpeakVoiceAnswer(session); // task-1282: speak a voice-initiated answer when it settles
           scheduleDraw();
         };
-        const session = new AnalystSession({ skill: p.skill, mint: p.mint, symbol: p.symbol, screenState: buildScreenState(state), model: p.model, onAction }, onChange);
+        const session = new AnalystSession({ skill: p.skill, mint: p.mint, symbol: p.symbol, screenState: buildScreenState(state), model: p.model, onAction, ...(state.analystEngine === 'codex' ? { engine: 'codex' as const } : {}) }, onChange);
         if (p.question) session.ask(p.question, buildScreenState(state)); else session.start();
         state.analyst = session;
         state.analystByMint?.set(key, session);
@@ -3740,6 +3827,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       prefetcher?.close();
       if (timer) clearInterval(timer);
       void followSession?.stop();
+      agentPaper?.stop();
       guard.restore();
       guard.uninstall();
       cancelAllAnalysts();
@@ -4083,6 +4171,14 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             if (wc0) {
               state.aiInput = '';
               if (typeof wc0 === 'object') say(wc0.error, 'warn', 5); else state.pendingWallet = wc0;
+              draw();
+              continue;
+            }
+            // 0.1.5: `/engine [auto|claude|codex]` switches the analyst CLI for new conversations; never sent to a model.
+            const en0 = q.startsWith('/') ? parseEngineCommand(q) : null;
+            if (en0) {
+              state.aiInput = '';
+              say(engineCommand(state, en0, io.env), typeof en0 === 'object' && 'error' in en0 ? 'warn' : 'info', 6);
               draw();
               continue;
             }

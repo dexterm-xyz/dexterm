@@ -6,6 +6,7 @@
 // ends. Esc interrupts the running turn without leaving the screen.
 
 import { runAnalyst, stampActionTypes, type AnalystDeps, type AnalystHandle, type ResultEvent, type ToolCallEvent } from './backend.ts';
+import type { AnalystEngine } from './codex.ts';
 
 export type AnalystStatus = 'thinking' | 'running' | 'done' | 'error' | 'interrupted';
 
@@ -35,6 +36,8 @@ export interface AnalystOpts {
   actionTypes?: readonly string[];
   /** Started by AI scan mode (task-1324): every turn is the short read (never long form). */
   scan?: boolean;
+  /** The user's CLI that runs every turn of this conversation (0.1.5). Absent = claude. */
+  engine?: AnalystEngine;
 }
 
 /** A finished exchange kept for the transcript. */
@@ -137,6 +140,8 @@ export class AnalystSession {
   // ---- run metadata
   model: string | null = null;
   footer = 'claude -p · read-only · local';
+  /** The engine running this conversation (fixed for its life: a resume id belongs to one CLI). */
+  readonly engine: AnalystEngine;
   error: { message: string; detail?: string } | null = null;
   startedAt = Date.now();
   /** Wall-clock ms the result landed (drives the decrypt-in reveal). */
@@ -160,6 +165,8 @@ export class AnalystSession {
     this.onChange = onChange;
     this.deps = deps;
     this.model = opts.model ?? null;
+    this.engine = opts.engine ?? 'claude';
+    if (this.engine === 'codex') this.footer = 'codex exec · read-only · local';
     this.screenState = stampActionTypes(opts.screenState, opts.actionTypes);
     const who = opts.symbol ? '$' + opts.symbol : opts.mint ?? 'this token';
     this.question = opts.skill === 'trench-scan'
@@ -253,6 +260,7 @@ export class AnalystSession {
       {
         prompt: req.prompt, schema: req.schema, resume: req.resume, screenState: this.screenState, model: this.opts.model, budgetUsd: 1.0,
         actionTypes: this.opts.actionTypes,
+        ...(this.engine === 'codex' ? { engine: 'codex' as const } : {}),
         ...(this.opts.scan ? { longForm: false } : {}),
       },
       {
@@ -286,12 +294,13 @@ export class AnalystSession {
     if (ev.sessionId) this.sessionId = ev.sessionId;
     this.handle = null;
     const dur = ((Date.now() - this.startedAt) / 1000).toFixed(1);
-    const cost = ev.costUsd !== null ? `$${ev.costUsd.toFixed(ev.costUsd < 0.1 ? 3 : 2)}` : '$—';
+    // codex bills the user's own plan and reports no dollar figure: say whose plan rather than a fake $0.
+    const cost = ev.costUsd !== null ? `$${ev.costUsd.toFixed(ev.costUsd < 0.1 ? 3 : 2)}` : this.engine === 'codex' ? 'codex plan' : '$—';
     this.model = ev.model ?? this.model;
     this.footer = `${cost} · ${dur}s · ${this.toolLines.length} tools${this.model ? ' · ' + this.model : ''}`;
     const s = ev.structured;
     if (!s) {
-      if (ev.isError) { this.status = 'error'; this.error = { message: 'claude returned an error', detail: ev.rawText?.slice(0, 200) }; return; }
+      if (ev.isError) { this.status = 'error'; this.error = { message: `${this.engine} returned an error`, detail: ev.rawText?.slice(0, 200) }; return; }
       // No structured output but we have text (a conversational follow-up): show it as the body.
       // task-1311 (QA M12): keep the whole answer — the transcript scrolls instead of truncating at 16.
       this.status = 'done';

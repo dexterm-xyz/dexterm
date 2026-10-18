@@ -52,9 +52,11 @@ export function renderAnalystSession(c: Canvas, x: number, y: number, w: number,
   const bc = mix(t.border, t.ai, 0.55);
   // Narrow panels (token screen) drop the model so cost · latency · tools still fits beside the title.
   const full = s.status === 'error' ? 'analyst unavailable' : s.footer;
-  const caption = (opts.title ?? '✦ ANALYST · claude').length + full.length + 10 <= w ? full : full.split(' · ').slice(0, 3).join(' · ');
+  // 0.1.5: a codex conversation says so in the title; claude panels keep the original default.
+  const title = opts.title ?? (s.engine === 'codex' ? '✦ ANALYST · codex' : '✦ ANALYST · claude');
+  const caption = title.length + full.length + 10 <= w ? full : full.split(' · ').slice(0, 3).join(' · ');
   const capFg = s.status === 'error' ? t.warn : t.dim;
-  const box = c.box(x, y, w, h, { title: opts.title ?? '✦ ANALYST · claude', titleFg: t.ai, caption, captionFg: capFg, border: bc });
+  const box = c.box(x, y, w, h, { title, titleFg: t.ai, caption, captionFg: capFg, border: bc });
   const bg = box.bg;
   const inner = box.w - 2;
   const frame = opts.frame;
@@ -79,7 +81,7 @@ export function renderAnalystSession(c: Canvas, x: number, y: number, w: number,
 
   // earlier exchanges on this warm session (compact marker; the current turn is drawn in full below)
   if (s.history.length && cy < inputY - 1) {
-    c.text(box.x + 1, cy, `⟲ ${s.history.length} earlier ${s.history.length === 1 ? 'exchange' : 'exchanges'} · one warm claude session`, { fg: t.dim, bg, i: true }, inner - 1);
+    c.text(box.x + 1, cy, `⟲ ${s.history.length} earlier ${s.history.length === 1 ? 'exchange' : 'exchanges'} · one warm ${s.engine} session`, { fg: t.dim, bg, i: true }, inner - 1);
     cy += 1;
     const last = s.history[s.history.length - 1];
     const prev = last.error ? `last: ${last.error}` : last.verdict ? `last: ${last.verdict}` : last.summary[0] ? `last: ${last.summary[0]}` : '';

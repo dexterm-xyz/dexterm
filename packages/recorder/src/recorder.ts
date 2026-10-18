@@ -107,6 +107,8 @@ export interface RecorderStats {
   newestT: number | null;
 }
 
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
 interface MintRow { mint: string; first_t: number; last_live_t: number; last_any_t: number; last_t0_t: number; last_hash: string; snapshots: number }
 
 export class Recorder implements StoreListener {
@@ -139,7 +141,10 @@ export class Recorder implements StoreListener {
   private readonly stmts: {
     insertSnap: StatementSync; getMint: StatementSync; upsertMint: StatementSync; bumpAny: StatementSync;
     insertMember: StatementSync; lastIdentity: StatementSync; lastLive: StatementSync;
+    insertCreator: StatementSync;
   };
+  /** Mints whose creator link is already stored (this run), so a refresh costs no write. */
+  private readonly creatorKnown = new Set<string>();
 
   constructor(opts: RecorderOptions = {}) {
     this.enabled = opts.enabled ?? true;
@@ -169,6 +174,7 @@ export class Recorder implements StoreListener {
       insertMember: this.db.prepare('INSERT OR IGNORE INTO feed_members (t, feed, rank, mint) VALUES (?, ?, ?, ?)'),
       lastIdentity: this.db.prepare('SELECT symbol, name, launchpad, created_at FROM token_snapshots WHERE mint = ? ORDER BY t DESC LIMIT 1'),
       lastLive: this.db.prepare(`SELECT t, hash, sources, ${cols} FROM token_snapshots WHERE mint = ? AND kind = 'live' ORDER BY t DESC LIMIT 1`),
+      insertCreator: this.db.prepare('INSERT OR IGNORE INTO creators (mint, creator, source, first_t, created_at) VALUES (?, ?, ?, ?, ?)'),
     };
   }
 
@@ -203,6 +209,9 @@ export class Recorder implements StoreListener {
     const pending: { snap: Snapshot; focus: boolean }[] = [];
     for (const r of rows) {
       this.counters.observed++;
+      // 0.1.5 dev history: the creator the row's source names (Jupiter `dev`), stored once per mint.
+      const dev = r.audit?.devAddress;
+      if (r.mint && dev) this.recordCreator(r.mint, dev, r.audit?.source ?? 'jupiter-tokens', now, r.token?.createdAt ?? null);
       if (!r.mint || !r.pair) { res.skipped++; continue; }
       const snap = fromEnrichedRow(r);
       const t = snap.t || now;
@@ -243,6 +252,19 @@ export class Recorder implements StoreListener {
     this.counters.written += res.written;
     this.counters.heartbeat += res.heartbeat;
     return res;
+  }
+
+  /**
+   * Record which wallet created `mint`, as `source` named it (0.1.5 dev history). First writer wins; a mint or
+   * creator that is not a base58 address is ignored. Returns true when a new link was stored.
+   */
+  recordCreator(mint: string, creator: string, source: string, now = this.clock.now(), createdAt: number | null = null): boolean {
+    if (!this.enabled || this.closed || this.creatorKnown.has(mint)) return false;
+    if (!BASE58.test(mint) || !BASE58.test(creator) || mint === creator) return false;
+    this.creatorKnown.add(mint);
+    if (this.creatorKnown.size > 200_000) this.creatorKnown.clear();
+    const r = this.stmts.insertCreator.run(mint, creator, String(source).slice(0, 24), now, createdAt !== null && Number.isFinite(createdAt) ? Math.round(createdAt) : null);
+    return Number(r.changes) > 0;
   }
 
   /** The mint's last stored live row (one indexed read; only paid the first time a mint is seen this run). */
