@@ -18,6 +18,7 @@ import { SayTts, voiceDoctor, resolveVoice, WHISPER_MODEL, resolvePiperRuntime, 
 import type { MergedSet } from '@dexterm/mcp';
 import { loadConfig, dextermHome } from '@dexterm/custom';
 import { kbStore, skillStore } from './kb-skill-cmd.ts';
+import { analystCliOnPath, CODEX_MIN_VERSION, parseEngineChoice, resolveEngine, versionAtLeast } from './analyst/codex.ts';
 
 /** The minimum Node that runs dexterm (type-stripping of the .ts entry needs 22.18). */
 export const MIN_NODE = [22, 18, 0] as const;
@@ -57,6 +58,10 @@ export interface DoctorDeps {
   platform: NodeJS.Platform;
   /** Resolve the claude CLI: 'ok' logged-in, 'present' on PATH but login unconfirmed, 'missing'. */
   claude: () => Promise<'ok' | 'present' | 'missing'>;
+  /** 0.1.5: the codex CLI, the optional second analyst engine. Absent = the check is skipped. */
+  codex?: () => Promise<CodexProbe>;
+  /** 0.1.5: the user's analyst-engine choice (env / config), for the engine line. Absent = auto. */
+  analystEngine?: string | null;
   /** Probe one URL; must resolve (never reject) within its own timeout. */
   probe: (url: string) => Promise<ProbeResult>;
   /** Check a directory is writable by creating and deleting a temp file; returns null or an error message. */
@@ -177,6 +182,32 @@ export async function claudeProbe(timeoutMs = 4000, platform: NodeJS.Platform = 
   });
 }
 
+/** What doctor learned about the codex CLI. `loggedIn` null = the status probe could not tell. */
+export type CodexProbe = { state: 'missing' } | { state: 'present'; version: string | null; loggedIn: boolean | null };
+
+/**
+ * Default codex probe (0.1.5): PATH (spawnable form only), then `codex --version` and `codex login status`. The
+ * status command is the user's own CLI reporting on its own login; dexterm never reads the credential itself.
+ */
+export async function codexProbe(timeoutMs = 4000, env: NodeJS.ProcessEnv = process.env): Promise<CodexProbe> {
+  if (!analystCliOnPath('codex', env)) return { state: 'missing' };
+  const { execFile } = await import('node:child_process');
+  const run = (args: string[]): Promise<{ code: number | null; out: string }> => new Promise((resolve) => {
+    try {
+      const child = execFile('codex', args, { timeout: timeoutMs, env }, (err, stdout, stderr) => {
+        const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : null) : 0;
+        resolve({ code, out: `${stdout ?? ''}${stderr ?? ''}` });
+      });
+      child.on('error', () => resolve({ code: null, out: '' }));
+    } catch { resolve({ code: null, out: '' }); }
+  });
+  const v = await run(['--version']);
+  const version = /(\d+\.\d+\.\d+[\w.-]*)/.exec(v.out)?.[1] ?? null;
+  const st = await run(['login', 'status']);
+  const loggedIn = st.code === 0 ? !/not logged in/i.test(st.out) : st.code === null ? null : false;
+  return { state: 'present', version, loggedIn };
+}
+
 /** Default writable check: create the directory, write and remove a temp file. Returns an error message or null. */
 export function writableProbe(dir: string): string | null {
   try {
@@ -198,6 +229,8 @@ export function defaultDeps(env: NodeJS.ProcessEnv = process.env, isTTY = proces
     nodeVersion: process.versions.node,
     platform: process.platform,
     claude: () => claudeProbe(),
+    codex: () => codexProbe(4000, env),
+    analystEngine: env.DEXTERM_ANALYST_ENGINE ?? loadConfig(dextermHome(env)).config.analyst?.engine ?? null,
     probe: (url) => livingProbe(url),
     checkWritable: writableProbe,
     offline: env.DEXTERM_OFFLINE === '1' || env.DEXTERM_OFFLINE === 'true',
@@ -266,17 +299,41 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
 
   // 3. Claude CLI (the analyst). Not required to browse; required for the `a` analyst.
   const claude = await deps.claude();
-  if (claude === 'missing') {
+  // 0.1.5: codex is the optional second engine; a missing claude is fine when codex can run the analyst.
+  const codex = deps.codex ? await deps.codex() : null;
+  const codexUsable = codex?.state === 'present';
+  if (claude === 'missing' && codexUsable) {
+    checks.push({
+      name: 'Claude CLI', status: 'pass',
+      detail: 'not found on PATH (optional now): the analyst runs on your codex CLI instead',
+    });
+  } else if (claude === 'missing') {
     checks.push({
       name: 'Claude CLI', status: 'warn',
       detail: 'not found on PATH; the analyst (a) is disabled, the rest of dexterm works',
-      fix: 'Install Claude Code (https://claude.com/claude-code) and run `claude` once to log in.',
+      fix: 'Install Claude Code (https://claude.com/claude-code) and run `claude` once to log in, or use Codex: `npm i -g @openai/codex && codex login`.',
     });
   } else {
     checks.push({
       name: 'Claude CLI', status: 'pass',
       detail: 'found on PATH (the analyst runs your local `claude`; log in once with `claude` if the analyst errors)',
     });
+  }
+
+  // 3b. Codex CLI (0.1.5): optional second analyst engine, the user's own codex login. Read-only lock needs >= CODEX_MIN_VERSION.
+  if (codex) {
+    const choice = parseEngineChoice(deps.analystEngine) ?? 'auto';
+    const engine = resolveEngine(choice, (b) => b === 'claude' ? claude !== 'missing' : codexUsable);
+    const eng = `analyst engine: ${engine}${choice === 'auto' ? ' (auto)' : ''}`;
+    if (codex.state === 'missing') {
+      checks.push({ name: 'Codex CLI', status: engine === 'codex' ? 'warn' : 'pass', detail: `not installed (optional second analyst engine) · ${eng}`, ...(engine === 'codex' ? { fix: 'npm i -g @openai/codex && codex login, or set analyst.engine to claude' } : {}) });
+    } else if (codex.version && !versionAtLeast(codex.version, CODEX_MIN_VERSION)) {
+      checks.push({ name: 'Codex CLI', status: 'warn', detail: `codex-cli ${codex.version} is older than ${CODEX_MIN_VERSION}; the read-only analyst lock needs ${CODEX_MIN_VERSION}+ · ${eng}`, fix: 'npm i -g @openai/codex@latest' });
+    } else if (codex.loggedIn === false) {
+      checks.push({ name: 'Codex CLI', status: 'warn', detail: `found${codex.version ? ` (codex-cli ${codex.version})` : ''}, not logged in · ${eng}`, fix: 'codex login' });
+    } else {
+      checks.push({ name: 'Codex CLI', status: 'pass', detail: `found${codex.version ? ` (codex-cli ${codex.version})` : ''}${codex.loggedIn ? ', logged in' : ''}; runs the analyst read-only on your own codex login (/engine codex) · ${eng}` });
+    }
   }
 
   // 4b. Login with X (optional, task-1357): the user's own X app + login unlock X posts in the SOCIAL panel / TRENDING.

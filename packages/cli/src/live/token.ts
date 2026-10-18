@@ -86,6 +86,8 @@ export interface TokenView {
   top10: number | null;
   dev: number | null;
   devMints: number | null;
+  /** 0.1.5 dev history: the creator wallet Jupiter names (keyless `dev`); null = not reported. */
+  devAddress?: string | null;
   lpLocked: number | null;
   mintAuth: boolean | null;
   freezeAuth: boolean | null;
@@ -364,6 +366,7 @@ export class TokenLive {
       if (v.panels.holders.state !== 'ok') v.top10 = audit?.top10Pct ?? v.top10;
       v.dev = audit?.devPct ?? null;
       v.devMints = audit?.devMints ?? null;
+      v.devAddress = audit?.devAddress ?? v.devAddress ?? null;
       v.sources = [...new Set([...v.sources, ...r.sources])];
       const SHORT: Record<string, string> = { dexscreener: 'ds', 'jupiter-tokens': 'jup', 'jupiter-price': 'jup-price' };
       this.ok('market', r.sources.map((x) => SHORT[x] ?? x).join('+'), pair.fetchedAt, r.stale);

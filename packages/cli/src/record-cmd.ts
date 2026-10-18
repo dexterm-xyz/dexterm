@@ -68,6 +68,8 @@ export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; 
   let newpairs: NewPairsLive | null = null;
   if (!opts.noNewpairs) {
     newpairs = new NewPairsLive(feed.dl, {});
+    // 0.1.5 dev history: keep the creator of every new pair in the recorder's creator index.
+    newpairs.onCreator = (mint, creator, source, createdAt) => { recorder.recordCreator(mint, creator, source, undefined, createdAt); };
     const client = new PumpPortalClient({ health: feed.dl.health, clock: feed.dl.clock, onEvent: (ev) => newpairs!.handleEvent(ev), onStatus: () => {} });
     newpairs.attach(client, 'live');
     newpairs.start();

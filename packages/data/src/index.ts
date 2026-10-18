@@ -38,6 +38,9 @@ export * from './trade/tx-decode.ts';
 export * from './trade/sol-usd.ts';
 export * from './trade/kill-switch.ts';
 export * from './trade/token-delta.ts';
+// task-1443: the paper agent desk + its rendezvous (agents paper-trade inside an armed mandate; never sign/send).
+export * from './trade/agent/paper-desk.ts';
+export * from './trade/agent/rendezvous.ts';
 export * from './trade/signer/protocol.ts';
 export * from './trade/signer/service.ts';
 export * from './trade/signer/host.ts';

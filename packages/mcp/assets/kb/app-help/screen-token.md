@@ -159,6 +159,7 @@ tools:
   - get_trades
   - get_candles
   - get_dev_history
+  - dev_history
   - rugcheck
 confidence: high
 owner: maintainers

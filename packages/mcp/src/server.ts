@@ -25,15 +25,18 @@ import {
   primaryLinks, linkFeatures, gradeLinks, DEFAULT_LINK_RUBRIC, LINK_RUBRIC_MEASURED, parseCoinTarget, resolveCoinTarget, isBareOpen,
   validateAnalystAction, serializeActionLine, ANALYST_ACTION_TYPES, ACTION_FILE_ENV, ACTION_TOKEN_ENV,
   type ActionAllow, type AnalystActionType,
+  lamportsToSol, rawToTokens, type TradeRecord,
 } from '@dexterm/data';
 import type { DatabaseSync } from 'node:sqlite';
 import { buildDossier } from './dossier.ts';
 import { firewall } from './firewall.ts';
 import { OverlayStore, dextermHome, KB_RULE, type ContentEntry, type SkippedFile, type MergedSet } from './user-content.ts';
-import { resolveSpectatorSink } from './spectator-sink.ts';
+import { resolveSpectatorSink, readFollowScreen, FOLLOW_NAV_ACTIONS } from './spectator-sink.ts';
+import { resolvePaperAgentDesk } from './paper-agent.ts';
+import type { PaperAgentDesk } from '@dexterm/data';
 import { loadAppHelp, getAppHelp, loadDocsKb, getDocs, searchHelp, type AppHelpEntry, type DocsEntry, type HelpHit } from './app-help.ts';
 import { assembleTokenDossier, computeBoard, recentNarrativeRows, loadDefaultLexicon, summaryText, buildDigest, tokenRugScorer, h1Model, runBacktest, type BacktestKind } from '@dexterm/packs';
-import { exportRecorded, openHistoryReadOnly, type Label } from '@dexterm/recorder';
+import { creatorOf, devHistoryLine, exportRecorded, openHistoryReadOnly, queryDevHistory, SERIAL_RUGGER_MIN, type DevHistoryReport, type Label } from '@dexterm/recorder';
 
 // The default rug-probability scorer (task-1356 Tier 4). H1 is the PRE-REGISTERED heuristic; it is the
 // honest day-one model because no logistic model can be trained until the recorder has ~2 weeks of
@@ -243,7 +246,8 @@ export const TOOLS = [
   { name: 'get_trades', description: 'Recent trades of the most liquid pool (GeckoTerminal tape) with buy/sell aggregates, distinct wallets, and the share of volume from the two most active wallets (wash signal).', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, window: { type: 'string', enum: ['m5', 'h1'] } }, required: ['mint'], additionalProperties: false } },
   { name: 'get_candles', description: 'Candles plus computed summaries: range, drawdown from high, VWAP, change%. Use the summaries rather than doing arithmetic.', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'] }, limit: { type: 'integer', minimum: 1, maximum: 300 } }, required: ['mint'], additionalProperties: false } },
   { name: 'rugcheck', description: 'RugCheck-style summary: risks[] (firewalled text), normalised score 0..100, lpLockedPct, tokenProgram.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'], additionalProperties: false } },
-  { name: 'get_dev_history', description: 'Creator address and prior-launch forensics for this mint. Tier-1 fields (prior rugs, bundles, snipers) need a Helius/Birdeye key and are null on the keyless tier; the response says so.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'], additionalProperties: false } },
+  { name: 'get_dev_history', description: 'Creator address and prior-launch forensics for this mint. Prior launches and rugs come from dexterm\'s own recorded history when it has the creator (tier "local-history", see dev_history); bundles and snipers need a Helius/Birdeye key and are null on the keyless tier; the response says so.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'], additionalProperties: false } },
+  { name: 'dev_history', description: 'DEV HISTORY ("has this deployer rugged before?"): the creator wallet\'s track record from dexterm\'s OWN recorded history, keyless. Prior launches the recorder linked to the wallet, their code-only outcome labels (rug / dead / fade / flat / runner; 72 h preferred; keyless-proxy tier), how fast the dev sold its own bag, the serial_rugger flag (>= 2 labelled rugs). Every number carries its source, sample size and age; "unknown" when there is no record. A risk flag from observed history, never a certificate: small samples are common, say the n. Pass a mint (the creator is resolved from the record, Jupiter `dev`, then GoPlus) or a creator wallet.', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, creator: { type: 'string' } }, additionalProperties: false } },
   { name: 'narrative_board', description: 'The NARRATIVE BOARD (task-1356): what is running and what is working across the tokens dexterm has recorded. Deterministic lexicon clustering of recorded launches + trending tokens into narratives (dogs, cats, ai-agents, quantum, …), per narrative: tokens, new launches 1h/24h, 1h/24h volume, pace, median change, top runners, and a documented "what is working" score. No model in the hot path, no token cost; names are matched against a versioned lexicon (X/Telegram-only narratives are missed; the honest unclassified share is shown). window: 1h (default) or 24h; set summary:true for the deterministic spoken morning summary.', inputSchema: { type: 'object', properties: { window: { type: 'string', enum: ['1h', '24h'] }, limit: { type: 'integer', minimum: 1, maximum: 50 }, summary: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'rug_backtest', description: 'Backtest the rug model or the deterministic pack verdicts against RECORDED outcomes (task-1356). Scores the chosen subject over the recorder history at a horizon and reports HONEST metrics: base rate, precision/recall, Brier (vs base-rate Brier), AUC, a 5-bucket calibration table, a per-feed breakdown, and the worst misses/false-alarms with their t0 numbers. kind: "heuristic" (the shipped H1 rug model), "pack_verdicts" (recorded pack rug_p). Leakage is enforced by construction (features are the t0 snapshot, labels are after t0). Returns a note when there is not enough recorded history yet — it never fabricates numbers. Read-only; no model, no token cost.', inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['heuristic', 'pack_verdicts'] }, horizon_sec: { type: 'integer', enum: [3600, 7200, 21600, 86400, 259200] }, positive_labels: { type: 'array', items: { type: 'string', enum: ['rug', 'dead', 'fade', 'flat', 'runner'] } } }, additionalProperties: false } },
   { name: 'kb_lookup', description: 'Fetch one knowledge-base entry by id (mechanics, patterns, glossary). Entries carry sources, date, confidence and owner. KB never holds facts about a specific live token.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false } },
@@ -281,10 +285,28 @@ export const TOOLS = [
   { name: 'set_intensity', description: 'PROPOSE the visual intensity the user confirms with a keypress (persisted, undoable). `intensity`: "off", "normal" or "fever".', inputSchema: { type: 'object', properties: { intensity: { type: 'string', enum: ['off', 'normal', 'fever'] } }, required: ['intensity'], additionalProperties: false } },
   // task-1413 r2: voice speed/name are NOT analyst actions. The `/voice` config path is DENIED_FOR_MODELS —
   // only the keyboard (`<`/`>`, the voice picker) sets it. There is deliberately no set_voice_* tool here.
+  // ---- PAPER agent-trading tools (task-1443). They act ONLY on the SIMULATED paper ledger, inside a mandate
+  // the USER armed; they cannot sign, send, touch a wallet/key, or change a cap. They refuse unless the running
+  // app has armed a mandate AND the user enabled agent paper trading; pause / take-over / stop halts them. Every
+  // call is journaled and visible in the spectator view. Figures are SIMULATED — never present them as a result.
+  { name: 'paper_open_ticket', description: 'Open a SIMULATED (paper) trade ticket for a mint and side, inside the mandate the user armed. Inert until confirmed; nothing is bought or sold here. Needs agent paper trading enabled in the running app. `side` is "buy" or "sell". Paper only — it can never sign or send a real transaction, or change a cap.', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, symbol: { type: 'string' }, decimals: { type: 'integer', minimum: 0, maximum: 18 }, side: { type: 'string', enum: ['buy', 'sell'] } }, required: ['mint', 'symbol', 'decimals', 'side'], additionalProperties: false } },
+  { name: 'paper_size_ticket', description: 'Set the size of an open paper ticket. For a buy, `usd` is the simulated size and is REFUSED if it exceeds the mandate per-trade / per-coin / total caps (the agent can never raise a cap). For a sell, `fraction` is the share of the held paper position in (0, 1]. Paper only.', inputSchema: { type: 'object', properties: { ticketId: { type: 'string' }, usd: { type: 'number' }, fraction: { type: 'number' } }, required: ['ticketId'], additionalProperties: false } },
+  { name: 'paper_confirm', description: 'Confirm a sized paper ticket: re-checks the caps and the pause/stop control, fetches a fresh keyless quote and books the fill into the SIMULATED wallet only. It reports the paper fill and the resulting paper position. It never signs or sends a real transaction. Simulated — label the figures PAPER, never as a result.', inputSchema: { type: 'object', properties: { ticketId: { type: 'string' } }, required: ['ticketId'], additionalProperties: false } },
+  { name: 'paper_close', description: 'Close a fraction of a held SIMULATED (paper) position in one step. `fraction` is the share in (0, 1] (default 1 = all). Books a paper sell only; never signs or sends. Simulated.', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, fraction: { type: 'number' } }, required: ['mint'], additionalProperties: false } },
+  { name: 'paper_positions', description: 'Read the SIMULATED (paper) positions: cost basis, realized paper PnL and token balance per mint. Read-only. Figures are simulated and must be labelled PAPER, never shown as a result.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'paper_pnl', description: 'Read the SIMULATED (paper) PnL snapshot: paper balance, realized paper PnL, cost deployed, per-position rows and the mandate caps in force. Read-only. All figures are simulated — label them PAPER and never show them as a result.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
 ] as const;
 
-/** The read-only tool surface: every tool except the UI-action ones (task-1313). The only tools a skill may name (task-1377). */
-export const READ_ONLY_TOOLS: readonly string[] = TOOLS.map((t) => String(t.name)).filter((n) => !(ANALYST_ACTION_TYPES as readonly string[]).includes(n));
+/** PAPER agent-trading tools (task-1443). The mutating ones act on the simulated ledger inside the armed mandate. */
+export const PAPER_WRITE_TOOLS: readonly string[] = ['paper_open_ticket', 'paper_size_ticket', 'paper_confirm', 'paper_close'];
+export const PAPER_READ_TOOLS: readonly string[] = ['paper_positions', 'paper_pnl'];
+const PAPER_TOOLS = new Set<string>([...PAPER_WRITE_TOOLS, ...PAPER_READ_TOOLS]);
+
+/**
+ * The read-only tool surface: every tool except the UI-action ones (task-1313) and the paper WRITE tools
+ * (task-1443). The only tools a skill may name (task-1377); the paper read tools stay here (they cannot trade).
+ */
+export const READ_ONLY_TOOLS: readonly string[] = TOOLS.map((t) => String(t.name)).filter((n) => !(ANALYST_ACTION_TYPES as readonly string[]).includes(n) && !(PAPER_WRITE_TOOLS as readonly string[]).includes(n));
 const SKILL_STORE = new OverlayStore({ kind: 'skill', bundled: [{ dir: SKILLS_DIR, layout: 'flat' }], readTools: READ_ONLY_TOOLS, home: () => dextermHome(process.env), onSkip: logSkip('skill') });
 
 /** A token-authenticated append-only channel the app consumes; set only when the CLI spawned us with one. */
@@ -313,6 +335,30 @@ const ageOf = (fetchedAt: number | null | undefined, source?: string) => ({ fetc
 /** A freshly assembled dossier is reused for a few minutes per mint+interval (task-1314). */
 const DOSSIER_TTL_MS = 30_000; // was 180 s: a 3-minute-old price/holder count is not what the analyst should reason from
 
+/** A JSON-safe view of a paper fill (task-1443): the ledger carries lamports as bigint; convert for the wire. */
+function paperFillView(r: TradeRecord): Record<string, unknown> {
+  return {
+    id: r.id, t: r.t, mint: r.mint, symbol: r.symbol, side: r.side, paper: true,
+    solDelta: lamportsToSol(r.solDelta), tokens: rawToTokens(r.tokenDelta < 0n ? -r.tokenDelta : r.tokenDelta, r.decimals),
+    priceSol: r.priceSol, priceUsd: r.priceUsd, priceImpactPct: r.priceImpactPct, slippageBps: r.slippageBps,
+    feeSol: lamportsToSol(r.feeLamports), realizedSol: lamportsToSol(r.realizedLamports), route: r.route,
+  };
+}
+
+/**
+ * task-1443: the paper wiring for a `dexterm mcp` process. Agent paper trading is for an EXTERNAL agent the user
+ * connected (Claude Code, Cursor, a bot) only: a server the app itself spawned — the in-app analyst or the scan,
+ * marked by the UI-action channel or the spectator-file env — never gets a desk, so the in-app analyst's only
+ * write-shaped tool stays `open_ticket`. Write calls also need a spectator surface watching.
+ */
+export function paperWiring(env: NodeJS.ProcessEnv, data: DataLayer, spectator: { active(): boolean }): { desk: () => Promise<PaperAgentDesk | null>; watched: () => boolean } {
+  const spawnedByApp = Boolean(env[ACTION_FILE_ENV] || env.DEXTERM_SPECTATOR_FILE);
+  return {
+    desk: spawnedByApp ? async () => null : () => resolvePaperAgentDesk(data, env),
+    watched: () => spectator.active(),
+  };
+}
+
 export class McpTools {
   private readonly data: DataLayer;
   private readonly screenState: () => Record<string, unknown>;
@@ -321,16 +367,33 @@ export class McpTools {
   private readonly dbPath: string | null;
   private narrativeDb: DatabaseSync | null = null;
   private actionSeq = 0;
+  /** Mints this server returned from screener reads (bounded; task-1443 follow-mode nav targets). */
+  private readonly surfaced = new Set<string>();
   /** mint+interval -> last assembled dossier; the data layer caches the underlying fetches too. */
   private readonly dossierMemo = new Map<string, { t: number; v: Record<string, unknown> }>();
-  constructor(data: DataLayer, screenState: () => Record<string, unknown>, channel: ActionChannel | null = null, dbPath: string | null = null) {
+  /** Resolve the paper agent desk (task-1443); null unless the app enabled agent paper trading on an armed mandate. */
+  private readonly paperDesk: () => Promise<PaperAgentDesk | null>;
+  /** True while a spectator surface is watching this server (task-1443: paper WRITE calls refuse otherwise). */
+  private readonly watched: () => boolean;
+  constructor(data: DataLayer, screenState: () => Record<string, unknown>, channel: ActionChannel | null = null, dbPath: string | null = null, paper: { desk: () => Promise<PaperAgentDesk | null>; watched: () => boolean } | null = null) {
     this.data = data;
     this.screenState = screenState;
     this.channel = channel;
     this.dbPath = dbPath && dbPath !== ':memory:' ? dbPath : null;
+    this.paperDesk = paper?.desk ?? (async () => null);
+    this.watched = paper?.watched ?? (() => false);
   }
 
   /** Open (once) a read-only handle on the recorder DB; null when there is none (replay / :memory:). */
+  /** 0.1.5 dev history: the recorded track record for a mint's creator (recorder link first, else the hint). */
+  private localDevHistory(mint: string, hint: string | null): { creator: string; report: DevHistoryReport } | null {
+    const db = this.historyDb();
+    if (!db) return null;
+    const creator = creatorOf(db, mint)?.creator ?? (hint && BASE58.test(hint) ? hint : null);
+    if (!creator) return null;
+    try { return { creator, report: queryDevHistory(db, { creator, mint }) }; } catch { return null; }
+  }
+
   private historyDb(): DatabaseSync | null {
     if (!this.dbPath) return null;
     if (this.narrativeDb) return this.narrativeDb;
@@ -347,12 +410,67 @@ export class McpTools {
    * data layer and never trades. Returns `{ error }` (with no write) when validation fails.
    */
   private uiAction(type: AnalystActionType, args: Record<string, unknown>): Record<string, unknown> {
-    const res = validateAnalystAction({ type, ...args }, allowFrom(this.screenState()));
+    const ss = this.screenState();
+    const allow = allowFrom(ss);
+    // task-1443: in follow mode the agent picks coins from its own screener reads, which the terminal may not be
+    // showing yet; those surfaced mints are valid view-only targets too (same data source as the on-screen rows).
+    if (ss.source === 'follow') allow.mints = [...new Set([...allow.mints, ...this.surfaced])];
+    const res = validateAnalystAction({ type, ...args }, allow);
     if (!res.ok) return { error: res.error };
-    if (!this.channel) return { error: 'UI actions are not available in this context (no action channel)' };
+    if (!this.channel) {
+      // task-1443: a terminal following this server (`dexterm --spectate-mcp`) applies a VALIDATED nav call from
+      // the spectator record itself, and only while the agent still has control — no action channel is needed.
+      // View-only moves only: anything that would change user data (watchlist, ticket) or settings stays unavailable.
+      if (ss.source === 'follow' && (FOLLOW_NAV_ACTIONS as readonly string[]).includes(type)) return { ok: true, requested: res.label, note: 'The following dexterm terminal shows this; the user can pause or take over at any time. You cannot confirm, size, or send a trade.' };
+      return { error: 'UI actions are not available in this context (no action channel)' };
+    }
     try { this.channel.append(serializeActionLine(this.channel.token, ++this.actionSeq, res.action as unknown as Record<string, unknown>)); }
     catch (e) { return { error: err(e) }; }
     return { ok: true, requested: res.label, note: 'The app applies this and shows "analyst did X". You cannot confirm, size, or send a trade.' };
+  }
+
+  /**
+   * task-1443: a PAPER agent-trading tool. Dispatches to the PaperAgentDesk, which books ONLY the simulated
+   * ledger inside the user-armed mandate, re-checks the pause/stop control and the caps on every call, and
+   * journals everything. Returns `{ error }` when agent paper trading is disabled or a gate/cap refuses it;
+   * it can never sign, send, touch a wallet/key, or change a cap.
+   */
+  private async paperTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const desk = await this.paperDesk();
+    if (!desk) return { error: 'agent paper trading is not enabled — the user starts dexterm with `--spectate-mcp --agent-paper <mandate-id>` on a mandate they armed (paper only). No MCP tool can sign or send.', reason: 'not-enabled' };
+    // Every agent paper trade must be visible: a WRITE call refuses unless the app's spectator view is watching
+    // this server (it is, while `--spectate-mcp` runs and the user has not stopped it).
+    if ((PAPER_WRITE_TOOLS as readonly string[]).includes(name) && !this.watched()) {
+      return { error: 'agent paper trading needs the spectator view open in the running dexterm so every call is visible', reason: 'not-watched' };
+    }
+    try {
+      switch (name) {
+        case 'paper_open_ticket': {
+          const t = desk.open({ mint: String(args.mint ?? ''), symbol: String(args.symbol ?? ''), decimals: Number(args.decimals), side: args.side === 'sell' ? 'sell' : 'buy' });
+          return { paper: true, ticket: t, note: 'PAPER ticket opened (simulated). Size it, then confirm. Nothing is signed or sent.' };
+        }
+        case 'paper_size_ticket': {
+          const t = desk.size(String(args.ticketId ?? ''), { usd: typeof args.usd === 'number' ? args.usd : undefined, fraction: typeof args.fraction === 'number' ? args.fraction : undefined });
+          return { paper: true, ticket: t };
+        }
+        case 'paper_confirm': {
+          const r = await desk.confirm(String(args.ticketId ?? ''));
+          return { paper: true, fill: paperFillView(r.fill), position: r.position, note: 'SIMULATED paper fill — not a result; label it PAPER.' };
+        }
+        case 'paper_close': {
+          const r = await desk.close({ mint: String(args.mint ?? ''), fraction: typeof args.fraction === 'number' ? args.fraction : undefined });
+          return { paper: true, fill: paperFillView(r.fill), position: r.position, note: 'SIMULATED paper close.' };
+        }
+        case 'paper_positions': return { paper: true, positions: desk.positions() };
+        case 'paper_pnl': return { ...desk.pnl() };
+        default: return { error: `unknown paper tool ${name}` };
+      }
+    } catch (e) {
+      // A PaperDeskError carries a stable reason (cap name / paused / stopped / takeover / mandate state); the
+      // spectator view sees this as a 'refused' call, and the desk already journaled it.
+      const reason = (e as { reason?: unknown }).reason;
+      return { error: err(e), ...(typeof reason === 'string' ? { reason } : {}) };
+    }
   }
 
   /**
@@ -468,6 +586,7 @@ export class McpTools {
 
   async call(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     if ((ANALYST_ACTION_TYPES as readonly string[]).includes(name)) return this.uiAction(name as AnalystActionType, args);
+    if (PAPER_TOOLS.has(name)) return this.paperTool(name, args);
     switch (name) {
       case 'screen_state':
         return this.screenState();
@@ -479,6 +598,8 @@ export class McpTools {
         const disc = await this.data.store.discover(feed as 'trending' | 'recent' | 'organic', limit);
         if (!disc.mints.length) return { preset, rows: [], errors: disc.errors };
         const enr = await this.data.store.enrich(disc.mints.slice(0, limit), { price: false });
+        for (const t of enr.rows) { this.surfaced.delete(t.mint); this.surfaced.add(t.mint); }
+        while (this.surfaced.size > 200) this.surfaced.delete(this.surfaced.values().next().value as string);
         return {
           preset, now: Date.now(),
           rows: enr.rows.map((t) => ({
@@ -696,11 +817,43 @@ export class McpTools {
         try { creators = (await this.data.detail.security(mint)).value.creators ?? []; } catch (e) { goplusErr = err(e); }
         let mintAuthority: string | null = null;
         try { mintAuthority = (await this.data.detail.mintInfo(mint)).value.mintAuthority; } catch { /* ignore */ }
+        // 0.1.5 dev history: dexterm's own recorded launches for this creator fill prior launches / rugs keylessly.
+        const local = this.localDevHistory(mint, creators[0] ?? null);
+        if (local && local.report.labelled.n > 0) {
+          return {
+            mint, creator: local.creator, creators: creators.length ? creators : [local.creator], mintAuthorityAddress: mintAuthority,
+            devHistory: { launches: local.report.launches.n, rugged: local.report.labelled.rug, bestAth: null, labelled: local.report.labelled.n, source: local.report.source, ageSec: local.report.labelled.ageSec },
+            snipers: null, bundledPct: null, bundleWallets: null,
+            tier: 'local-history', note: `prior launches and rugs from dexterm's recorded history (${devHistoryLine(local.report)}); bundles/snipers need a Helius/Birdeye key. Call dev_history for the detail.`,
+          };
+        }
         return {
-          mint, creator: creators[0] ?? null, creators, mintAuthorityAddress: mintAuthority,
+          mint, creator: creators[0] ?? local?.creator ?? null, creators, mintAuthorityAddress: mintAuthority,
           devHistory: null, snipers: null, bundledPct: null, bundleWallets: null,
           tier: 'needs-key', note: goplusErr ? `prior-launch forensics need a Helius/Birdeye key; goplus: ${goplusErr}` : 'prior-launch forensics (rugs, bundles, snipers) need a Helius/Birdeye key and are not available on the keyless tier',
         };
+      }
+
+      case 'dev_history': {
+        const mint = typeof args.mint === 'string' ? args.mint.trim() : '';
+        let creator = typeof args.creator === 'string' ? args.creator.trim() : '';
+        if (mint && !BASE58.test(mint)) return { error: 'dev_history: mint must be a base58 address' };
+        if (creator && !BASE58.test(creator)) return { error: 'dev_history: creator must be a base58 wallet address' };
+        if (!mint && !creator) return { error: 'dev_history needs a mint or a creator wallet' };
+        const db = this.historyDb();
+        let creatorSource: string | null = creator ? 'argument' : null;
+        if (!creator && mint && db) { const l = creatorOf(db, mint); if (l) { creator = l.creator; creatorSource = `recorder (${l.source}, linked ${Math.round((Date.now() - l.firstT) / 1000)}s ago)`; } }
+        if (!creator && mint) {
+          try { const r = await this.resolve(mint); const dev = r.row?.audit?.devAddress; if (dev) { creator = dev; creatorSource = 'jupiter-tokens dev'; } } catch { /* next source */ }
+        }
+        if (!creator && mint) {
+          try { const c = (await this.data.detail.security(mint)).value.creators ?? []; if (c[0] && BASE58.test(c[0])) { creator = c[0]; creatorSource = 'goplus creators'; } } catch { /* unknown */ }
+        }
+        const base = { mint: mint || null, disclaimer: 'a risk flag from observed history, not a certificate; labels are keyless-proxy and samples are small (say the n)' };
+        if (!creator) return { ...base, creator: null, status: 'unknown', note: 'no source named this coin\'s creator (recorder, Jupiter dev, GoPlus)' };
+        if (!db) return { ...base, creator, creatorSource, status: 'unknown', note: 'no recorded history on this machine: the history recorder keeps creators and outcome labels in the --db file (dexterm record run keeps it fed)' };
+        const report = queryDevHistory(db, { creator, mint: mint || null });
+        return { ...base, creatorSource, ...report, summary: devHistoryLine(report), rule: `serial_rugger = labelled rugs >= ${SERIAL_RUGGER_MIN}` };
       }
 
       case 'kb_lookup': {
@@ -869,7 +1022,12 @@ export const SERVER_INFO = { name: 'dexterm', version: packageVersion() };
 
 function screenStateFromEnv(): Record<string, unknown> {
   const raw = process.env.DEXTERM_SCREEN_STATE;
-  if (!raw) return { screen: 'unknown', note: 'the TUI did not pass screen context' };
+  if (!raw) {
+    // task-1443: an external server (the user's own agent) reads the snapshot a following terminal publishes.
+    const follow = readFollowScreen(process.env);
+    if (follow) return { ...follow, source: 'follow' };
+    return { screen: 'unknown', note: 'the TUI did not pass screen context' };
+  }
   try { return JSON.parse(raw) as Record<string, unknown>; } catch { return { screen: 'unknown' }; }
 }
 
@@ -901,14 +1059,16 @@ export async function runStdioServer(opts: { argv?: string[] } = {}): Promise<vo
   const channel: ActionChannel | null = channelFile && channelToken
     ? { token: channelToken, append: (line: string) => fs.appendFileSync(channelFile, line, { mode: 0o600 }) }
     : null;
-  const tools = new McpTools(data, screenStateFromEnv, channel, dbPathForHistory);
-
   // task-1406 + task-1421: when a running dexterm has a spectator surface open, every tool call is emitted
   // as a SpectatorEvent-shaped JSONL line the TUI tails into its hub (where redaction + the stream live).
   // The sink is active either because the app spawned us with DEXTERM_SPECTATOR_FILE (the in-app analyst) or
   // because the app wrote the ~/.dexterm rendezvous (an external `dexterm mcp` client). When neither holds,
   // active() is false and nothing is built or written — no cost when nobody is watching.
   const spectator = resolveSpectatorSink(process.env);
+  // task-1443: the paper agent desk, resolved lazily per call from the ~/.dexterm rendezvous the running app
+  // writes when the user enabled agent paper trading on a mandate they armed. null (tools refuse) when it is
+  // not enabled; paper WRITE calls also refuse while no spectator surface is watching.
+  const tools = new McpTools(data, screenStateFromEnv, channel, dbPathForHistory, paperWiring(process.env, data, spectator));
 
   function appendTrace(rec: Record<string, unknown>): void {
     if (TRACE) { try { fs.appendFileSync(TRACE, JSON.stringify(rec) + '\n'); } catch { /* ignore */ } }

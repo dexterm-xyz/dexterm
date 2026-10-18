@@ -123,6 +123,8 @@ export interface Audit extends Provenance {
   top10Pct: number | null;
   devPct: number | null;
   devMints: number | null;
+  /** 0.1.5 dev history: the creator / dev wallet the source names (Jupiter tokens v2 `dev`), keyless. Absent = not reported. */
+  devAddress?: string | null;
   lpLockedPct: number | null;
   rugRisks: string[];
   rugScore: number | null;

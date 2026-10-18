@@ -33,6 +33,8 @@ date: 2026-10-16
 | `DEXTERM_INTENSITY` | `off` · `normal` · `fever` |
 | `DEXTERM_OFFLINE=1` | refuse live data; `--fixtures` or `--replay` only (tests and CI) |
 | `DEXTERM_ANALYST_MODEL` | the Claude model for analyst turns (default `(generated from the app: see https://dexterm.xyz/docs/configuration#environment-variables; app-help has the exact keys and commands)`) |
+| `DEXTERM_ANALYST_ENGINE` | `auto` (default) · `claude` · `codex`: which of your CLIs runs the analyst (since 0.1.5; also `--analyst-engine` and `analyst.engine` in `config.json`) |
+| `DEXTERM_CODEX_MODEL` | pin the Codex model for analyst turns (default: your Codex default) |
 | `DEXTERM_POPUP_SHELL` | path to a prebuilt native chart window |
 | `DEXTERM_POPUP_HOTKEY` · `DEXTERM_POPUP_HOTKEY_CLOSE` | override the popup chords without a config file |
 | `DEXTERM_RECORDER=0` | history recorder off (same as `--no-recorder`; `off`, `false` and `no` work too) |

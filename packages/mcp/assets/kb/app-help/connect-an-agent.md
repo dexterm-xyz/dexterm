@@ -34,6 +34,6 @@ sources:
 date: 2026-10-16
 ---
 
-`dexterm mcp` is a plain stdio MCP server exposing the same read-only tools the analyst uses. Add it to any Claude Code with `claude mcp add dexterm -- node packages/mcp/bin/dexterm-mcp.mjs`. Agents are untrusted: every tool is read-only and an agent can never sign, arm, raise a cap or touch keys. Use `app_help` for "how do I" questions and `app_state` to see what the user sees.
+`dexterm mcp` is a plain stdio MCP server exposing the same read-only tools the analyst uses. Add it to any Claude Code with `claude mcp add dexterm -- node packages/mcp/bin/dexterm-mcp.mjs`, or set up Claude Code, Claude Desktop, Cursor or Codex in one command with `dexterm mcp install <client>`. Agents are untrusted: every tool is read-only and an agent can never sign, arm, raise a cap or touch keys. Use `app_help` for "how do I" questions and `app_state` to see what the user sees.
 
 CLI: `dexterm mcp`.

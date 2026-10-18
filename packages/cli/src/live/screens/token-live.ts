@@ -20,6 +20,7 @@ import { drawCoin, imagesOn } from '../../screens/coin.ts';
 import { COIN_HERO_W, COIN_HERO_H } from '@dexterm/tui';
 import { renderSocialPanel } from '../../screens/social-panel.ts';
 import { launchIntelCells, holderTags } from '../intel.ts';
+import { devBookOf, devRows } from '../dev-history.ts';
 import { EX_POOL_TAGS } from '@dexterm/data';
 import { layoutFor } from '../../custom.ts';
 import { chartMode, priceModeOf, mcapAt, positionPriceCells, type PriceMode } from '../../display.ts';
@@ -169,6 +170,12 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   const top10Rows: Array<[string, string, Level]> = tags.top10
     ? [['Top 10 ex-pool', `${tags.top10.exPool.toFixed(1)}%`, t10lvl(tags.top10.exPool)], ['Top 10 raw', `${tags.top10.raw.toFixed(1)}%`, 'na']]
     : [['Top 10 holders', ...(v.top10 === null ? na(v.panels.holders.state === 'needs-key' ? 'needs key' : dash) : [`${v.top10.toFixed(1)}%${v.panels.holders.state === 'ok' ? '' : ' (jup)'}`, t10lvl(v.top10)] as [string, Level])]];
+  // 0.1.5 dev history (task-1425): the creator's recorded track record from the local recorder (keyless). The rugs
+  // row sits with the other rug signals; launches / bag-exit / linked wallets follow the safety list.
+  const book = devBookOf(state);
+  const devAll = book ? devRows(book.forMint(v.mint, v.devAddress ?? null, state.live?.intel?.analysis(v.mint) ?? null)) : [];
+  const devHead = devAll.slice(0, 1) as Array<[string, string, Level]>;
+  const devTail = devAll.slice(1) as Array<[string, string, Level]>;
   const sniperRow: [string, Level] = [cells.snipers.text, cells.snipers.level];
   const bundleRow: [string, Level] = [cells.bundle.text, cells.bundle.level];
   const rows: Array<[string, string, Level]> = [
@@ -180,8 +187,10 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
     ['Mint authority', ...(v.mintAuth === null ? na(dash) : [v.mintAuth ? 'ENABLED' : 'revoked', v.mintAuth ? 'bad' : 'ok'] as [string, Level])],
     ['Freeze authority', ...(v.freezeAuth === null ? na(dash) : [v.freezeAuth ? 'ENABLED' : 'revoked', v.freezeAuth ? 'bad' : 'ok'] as [string, Level])],
     ['Dev history', ...(v.devMints === null ? needsHistory : [`${v.devMints} mints by dev (jup)`, v.devMints > 3 ? 'warn' : 'ok'] as [string, Level])],
+    ...devHead,
     ['RugCheck score', ...(v.rug === null || v.rug.score === null ? na(v.panels.rugcheck.state === 'error' ? `unavailable: ${v.panels.rugcheck.reason ?? ''}`.trim() : dash) : [`${Math.round(v.rug.score)}/100`, v.rug.score < 30 ? 'ok' : v.rug.score < 60 ? 'warn' : 'bad'] as [string, Level])],
     ['GoPlus', ...goplusRow(v)],
+    ...devTail,
   ];
   for (const [label, val0, lvl] of rows) {
     if (sy >= sb.y + sb.h) break;
@@ -413,7 +422,8 @@ function analystPlaceholder(c: Canvas, x: number, y: number, w: number, h: numbe
   // task-1311 (QA M5): the pre-run state. Opening a token no longer spends a paid dossier; this panel
   // waits until you ask for one with `a` (dossier) or type a question with `i`. No fake verdicts.
   const t = c.theme;
-  const box = c.box(x, y, w, h, { title: '✦ ANALYST · claude', titleFg: t.ai, caption: 'read-only · local claude · on demand', captionFg: t.dim, border: mix(t.border, t.ai, 0.35) });
+  const eng = state.analystEngine ?? 'claude'; // 0.1.5: the user's own CLI that will answer
+  const box = c.box(x, y, w, h, { title: `✦ ANALYST · ${eng}`, titleFg: t.ai, caption: `read-only · local ${eng} · on demand`, captionFg: t.dim, border: mix(t.border, t.ai, 0.35) });
   const bg: Hex = box.bg;
   const inner = box.w - 2;
   let cy = box.y;

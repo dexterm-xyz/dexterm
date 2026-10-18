@@ -116,6 +116,9 @@ actions:
   - workspace.popups
   - workspace.default
   - screen.rules
+tools:
+  - paper_positions
+  - paper_pnl
 confidence: high
 owner: maintainers
 origin: app-help-generated
@@ -127,7 +130,7 @@ sources:
 date: 2026-10-16
 ---
 
-Your simulated (PAPER) positions and their P&L. dexterm holds no keys and signs nothing; paper trading is a simulation for learning the flow.
+Your simulated (PAPER) positions and their P&L. dexterm holds no keys and signs nothing; paper trading is a simulation for learning the flow. An agent you enabled can read these over MCP with the read-only paper_positions and paper_pnl tools.
 
 Keys on this screen:
   `q/^C` — quit

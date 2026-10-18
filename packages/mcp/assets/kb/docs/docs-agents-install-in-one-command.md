@@ -47,3 +47,5 @@ $ dexterm mcp doctor                   # spawn the server and list the tools you
 Flags: `--config FILE` writes to a specific file instead of the client default; `--print` only prints; `--node` emits a `node <path> mcp` command for when `dexterm` is not on your PATH; `--yes` skips the confirmation prompt. On a non-interactive shell the command prints the plan and writes nothing unless you pass `--yes`.
 
 `dexterm mcp doctor` spawns the server over stdio, does the MCP handshake, and lists the tools, prompts and resources the agent sees — proof the connection works before you point an agent at it.
+
+Codex is supported both ways: as an MCP client here (`dexterm mcp install codex`), and, since 0.1.5, as the engine that runs the in-app analyst on your own Codex login (use Codex instead of Claude (https://dexterm.xyz/docs/analyst#use-codex-instead-of-claude)).

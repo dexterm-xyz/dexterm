@@ -36,4 +36,4 @@ Install Node.js LTS first, reopen PowerShell, and run:
 npm i -g dexterm-cli
 ```
 
-The Windows path is experimental and not yet tested by the project. The core read-only screens are expected to work, but voice has no Windows engine, browser-opening shortcuts do not work, and some repair instructions are written for macOS/Linux. See Windows expectations (https://dexterm.xyz/docs/beginners#windows-expectations).
+The Windows path is experimental: the project's CI suite passed for 0.1.4, but nobody has used it much by hand. The core read-only screens are expected to work, but voice has no Windows engine, browser-opening shortcuts do not work, and some repair instructions are written for macOS/Linux. See Windows expectations (https://dexterm.xyz/docs/beginners#windows-expectations).

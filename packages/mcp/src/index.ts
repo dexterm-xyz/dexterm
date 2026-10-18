@@ -2,7 +2,9 @@
 // Every tool is read-only and schema-described; nothing in this package may build,
 // sign or send a transaction (SPEC §5.2, §6.3).
 
-export { runStdioServer, selfTest, McpTools, TOOLS, READ_ONLY_TOOLS, appHelpAnswer, firewall, listPrompts, getPrompt, resourceList, resourceRead, overlayCounts, userSkillPreamble, BUNDLED_KB_DIR, BUNDLED_SKILLS_DIR } from './server.ts';
+export { runStdioServer, selfTest, McpTools, TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, appHelpAnswer, firewall, listPrompts, getPrompt, resourceList, resourceRead, overlayCounts, userSkillPreamble, BUNDLED_KB_DIR, BUNDLED_SKILLS_DIR } from './server.ts';
+// task-1443: resolve the paper agent desk from the running app's rendezvous (null when agent paper trading is off).
+export { resolvePaperAgentDesk, paperAgentDeskDb } from './paper-agent.ts';
 export {
   OverlayStore, mergeOverlay, loadBundled, checkKb, checkSkill, moneyToolMentions, isMoneyToolName, parseFrontmatter,
   dextermHome, userKbDir, userSkillsDir, userDir, contentJournalPath, journalContent, writeOverlayFile, resetOverlayFile, templateFor,
@@ -14,7 +16,7 @@ export { buildDossier, type DossierInput, type DossierAvailability } from './dos
 // (via DEXTERM_SPECTATOR_FILE, or the ~/.dexterm rendezvous an external `dexterm mcp` client uses).
 export {
   recordForToolCall, maxAgeSec, fileSpectatorSinkFromEnv, resolveSpectatorSink, rendezvousPath,
-  MCP_SPECTATOR_RENDEZVOUS,
+  MCP_SPECTATOR_RENDEZVOUS, MCP_FOLLOW_SCREEN, FOLLOW_NAV_ACTIONS, followScreenPath, readFollowScreen, writeFollowScreen, clearFollowScreen,
   type McpSpectatorRecord, type McpSpectatorSink, type LiveSpectatorSink, type McpSpectatorRendezvous,
 } from './spectator-sink.ts';
 export { loadAppHelp, searchAppHelp, getAppHelp, APP_HELP_DIR, type AppHelpEntry, loadDocsKb, searchDocs, getDocs, searchHelp, DOCS_KB_DIR, helpIntent, type DocsEntry, type HelpHit } from './app-help.ts';
@@ -31,6 +33,7 @@ export const PLANNED_TOOLS = [
   'get_candles',
   'rugcheck',
   'get_dev_history',
+  'dev_history',
   'kb_lookup',
   'kb_search',
   'case_lookup',
