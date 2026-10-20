@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { McpTools } from '../src/index.ts';
+import { McpTools, resolvePaperAgentDesk } from '../src/index.ts';
 import { paperWiring } from '../src/server.ts';
 import { recordForToolCall, type McpSpectatorRecord, type LiveSpectatorSink } from '../src/spectator-sink.ts';
 import {
@@ -80,5 +80,7 @@ test('a 429 on a PAPER close is re-quoted on the quote layer and shown on the sp
   assert.ok(aj.verify().ok);
   assert.ok(aj.types().includes('agent.paper.quote-retry'));
   clearPaperAgentRendezvous(env);
+  // the next resolve sees no rendezvous and closes the cached paper wallet (Windows cannot delete an open wallet.db)
+  assert.equal(await resolvePaperAgentDesk(readData, env), null, 'off again once the app clears it');
   rmSync(home, { recursive: true, force: true });
 });
