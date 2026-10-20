@@ -92,6 +92,9 @@ export type ChartStyle = typeof CHART_STYLES[number];
 /** Price-scale mode: auto (normal, autoscaled), logarithmic, percent (from the first visible bar). */
 export const CHART_SCALES = ['auto', 'log', 'percent'] as const;
 export type ChartScale = typeof CHART_SCALES[number];
+/** task-1472: what the chart's Y axis shows (the popup's MCAP | PRICE control / `A` ask the terminal to switch). */
+export const CHART_AXES = ['mcap', 'price'] as const;
+export type ChartAxisChoice = typeof CHART_AXES[number];
 
 /** Chart preferences the TUI remembers for the run (re-applied when the popup is reopened). */
 export interface ChartPrefs {
@@ -130,6 +133,21 @@ export interface ChartPosition {
   cells: PositionCell[];
   /** Fills of the CURRENT position (since it was last flat), oldest first. */
   fills: ChartFill[];
+}
+
+/**
+ * task-1473 r2: the persistent POSITION PnL chip, formatted TUI-side (screens/pnl-chip.ts chipSegments) so the popup
+ * reads exactly like the terminal's chip. It is about the HELD coin, which need not be the coin on the chart.
+ */
+export interface ChartChip {
+  kind: 'PAPER' | 'LIVE';
+  symbol: string;
+  /** Sign of the PnL: up ≥ 0, down < 0, muted = no mark yet. */
+  tone: 'up' | 'down' | 'muted';
+  /** The peak was raised in the last ~1.2 s (the page flashes; ★ is in the peak text either way). */
+  newPeak: boolean;
+  /** head · pnl · peak · px · held · dd · tp, in priority order. */
+  segments: Array<{ id: string; text: string }>;
 }
 
 /** Chart popup view model: the open token's candles + header stats, from the live data layer. */
@@ -174,13 +192,16 @@ export interface ChartVM {
    */
   image?: string | null;
   /**
-   * task-1366: the terminal's price display mode. 'mcap' with a `supply` makes the Y axis, crosshair legend and header
+   * task-1366: the terminal's price display mode; task-1472: now the terminal's CHART AXIS (display.chartAxis, default
+   * mcap, separate from the table price mode). 'mcap' with a `supply` makes the Y axis, crosshair legend and header
    * read MARKET CAP (price × supply, K/M/B) — the bars stay in USD price, so levels and fills keep their meaning.
    * `supply` is mcap / price at the LATEST tick (current supply: history is scaled by it, and the page says so);
    * null in mcap mode = the supply is unknown and the page shows prices with a visible note.
    */
   priceMode?: 'price' | 'mcap';
   supply?: number | null;
+  /** task-1473 r2: the PnL chip while an auto mode runs and a position is open; null / absent = no chip. */
+  chip?: ChartChip | null;
 }
 
 /** Token-detail popup view model: the identity + market + risk subset of the live TokenView. */
@@ -397,7 +418,27 @@ export interface SpectatorActivityVM {
   seq: number; t: number; phase: string; agent: string; tier: string | null;
   tool: string | null; summary: string; ms: number | null; dataAgeSec: number | null; ok: boolean; refusal: string | null;
 }
+/**
+ * task-1466 (spectator v2): the agent STORY for the popup — the phase rail, heartbeat, thought ribbon, call timeline,
+ * the coin being vetted and the PAPER trade arc. Built TUI-side from @dexterm/agents AgentStory; every string is
+ * redacted there and rendered with textContent only. Numbers are the app's (tool results / the app's mark price).
+ */
+export interface SpectatorStoryVM {
+  phase: string;
+  rail: string[];
+  sub: string | null;
+  bpm: number;
+  control: 'running' | 'paused' | 'takeover' | 'killed';
+  calls: number;
+  thoughts: Array<{ t: number; text: string; source: 'agent' | 'dexterm' }>;
+  nodes: Array<{ t: number; label: string; ms: number | null; status: 'ok' | 'slow' | 'fail' | 'refused'; paper: boolean; phase: string; count: number }>;
+  focus: { symbol: string; checks: string[]; verdict: string | null; rug: number | null; larpFlags: number | null } | null;
+  arc: { symbol: string; stage: string; sizeUsd: number | null; entryUsd: number | null; markUsd: number | null; pnlPct: number | null; peakPct: number | null; exits: number; realizedSol: number | null; resultPct: number | null; refusal: string | null } | null;
+}
+
 export interface SpectatorPopupVM {
+  /** task-1466: the agent story (absent on an older TUI: the page then shows the activity list only). */
+  story?: SpectatorStoryVM | null;
   title: string;
   now: number;
   /** Whether the stream was redacted (always true for a shared view; false only in local follow mode). */
@@ -436,6 +477,7 @@ export type PopupToTui =
   | { type: 'event'; name: 'chart.indicator'; payload: { id: ChartIndicator; on: boolean } }
   | { type: 'event'; name: 'chart.style'; payload: { style: ChartStyle } }
   | { type: 'event'; name: 'chart.scale'; payload: { scale: ChartScale } }
+  | { type: 'event'; name: 'chart.axis'; payload: { axis: ChartAxisChoice } }
   | { type: 'event'; name: 'chart.painted'; payload: { kind: 'first' | 'data'; ms: number; sentAt: number } }
   | { type: 'event'; name: 'holder.selected'; payload: { address: string } }
   | { type: 'event'; name: 'feed.selected'; payload: { i: number } }

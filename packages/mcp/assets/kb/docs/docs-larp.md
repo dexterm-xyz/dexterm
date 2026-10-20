@@ -19,6 +19,6 @@ sources:
 date: 2026-10-16
 ---
 
-Vet the product behind a coin: its website, domain registration and GitHub, read-only, only when you ask.
+Vet the product behind a coin: its website, domain registration, GitHub and X account, read-only, only when you ask, with a 0-100 LARP score that shows every point.
 
 A memecoin's advertised website, X and Telegram are claims. The LARP detector fetches what it can, reads it mechanically, and lets the analyst grade the claims against what it found. It runs only when you press `V` on a live token; nothing is fetched automatically.

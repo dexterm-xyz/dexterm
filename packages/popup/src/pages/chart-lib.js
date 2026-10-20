@@ -180,22 +180,43 @@
     if (a >= 1e3) return `${s}$${(a / 1e3).toFixed(1)}K`;
     return `${s}$${a.toFixed(0)}`;
   }
-  // ---- task-1366 market cap (mirrors @dexterm/tui fmtMcapBare: K/M/B/T, ≤ 3 significant digits, never 1000K)
-  const MC_UNITS = ['', 'K', 'M', 'B', 'T'];
-  function fmtMcapAxis(n) {
-    if (!fin(n)) return '—';
-    const sign = n < 0 ? '-' : '';
-    let a = Math.abs(n);
-    if (a === 0) return '0';
-    if (a < 1) return sign + String(Number(a.toPrecision(2)));
-    let u = 0;
-    while (u < MC_UNITS.length - 1 && a >= 1000) { a /= 1000; u++; }
-    let r = Number(a.toPrecision(3));
-    if (r >= 1000 && u < MC_UNITS.length - 1) { r = Number((r / 1000).toPrecision(3)); u++; }
-    return `${sign}${r >= 1000 ? String(Math.round(r)) : String(r)}${MC_UNITS[u]}`;
+  // ---- task-1472 the one chart number formatter (mirrors @dexterm/tui fmtCompact, parity-tested): lowercase k, then
+  // M/B/T; one decimal while < 10 of the unit, none after; the unit is promoted after rounding (999 900 → 1M); below 1
+  // the subscript price form (0.0₅493): never scientific notation. `extra` (0..3) keeps two axis ticks apart.
+  const CU = ['', 'k', 'M', 'B', 'T'];
+  const trimZeros = (t) => (t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t);
+  function tinyBare(p) {
+    if (p >= 0.01) return p.toFixed(4);
+    const m = p.toFixed(12).match(/^0\.(0*)(\d+)/);
+    if (!m) return String(p);
+    const zeros = m[1].length;
+    const digits = m[2].replace(/0+$/, '').slice(0, 4) || '0';
+    if (zeros < 3) return `0.${m[1]}${digits}`;
+    return `0.0${String(zeros).split('').map((c) => SUB[Number(c)]).join('')}${digits}`;
   }
+  function fmtCompact(n, extra = 0) {
+    if (!fin(n)) return '—';
+    if (n === 0) return '0';
+    const sign = n < 0 ? '-' : '';
+    const a = Math.abs(n);
+    if (a < 1) return sign + trimZeros(tinyBare(a));
+    const x = Math.max(0, Math.min(3, Math.floor(extra) || 0));
+    const round = (q) => Number(q.toFixed((q < 10 ? 1 : 0) + x));
+    let u = 0, v = a;
+    while (u < CU.length - 1 && v >= 1000) { v /= 1000; u++; }
+    let r = round(v);
+    if (r >= 1000 && u < CU.length - 1) { u++; r = round(r / 1000); }
+    return `${sign}${trimZeros(r.toFixed((r < 10 ? 1 : 0) + x))}${CU[u]}`;
+  }
+  /** `$4.9k`, `-$1.2k` (volume pane, legend volume). */
+  function fmtCompactUsd(n, extra = 0) {
+    const b = fmtCompact(n, extra);
+    return b === '—' ? b : b.startsWith('-') ? `-$${b.slice(1)}` : `$${b}`;
+  }
+  /** task-1366 name kept: the mcap axis label is now the compact formatter. */
+  const fmtMcapAxis = (n) => fmtCompact(n);
   const MCAP_LABEL = 'mcap (current supply)';
-  const MCAP_FALLBACK = 'supply unknown · showing price';
+  const MCAP_FALLBACK = 'price (mcap unavailable)'; // task-1472: the card's wording (was 'supply unknown · showing price')
   /**
    * How the page shows numbers for a VM: `mcap` (with the supply multiplier) only when the terminal is in mcap mode AND
    * sent a usable supply; mcap mode without one is `price` + a visible note. Never invents a supply.
@@ -207,7 +228,7 @@
     if (supply) return { mode: 'mcap', supply, label: MCAP_LABEL, key: `mcap:${Number(supply.toPrecision(4))}` };
     return { mode: 'price', supply: null, label: wantMcap ? MCAP_FALLBACK : null, key: wantMcap ? 'price:fallback' : 'price' };
   }
-  /** The Y-axis / crosshair label formatter for a display: mcap = price × supply in K/M/B, else the price label. */
+  /** The Y-axis / crosshair label formatter for a display: mcap = price × supply in compact k/M/B, else the price label. */
   function axisFormatter(d) {
     if (d && d.mode === 'mcap' && fin(d.supply)) { const s = d.supply; return (p) => fmtMcapAxis(p * s); }
     return fmtAxis;
@@ -225,7 +246,7 @@
     const chg = base > 0 ? (bar.close - base) / base : null;
     const f = axisFormatter(display);
     const mc = !!display && display.mode === 'mcap';
-    return { o: f(bar.open), h: f(bar.high), l: f(bar.low), c: mc ? `${f(bar.close)} (${fmtPrice(bar.close)})` : f(bar.close), v: fmtUsd(bar.volume), chg: fmtPct(chg), up: bar.close >= bar.open };
+    return { o: f(bar.open), h: f(bar.high), l: f(bar.low), c: mc ? `${f(bar.close)} (${fmtPrice(bar.close)})` : f(bar.close), v: fmtCompactUsd(bar.volume), chg: fmtPct(chg), up: bar.close >= bar.open };
   }
 
   /** Index of the bar at `time` (binary search), or -1. */
@@ -257,6 +278,6 @@
     return bars[i].time + f * (bars[i + 1].time - bars[i].time);
   }
 
-  const api = { setTzOffset, chartTime, INTERVALS, PERIOD_MS, INDICATORS, STYLES, SCALES, toBars, mergeTail, ema, sma, vwap, volumes, barTimeOf, tapeMarkers, fillMarkers, priceFormatFor, fmtPrice, fmtAxis, fmtUsd, fmtPct, fmtSol, legendFor, fmtMcapAxis, displayOf, axisFormatter, MCAP_LABEL, MCAP_FALLBACK, indexOfTime, logicalOf, timeOfLogical };
+  const api = { setTzOffset, chartTime, INTERVALS, PERIOD_MS, INDICATORS, STYLES, SCALES, toBars, mergeTail, ema, sma, vwap, volumes, barTimeOf, tapeMarkers, fillMarkers, priceFormatFor, fmtPrice, fmtAxis, fmtUsd, fmtPct, fmtSol, legendFor, fmtMcapAxis, fmtCompact, fmtCompactUsd, displayOf, axisFormatter, MCAP_LABEL, MCAP_FALLBACK, indexOfTime, logicalOf, timeOfLogical };
   root.DTChart = Object.freeze(api);
 })(typeof window !== 'undefined' ? window : globalThis);

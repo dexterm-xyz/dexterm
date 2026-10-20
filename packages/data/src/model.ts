@@ -23,7 +23,9 @@ export type SourceId =
   | 'helius'           // S9 (Tier 1, user key)
   | 'birdeye'          // S10 (Tier 1, user key)
   | 'jupiter-swap'     // S11 (v2 only)
-  | 'fxtwitter'        // S12
+  | 'fxtwitter'        // S12 (task-1471: keyless X account lookup, first in the LARP check's chain)
+  | 'vxtwitter'        // task-1471: keyless X account lookup fallback (a cached copy, own fetched_on)
+  | 'x-oembed'         // task-1471: X's public oEmbed (exists / missing, canonical handle)
   | 'x-api'            // S13: X v2 in USER context only (task-1357 Login with X; the user's own app + limits)
   | 'telegram'         // S12
   | 'goplus'           // GoPlus Solana token security (keyless; inventory 2026-10-06 §1d)

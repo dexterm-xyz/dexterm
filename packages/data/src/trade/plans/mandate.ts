@@ -18,6 +18,16 @@ export const HARD = Object.freeze({
   ttlMs: 24 * 3600_000, maxSendsPerSec: 20,
 });
 
+/**
+ * task-1469: ceilings for a PAPER-ONLY mandate (`dexterm mandate draft --paper`). Only the agent paper desk reads
+ * one: the plan engine refuses to arm a plan into it, fire under it or copy-trade through it, so these numbers never
+ * reach a signer, and HARD (above) stays the ceiling of every mandate a real fill can use. Fills are still priced
+ * on a live quote, so a bigger paper size pays its real price impact.
+ */
+export const PAPER_HARD = Object.freeze({
+  ...HARD, totalUsd: 10_000, perTradeUsd: 2_000, perCoinUsd: 2_000, dailyLossUsd: 10_000, maxPriceImpactPct: 10,
+});
+
 export type TierName = 'keypress' | 'ptt-held' | 'hands-free';
 export interface TierSpec { rank: number; perTradeMultiplier: number; canArmMandate: boolean; canArmBatch: boolean }
 
@@ -64,6 +74,8 @@ export interface Mandate {
   armedBy: { gesture: string; proofId: string } | null;
   revokedAt: number | null;
   revokedReason: string | null;
+  /** task-1469: present (true) only on a paper-only mandate: agent paper desk only, refused by the plan engine. */
+  paperOnly?: true;
 }
 
 /** Untrusted mandate draft input. Unknown fields are ignored. */
@@ -73,6 +85,8 @@ export interface MandateInput {
   maxSlippageBps?: unknown; maxPriceImpactPct?: unknown; maxSendsPerSec?: unknown;
   tipBudgetLamports?: unknown; maxTipLamportsPerTx?: unknown; maxPriorityFeeLamportsPerTx?: unknown;
   actions?: unknown; safetyFilter?: unknown; mints?: unknown; maxTier?: unknown; ttlMs?: unknown;
+  /** task-1469: exactly `true` drafts a paper-only mandate under PAPER_HARD; anything else is a normal mandate. */
+  paperOnly?: unknown;
   [k: string]: unknown;
 }
 
@@ -97,6 +111,8 @@ function clamp(v: unknown, dflt: number, hardMax: number): number {
 export function draftMandate(input: MandateInput | null | undefined, ctx: { clock: Clock; id?: string }): Mandate {
   const x = input ?? {};
   const now = ctx.clock.now();
+  const paper = x.paperOnly === true;
+  const H = paper ? PAPER_HARD : HARD;
   const actions: Side[] = Array.isArray(x.actions) ? (x.actions as unknown[]).filter((a): a is Side => a === 'buy' || a === 'sell') : ['buy', 'sell'];
   if (actions.length === 0) throw new MandateError('bad-request', 'at least one of buy/sell');
   const m: Mandate = {
@@ -104,23 +120,23 @@ export function draftMandate(input: MandateInput | null | undefined, ctx: { cloc
     id: ctx.id ?? `mandate_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     wallet: 'fast', // the capped fast wallet; the main wallet is never named here
     budget: {
-      totalUsd: clamp(x.totalUsd, 100, HARD.totalUsd),
-      perTradeUsd: clamp(x.perTradeUsd, 20, HARD.perTradeUsd),
-      perCoinUsd: clamp(x.perCoinUsd, 40, HARD.perCoinUsd),
-      dailyLossUsd: clamp(x.dailyLossUsd, 50, HARD.dailyLossUsd),
+      totalUsd: clamp(x.totalUsd, 100, H.totalUsd),
+      perTradeUsd: clamp(x.perTradeUsd, 20, H.perTradeUsd),
+      perCoinUsd: clamp(x.perCoinUsd, 40, H.perCoinUsd),
+      dailyLossUsd: clamp(x.dailyLossUsd, 50, H.dailyLossUsd),
     },
     limits: {
-      maxArmedPlans: clamp(x.maxArmedPlans, 20, HARD.maxArmedPlans),
-      maxInFlight: clamp(x.maxInFlight, 5, HARD.maxInFlight),
-      maxOpenPositions: clamp(x.maxOpenPositions, 20, HARD.maxOpenPositions),
-      maxSlippageBps: clamp(x.maxSlippageBps, 500, HARD.maxSlippageBps),
-      maxPriceImpactPct: clamp(x.maxPriceImpactPct, 3, HARD.maxPriceImpactPct),
-      maxSendsPerSec: clamp(x.maxSendsPerSec, 5, HARD.maxSendsPerSec),
+      maxArmedPlans: clamp(x.maxArmedPlans, 20, H.maxArmedPlans),
+      maxInFlight: clamp(x.maxInFlight, 5, H.maxInFlight),
+      maxOpenPositions: clamp(x.maxOpenPositions, 20, H.maxOpenPositions),
+      maxSlippageBps: clamp(x.maxSlippageBps, 500, H.maxSlippageBps),
+      maxPriceImpactPct: clamp(x.maxPriceImpactPct, 3, H.maxPriceImpactPct),
+      maxSendsPerSec: clamp(x.maxSendsPerSec, 5, H.maxSendsPerSec),
     },
     fees: {
-      tipBudgetLamports: clamp(x.tipBudgetLamports, 50_000_000, HARD.tipBudgetLamports),
-      maxTipLamportsPerTx: clamp(x.maxTipLamportsPerTx, 1_000_000, HARD.maxTipLamportsPerTx),
-      maxPriorityFeeLamportsPerTx: clamp(x.maxPriorityFeeLamportsPerTx, 2_000_000, HARD.maxPriorityFeeLamportsPerTx),
+      tipBudgetLamports: clamp(x.tipBudgetLamports, 50_000_000, H.tipBudgetLamports),
+      maxTipLamportsPerTx: clamp(x.maxTipLamportsPerTx, 1_000_000, H.maxTipLamportsPerTx),
+      maxPriorityFeeLamportsPerTx: clamp(x.maxPriorityFeeLamportsPerTx, 2_000_000, H.maxPriorityFeeLamportsPerTx),
     },
     allowed: {
       actions,
@@ -129,8 +145,9 @@ export function draftMandate(input: MandateInput | null | undefined, ctx: { cloc
     },
     maxTier: (typeof x.maxTier === 'string' && x.maxTier in TIERS) ? (x.maxTier as TierName) : 'keypress',
     createdAt: now,
-    expiresAt: now + clamp(x.ttlMs, 4 * 3600_000, HARD.ttlMs),
+    expiresAt: now + clamp(x.ttlMs, 4 * 3600_000, H.ttlMs),
     status: 'draft', armedAt: null, armedBy: null, revokedAt: null, revokedReason: null,
+    ...(paper ? { paperOnly: true as const } : {}),
   };
   // perTrade can never exceed total; perCoin never exceeds total.
   m.budget.perTradeUsd = Math.min(m.budget.perTradeUsd, m.budget.totalUsd);
@@ -165,7 +182,8 @@ export function revokeMandate(m: Mandate, reason: string, ctx: { clock: Clock })
 
 /** Hash of the caps a gesture arms — the proof binds to these numbers, not to the mandate id alone. */
 export function capsHash(m: Mandate): string {
-  return createHash('sha256').update(JSON.stringify({ b: m.budget, l: m.limits, f: m.fees, a: m.allowed, t: m.maxTier, e: m.expiresAt, w: m.wallet })).digest('hex').slice(0, 16);
+  // task-1469: the paper-only flag is part of what a gesture arms; a normal mandate hashes exactly as before.
+  return createHash('sha256').update(JSON.stringify({ b: m.budget, l: m.limits, f: m.fees, a: m.allowed, t: m.maxTier, e: m.expiresAt, w: m.wallet, ...(m.paperOnly === true ? { p: 1 } : {}) })).digest('hex').slice(0, 16);
 }
 
 /** Alive = armed and not expired. Expiry is checked on every call, never cached. */

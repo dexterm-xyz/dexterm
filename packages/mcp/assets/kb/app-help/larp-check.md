@@ -15,12 +15,16 @@ tags:
   - domain
   - github
   - vet
+  - score
+  - x
+  - twitter
 tools:
   - larp_check
   - get_links
   - fetch_page
   - check_domain
   - check_github
+  - check_x
 confidence: high
 owner: maintainers
 origin: app-help-generated
@@ -33,4 +37,4 @@ sources:
 date: 2026-10-16
 ---
 
-The LARP check vets whether a real product exists (website, domain age, GitHub) read-only — it is not a price call. Ask the analyst "is <coin> a larp?" (skill `larp-check`), or an agent can call the `larp_check` MCP tool. A grade is a risk flag, never a certificate; it never recommends buy/sell.
+The LARP check vets whether a real product exists (website, domain age, GitHub, the X account) read-only — it is not a price call. Ask the analyst "is <coin> a larp?" (skill `larp-check`), or an agent can call the `larp_check` MCP tool. It returns a 0-100 LARP score: the sum of named flags with their points (low under 25, medium 25-49, high 50+), plus a list of what could not be read, which widens the range instead of lowering the score. A score is a summary of flags, never a certificate; it never recommends buy/sell.

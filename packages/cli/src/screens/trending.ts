@@ -68,7 +68,7 @@ export function renderTrending(c: Canvas, state: AppState): void {
     } },
   ];
   if (rows.length === 0) c.textC(box.x, box.y + 2, box.w, all.length ? 'no rows match the filter — f cycles filters, n clears the narrative' : 'nothing trending yet — the keyless venues refresh every 60 s', { fg: t.muted, bg, i: true });
-  else table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: cols, rows, selected: sel, scroll, bg });
+  else table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: cols, rows, selected: sel, scroll, bg, rowKey: (r) => r.mint });
 
   // sub-panels
   const sy = top + boardH;

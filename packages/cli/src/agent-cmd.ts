@@ -18,7 +18,7 @@
 
 import {
   AgentRegistry, SqliteAuditLog, MemoryProposalStore, SqliteProposalStore, AgentBus, FixtureExecutor, FixtureFeed,
-  SpectatorHub, SpectatorServer, SpectatorRecorder, FollowController,
+  SpectatorHub, SpectatorServer, SpectatorRecorder, FollowController, AgentStory,
   TIERS, isTier, type AgentExecutor, type AgentSession, type ProposalStatus, type Tier,
 } from '@dexterm/agents';
 import { connectAgent } from '@dexterm/agents/sdk';
@@ -237,11 +237,13 @@ async function serve(rest: string[], io: Io, registry: AgentRegistry): Promise<n
       const { THEMES, DEFAULT_THEME } = await import('@dexterm/tui');
       const { popupThemeFrom } = await import('./popup.ts');
       const follow = new FollowController({ controls: bus, activityCap: 200 });
-      const off = hub.on((ev) => follow.apply(ev));
+      // task-1466: the agent story (phase rail, heartbeat, timeline, thoughts) the popup draws above the activity.
+      const story = new AgentStory();
+      const off = hub.on((ev) => { follow.apply(ev); story.apply(ev); });
       const mgr = createPopupManager({ theme: popupThemeFrom(THEMES[DEFAULT_THEME]), env: io.env, onWarn: (m) => io.stderr.write(`spectator popup: ${m}\n`),
         onEvent: (ev) => { if (ev.ev === 'popup.event' && ev.name.startsWith('spectator.')) io.stdout.write(`spectator: ${applySpectatorEvent(follow, ev.name, String((ev.payload as { agent?: string }).agent))}\n`); } });
-      const handle = await mgr.open({ kind: 'spectator', title: 'watch the agent cook', data: buildSpectatorVM(follow) });
-      const timer = setInterval(() => { try { mgr.setData(handle.id, buildSpectatorVM(follow)); } catch { /* popup closed */ } }, 1000);
+      const handle = await mgr.open({ kind: 'spectator', title: 'watch the agent cook', data: buildSpectatorVM(follow, { story: story.view(Date.now()) }) });
+      const timer = setInterval(() => { try { mgr.setData(handle.id, buildSpectatorVM(follow, { story: story.view(Date.now()) })); } catch { /* popup closed */ } }, 1000);
       (timer as { unref?: () => void }).unref?.();
       spectatorPopup = { shutdown: () => mgr.shutdown(), timer, off };
       io.stdout.write(`spectator popup open (${mgr.native ? 'native window' : 'browser fallback'}).\n`);

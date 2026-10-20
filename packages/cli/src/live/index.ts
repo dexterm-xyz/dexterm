@@ -367,11 +367,15 @@ export class LiveContext {
     } catch { /* keep the last value */ }
   }
 
-  /** The fast set = the open token first, then the watchlist (the fast lane caps and drops the rest). */
+  /** task-1473: a coin the followed agent holds (PAPER): kept in the fast set so its mark survives list changes. */
+  heldMint: string | null = null;
+
+  /** The fast set = the open token first, then a followed agent's held coin, then the watchlist (the fast lane caps and drops the rest). */
   syncFastSet(): void {
     if (!this.fastLane) return;
     const mints: string[] = [];
     if (this.token) mints.push(this.token.mint);
+    if (this.heldMint && !mints.includes(this.heldMint)) mints.push(this.heldMint);
     for (const e of this.watchStore.list()) if (!mints.includes(e.mint)) mints.push(e.mint);
     this.fastLane.setTracked(mints);
   }

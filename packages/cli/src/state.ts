@@ -1,7 +1,7 @@
 // dexterm — app state consumed by the screens. Screens are pure render(canvas, state) functions;
 // renderFrame() draws the screen, the toast, then runs the effects post-pass (VISUAL-V2 §3).
 import {
-  Canvas, THEMES, applyFx, toast, makeVfx, setSources, marketActivity, candleActivity, isCalm,
+  Canvas, THEMES, applyFx, toast, makeVfx, setSources, marketActivity, candleActivity, isCalm, breakpoint,
   type Theme, type ScreenKey, type HeaderModel, type Vfx, type Intensity, type Activity, type ColorDepth,
 } from '@dexterm/tui';
 import { makeFixtures, type Fixtures, type FixtureToken, type TranscriptLine } from './fixtures.ts';
@@ -15,6 +15,9 @@ import type { LiveContext } from './live/index.ts';
 import type { FlowTracker } from './live/flow.ts';
 import { renderScreener } from './screens/screener.ts';
 import { renderToken } from './screens/token.ts';
+import { agentBrainActive } from './screens/brain.ts';
+import { pnlChipVM, renderPnlChip, type OwnPnlTracker, type PnlChipVM } from './screens/pnl-chip.ts';
+import type { StoryView } from '@dexterm/agents';
 import { renderNewPairs } from './screens/newpairs.ts';
 import { renderWatchlist } from './screens/watchlist.ts';
 import { renderAnalyst } from './screens/analyst.ts';
@@ -46,8 +49,9 @@ import type { ImageProtocol, BlockMode } from '@dexterm/tui';
 import { renderScanTicker, scanIndicator, type ScanUi } from './scan/ui.ts';
 import type { ScanConfig } from './scan/engine.ts';
 import { renderVoiceHud, type VoiceHud } from './voice-hud.ts';
+import { composeHud, DOCK_ROWS, HUD_MIN_H, type AgentHudState } from './screens/agent-hud.ts';
 import { workspaceBadge, type CustomUi } from './custom.ts';
-import type { PriceMode } from './display.ts';
+import { chartAxisOf, supplyRatio, type PriceMode, type ChartAxis } from './display.ts';
 
 /** The analyst's streaming state: a Claude-Code-style spinner, then the answer decrypts in. */
 export interface AiState {
@@ -168,6 +172,8 @@ export interface AppState {
   analystConfigProposal?: { action: import('@dexterm/data').AnalystAction; summary: string; expiresAt: number } | null;
   /** Colour depth of the run (the boot screen prints it). */
   colorDepth: ColorDepth;
+  /** task-1466: the spectator v2 agent HUD while this terminal follows an agent (`--spectate-mcp`); null otherwise. */
+  agentHud?: AgentHudState | null;
   /** Active modal overlay drawn on top of the screen (task-1305): the first-run welcome or the `?` help card. */
   overlay?: 'welcome' | 'help' | 'links' | 'workspaces' | 'pnl' | null;
   linkMenu?: { items: Array<{ kind: string; url: string }>; selected: number };
@@ -199,6 +205,11 @@ export interface AppState {
    * `/scan on` (live/replay only). Absent or `engine.mode === 'off'` = the scan is not running.
    */
   scan?: ScanUi | null;
+  /**
+   * task-1473 r2: the user's OWN held position as the PnL chip shows it in AI scan mode (main.ts samples the
+   * PositionSource each tick; the tracker keeps the session peak). Absent / empty = no own-position chip.
+   */
+  ownPnl?: OwnPnlTracker | null;
   /** Threshold/cap overrides from the `--scan-*` flags, applied when the scan is first created. */
   scanConfig?: Partial<ScanConfig>;
   /**
@@ -281,6 +292,11 @@ export interface AppState {
    * Display only: nothing that trades reads it.
    */
   priceMode?: PriceMode;
+  /**
+   * task-1472: what the CHART Y axis shows on the terminal token chart and the chart popup: 'mcap' (default, also when
+   * unset) or 'price'. From config.display.chartAxis; `A` / the popup control toggle + save it. Display only.
+   */
+  chartAxis?: ChartAxis;
   /**
    * task-1388 GO-TO prompt: the one-line "paste a contract address to open any coin" input, opened with `g`
    * on the screener / new pairs / watchlist / token screens. `null` = closed. While open the interactive loop
@@ -766,8 +782,52 @@ export function refreshVfx(state: AppState): void {
   state.vfx.mood = act.mood;
 }
 
-/** Render one frame of the current screen into a fresh canvas: screen → toast → effects. */
+/**
+ * Render one frame of the current screen into a fresh canvas: screen → toast → effects. task-1466: while the
+ * terminal follows an agent, the screen renders DOCK_ROWS shorter and the agent HUD's dock takes the bottom rows
+ * (so no data is hidden), with its overlays (row glow, cursor, cards, flashes, the kill cut) over the screen.
+ */
 export function renderFrame(state: AppState, w: number, h: number): Canvas {
+  const hud = state.agentHud;
+  if (!hud || state.screen === 'boot' || h < HUD_MIN_H) return renderScreenFrame(state, w, h, true);
+  const now = hud.clock();
+  const screen = renderScreenFrame(state, w, h - DOCK_ROWS, false);
+  const view = hud.story.view(now);
+  // task-1473: on the token screen the analyst panel is the agent's brain view (same rule the screen used)
+  const brain = state.screen === 'token' && state.aiOpen !== false && breakpoint(w) !== 'compact' && !state.aiFocused && agentBrainActive(view, now);
+  return composeHud(new Canvas(w, h, state.theme), screen, view, {
+    now, reduced: !!hud.reduced || isCalm(state.vfx), depth: state.colorDepth, dataLabel: hud.dataLabel ?? null, screen: state.screen, brain,
+    chip: pnlChipFor(state, now, view),
+    mcapScale: chartAxisOf(state) === 'mcap' ? (mint) => hudMcapScale(state, mint) : undefined, // task-1472
+  });
+}
+
+/** task-1472: the supply ratio for the HUD's position card: the open token's (live, else fixture), else its screener row. */
+function hudMcapScale(state: AppState, mint: string): number | null {
+  const v = state.live?.token?.view;
+  if (v && v.mint === mint) return supplyRatio(v.price, v.mcap);
+  const tk = state.token;
+  if (tk && tk.mint === mint) return supplyRatio(tk.price, tk.mcap);
+  const row = state.screener.rows.find((r) => r.mint === mint); // the card also shows over the lists (task-1473)
+  return row ? supplyRatio(row.price, row.mcap) : null;
+}
+
+/**
+ * task-1473: the POSITION PnL chip for the app's current auto mode, or null. Following an agent: its open PAPER
+ * ticket (the folded story). Else, while AI scan mode runs: the user's own held paper / live position (ownPnl).
+ * The same chip feeds the HUD dock, the band row (no dock) and the chart popup. Display only.
+ */
+export function pnlChipFor(state: AppState, now: number, view?: StoryView): PnlChipVM | null {
+  const hud = state.agentHud;
+  if (hud) {
+    const m = pnlChipVM(view ?? hud.story.view(now), now);
+    if (m) return m;
+  }
+  if (state.scan?.engine.on && state.ownPnl) return state.ownPnl.vm(now);
+  return null;
+}
+
+function renderScreenFrame(state: AppState, w: number, h: number, bandChip = false): Canvas {
   const c = new Canvas(w, h, state.theme);
   c.fill(0, 0, w, h, ' ', { bg: state.theme.bg });
   c.imageMode = state.images && state.imageProtocol && state.imageProtocol !== 'blocks' ? 'pixels' : 'cells';
@@ -782,11 +842,22 @@ export function renderFrame(state: AppState, w: number, h: number): Canvas {
   if (state.voice?.enabled && state.screen !== 'boot') renderVoiceHud(c, state.voice, state.theme);
   // task-1358: the workspace badge (non-default name, a pending ctrl+w chord, the save-as input) on the band
   // under the header, right-aligned, drawn after the effects so it is always legible. Nothing on `default`.
+  // task-1473 r2: no HUD dock (short terminal, or AI scan mode): the PnL chip rides the band, right-aligned,
+  // and the workspace badge moves to its left.
+  let bandRight = w - 1;
+  if (bandChip && state.screen !== 'boot') {
+    const now = state.agentHud?.clock() ?? state.now.getTime();
+    const chip = pnlChipFor(state, now);
+    if (chip) {
+      const x0 = renderPnlChip(c, w - 1, 1, Math.max(36, Math.floor(w * 0.7)), chip, { now, reduced: !!state.agentHud?.reduced || isCalm(state.vfx) });
+      if (x0 < w - 1) { c.noRain(x0, 1, w - 1 - x0, 1); bandRight = x0 - 1; }
+    }
+  }
   const badge = state.screen !== 'boot' ? workspaceBadge(state.custom, state.now.getTime()) : null;
-  if (badge) {
+  if (badge && bandRight > 4) {
     const t = state.theme;
-    const text = badge.text.slice(0, Math.max(0, w - 2));
-    const x = Math.max(0, w - text.length - 1);
+    const text = badge.text.slice(0, Math.max(0, bandRight - 1));
+    const x = Math.max(0, bandRight - text.length);
     c.noRain(x, 1, text.length, 1);
     c.text(x, 1, text, badge.kind === 'input' ? { fg: t.text, bg: t.accentSoft, b: true } : badge.kind === 'chord' ? { fg: t.warn, bg: t.warnSoft, b: true } : { fg: t.accent, bg: t.headBg, b: true });
   }

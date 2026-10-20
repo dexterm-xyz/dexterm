@@ -93,7 +93,7 @@ export function renderNewPairsLive(c: Canvas, state: AppState, live: NewPairsLiv
       }
     } },
   ];
-  if (rows.length) table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: cols, rows, selected: sel, scroll: 0, bg: box.bg });
+  if (rows.length) table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: cols, rows, selected: sel, scroll: 0, bg: box.bg, rowKey: (r) => r.mint });
   else {
     const s = st.stream;
     const msg = st.mode === 'off' ? 'push feed off · r to poll jup recent' : s?.state === 'open' ? `connected to pumpportal · waiting for the first create (≈15/min measured)` : `pumpportal ${s?.state ?? 'connecting'}${s?.lastError ? ` · ${s.lastError}` : ''} · polling jup recent`;

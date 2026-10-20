@@ -9,6 +9,7 @@
 //   dexterm plan journal [--verify] [--export]
 //   dexterm mandate draft [--total 100] [--per-trade 20] [--per-coin 40] [--daily-loss 50]
 //                         [--max-tier keypress|ptt-held|hands-free] [--ttl-hours 4]
+//                         [--max-open 20] [--max-impact 3] [--paper]
 //   dexterm mandate list [--json] | arm <id> | revoke <id>
 //
 // Arming is the only gate: `arm` reads ONE real keystroke in raw mode (ttyKeypress) and refuses a pipe,
@@ -52,7 +53,10 @@ const PLAN_USAGE = `dexterm plan <command>
 
 const MANDATE_USAGE = `dexterm mandate <command>
   draft [--total 100] [--per-trade 20] [--per-coin 40] [--daily-loss 50]
-        [--max-tier keypress|ptt-held|hands-free] [--ttl-hours 4] [--json]
+        [--max-tier keypress|ptt-held|hands-free] [--ttl-hours 4] [--max-open 20] [--max-impact 3]
+        [--paper] [--json]
+                                     (--paper: a PAPER-ONLY mandate for the agent paper desk, with its own
+                                      paper ceilings; no plan, copy trade or signer can ever use it)
   list [--json]
   arm <id>                           (needs a physical keypress on a TTY; a pipe/agent is refused)
   revoke <id>`;
@@ -167,13 +171,17 @@ export async function runMandate(rest: string[], io: Io): Promise<number> {
         const num = (n: string) => (flag(rest, n) !== undefined ? parseAmount(flag(rest, n)!) : undefined);
         const maxTier = flag(rest, '--max-tier') as TierName | undefined;
         const ttlHours = flag(rest, '--ttl-hours') ? Number(flag(rest, '--ttl-hours')) : undefined;
+        const plain = (n: string) => (flag(rest, n) !== undefined ? Number(flag(rest, n)) : undefined);
         const m = svc.draftMandate({
           totalUsd: num('--total'), perTradeUsd: num('--per-trade'), perCoinUsd: num('--per-coin'),
           dailyLossUsd: num('--daily-loss'), maxTier, ttlMs: ttlHours ? ttlHours * 3600_000 : undefined,
+          maxOpenPositions: plain('--max-open'), maxPriceImpactPct: plain('--max-impact'),
+          ...(has(rest, '--paper') ? { paperOnly: true } : {}),
         });
-        if (has(rest, '--json')) { out(JSON.stringify({ id: m.id, budget: m.budget, maxTier: m.maxTier })); return 0; }
-        out(`drafted ${m.id}`);
+        if (has(rest, '--json')) { out(JSON.stringify({ id: m.id, budget: m.budget, maxTier: m.maxTier, paperOnly: m.paperOnly === true })); return 0; }
+        out(`drafted ${m.id}${m.paperOnly ? '  (PAPER-ONLY: agent paper desk only)' : ''}`);
         out(`  total ${fmtUsd(m.budget.totalUsd)} · per-trade ${fmtUsd(m.budget.perTradeUsd)} · per-coin ${fmtUsd(m.budget.perCoinUsd)} · daily-loss ${fmtUsd(m.budget.dailyLossUsd)} · maxTier ${m.maxTier}`);
+        out(`  max open ${m.limits.maxOpenPositions} · max price impact ${m.limits.maxPriceImpactPct}%`);
         out('  DRAFT only — not armed. Arm with: dexterm mandate arm ' + m.id + '  (physical keypress)');
         return 0;
       }
@@ -182,7 +190,7 @@ export async function runMandate(rest: string[], io: Io): Promise<number> {
         const rows = svc.listMandates();
         if (has(rest, '--json')) { out(JSON.stringify(rows)); return 0; }
         if (!rows.length) { out('no mandates'); return 0; }
-        for (const r of rows) out(`${r.id.padEnd(24)} ${r.status.padEnd(7)} total ${fmtUsd(r.totalUsd)} · reserved ${fmtUsd(r.reservedUsd)} · spent ${fmtUsd(r.spentUsd)} · maxTier ${r.maxTier}`);
+        for (const r of rows) out(`${r.id.padEnd(24)} ${r.status.padEnd(7)} total ${fmtUsd(r.totalUsd)} · reserved ${fmtUsd(r.reservedUsd)} · spent ${fmtUsd(r.spentUsd)} · maxTier ${r.maxTier}${r.paperOnly ? ' · PAPER-ONLY' : ''}`);
         return 0;
       }
       case 'arm': {
@@ -191,7 +199,9 @@ export async function runMandate(rest: string[], io: Io): Promise<number> {
         const svc = openService(rest, io);
         const row = svc.listMandates().find((m) => m.id === id);
         if (!row) { errOut(`no such mandate ${id}`); return 1; }
-        out(`Arm standing mandate ${id}? This lets armed plans fire at machine speed from the capped fast wallet.`);
+        out(row.paperOnly
+          ? `Arm PAPER-ONLY mandate ${id}? This lets the agent paper desk book simulated fills under these caps. No plan, copy trade or signer can use it.`
+          : `Arm standing mandate ${id}? This lets armed plans fire at machine speed from the capped fast wallet.`);
         out(`  total ${fmtUsd(row.totalUsd)} · per-trade ${fmtUsd(row.perTradeUsd)} · per-coin ${fmtUsd(row.perCoinUsd)} · maxTier ${row.maxTier}`);
         out('Hold any key to confirm (physical keypress). A pipe or agent cannot arm. Waiting 15s…');
         const key = await ttyKeypress(io.stdin as never, 15_000);

@@ -2,6 +2,31 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.6] - 2026-10-20
+
+A watch-it-work release: see an agent's reasoning, vetting and paper position as it trades, get a 0-100 LARP score that shows every point, and read charts in market cap. Trading remains experimental; agent trading is paper only (simulated), and this release does not enable mainnet trading. Nothing in dexterm is financial advice.
+
+### Added
+
+- **LARP score and the X account.** `larp_check` now also returns a 0-100 LARP score: the sum of named flags, each with its points and evidence, a low / medium / high band, and a list of the checks it could not read, which widen the range ("37, could be up to 58") instead of lowering the score. The X account a coin advertises is now checked, keyless and read-only (no login, no key): exists, suspended or gone, account age, followers, posts, last post and whether the bio names the token and links its site. An account counts as gone only when two independent sources agree. New read-only MCP tool `check_x`; the existing `larp_check` fields are unchanged. The analyst panel shows the score as a gauge with its top three reasons, read from the tool's own result, never from the model's text.
+- **Watch the agent cook, v2.** Following an agent with `dexterm --spectate-mcp` shows an agent HUD instead of a list of calls: a phase rail with a heartbeat, a thought ribbon, a call timeline with result chips, glowing rows and an agent cursor, a vetting card, and with `--agent-paper` the PAPER ticket, fill, live position and result card. `--spectate-thoughts FILE` streams the agent's own words into the ribbon, display only. Ctrl+K is a hard, visible kill. Calm mode drops the motion and `NO_COLOR` keeps the meaning in glyphs. The MCP protocol is unchanged.
+- **Brain view and the PnL chip.** In an auto mode (following an agent, or AI scan), the token screen's analyst panel shows the agent's reasoning stream, a vetting checklist with the app's own numbers, a data strip, the PAPER plan and position, and a decision log. While a position is open, a PnL chip shows it on every terminal screen and on the chart popup. Display only: nothing in it can arm, size, sign or confirm.
+- **Charts plot market cap by default.** The terminal token chart and the chart popup put market cap on the Y axis, in compact k / M / B (`$4.9k`, `$1.2M`), never scientific notation. `A` (or the popup's MCAP | PRICE control) flips to the USD price and saves `display.chartAxis`. Display only.
+- **Paper-only mandates.** `dexterm mandate draft --paper` drafts a mandate only the agent paper desk can use, with its own paper ceilings; the plan engine refuses to arm, fire or copy-trade under it, and every other mandate keeps its ceilings. `mandate draft` also takes `--max-open` and `--max-impact`.
+
+### Changed
+
+- **Dev history rows name their source, sample and age** on every value (for example `2/3 · n=3 · rec 7d`), and a short ON-CHAIN panel keeps its red, then amber rows and ends with `+N rows hidden` instead of dropping the bottom rows.
+- **Agent paper trading is steadier.** A rate-limited `paper_close` is re-quoted a few times within about 25 seconds (each retry shown) instead of failing, and fills only on a fresh quote. While you follow an agent, the terminal opens the coins it found through its own reads or holds, view-only. The bundled `paper-strategy-run` playbook (0.5.0) hunts early movers on new pairs, enters at a fixed size and scales out at targets; paper only.
+
+### Known issues
+
+- The LARP score is a modest signal. Only its link-shape points are fitted on recorded history (held-out AUROC 0.69); the page, domain, GitHub and X points are labelled priors. It is evidence, not a verdict, and a low score is not a safety certificate.
+- The X lookup uses public, keyless mirrors and X's oEmbed endpoint, one handle at a time. When they are unavailable, the account is listed as not read, never guessed.
+- Paper trading, the PnL chip and the agent scoreboard are simulated. The chip's mark is approximate (this terminal's last price, before fees). Paper figures are not results.
+- The thought ribbon shows only what an agent writes down; without `--spectate-thoughts` it narrates the calls. On the Codex engine the analyst panel has no LARP gauge.
+- Trading remains experimental and no mainnet trading is enabled. Models, voice and agents only propose; signer-side caps and the keypress gate are unchanged.
+
 ## [0.1.5] - 2026-10-18
 
 An agents-and-analyst release: let an agent you connected paper trade inside a mandate you armed, run the analyst on your own Codex login, and see a coin creator's recorded history. Trading remains experimental; agent trading is paper only, and this release does not enable mainnet trading.

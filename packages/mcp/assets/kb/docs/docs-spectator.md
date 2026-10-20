@@ -22,7 +22,7 @@ sources:
 date: 2026-10-16
 ---
 
-Watch a connected agent work in real time. An AGENT ACTIVITY window with pause, take over and kill, a read-only loopback stream, and redacted save and replay. Covers what is redacted, the security model, how to capture it for a stream, and its limits.
+Watch a connected agent work in real time. The agent HUD in the running terminal (phase rail, heartbeat, thought ribbon, call timeline, the PAPER execution moment), an AGENT ACTIVITY window with pause, take over and kill, a read-only loopback stream, and redacted save and replay. Covers what is redacted, the security model, how to capture it for a stream, and its limits.
 
 The spectator view lets you watch an agent work: each time a connected agent calls a tool (opens a token, runs a LARP check, scans new pairs, reads a bubble map, makes a proposal, gets refused), the call shows up with its result, how long it took and how old its data was. It is for watching and for demos ("watch the agent cook"). It adds no new power: agents stay untrusted (https://dexterm.xyz/docs/agents#untrusted-by-default), and nothing in the spectator view can arm, sign, confirm or send anything.
 

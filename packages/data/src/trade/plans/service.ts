@@ -93,6 +93,8 @@ export interface MandateRow {
   totalUsd: number;
   perTradeUsd: number;
   perCoinUsd: number;
+  /** task-1469: a paper-only mandate (agent paper desk only; no plan can arm into it). */
+  paperOnly: boolean;
   maxTier: TierName;
   reservedUsd: number;
   spentUsd: number;
@@ -204,7 +206,7 @@ export class PlanService {
       return {
         id: x.m.id, status: x.m.status, wallet: x.m.wallet, totalUsd: x.m.budget.totalUsd, perTradeUsd: x.m.budget.perTradeUsd,
         perCoinUsd: x.m.budget.perCoinUsd, maxTier: x.m.maxTier, reservedUsd: L.reservedUsd, spentUsd: L.spentUsd,
-        realizedUsd: L.realizedUsd, lossUsd: L.lossUsd, expiresAt: x.m.expiresAt,
+        realizedUsd: L.realizedUsd, lossUsd: L.lossUsd, expiresAt: x.m.expiresAt, paperOnly: x.m.paperOnly === true,
       };
     });
   }

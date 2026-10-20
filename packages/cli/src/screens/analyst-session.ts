@@ -5,6 +5,7 @@ import {
   Canvas, badge, spinnerGlyph, decryptText, wrap, mix, fmtUsd, fmtPrice, fmtPctDir, type Style,
 } from '@dexterm/tui';
 import type { AnalystSession } from '../analyst/session.ts';
+import { drawLarpGauge } from '../analyst/larp-gauge.ts';
 
 /** A list-of-coins answer row with its numbers resolved from LIVE data (task-1313 part F). */
 export interface ResolvedResultRow {
@@ -154,6 +155,8 @@ export function renderAnalystSession(c: Canvas, x: number, y: number, w: number,
     if (right) c.textR(box.x + 1, cy, inner - 1, right, { fg: t.muted, bg: mix(bg, vc, 0.18) });
     cy += 1;
   }
+  // task-1471: the LARP score gauge (from the MCP larp_check result, not the model), under the verdict.
+  if (s.larpGauge && cy < inputY - 1) cy = drawLarpGauge(c, box.x + 2, cy, inner - 2, inputY - 1, s.larpGauge, bg);
   // task-1313 trading view: the directional bias + setup quality, drawn under the risk verdict.
   if (s.bias && cy < inputY - 1) {
     const bc2 = s.bias === 'long' ? t.up : s.bias === 'short' || s.bias === 'avoid' ? t.down : t.warn;

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
-import { fmtPrice as tuiFmtPrice, fmtMcapBare as tuiFmtMcapBare } from '@dexterm/tui';
+import { fmtPrice as tuiFmtPrice, fmtCompact as tuiFmtCompact, fmtCompactUsd as tuiFmtCompactUsd } from '@dexterm/tui';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(path.join(here, '..', 'src', 'pages', 'chart-lib.js'), 'utf8');
@@ -121,11 +121,15 @@ test('price formatting matches the terminal (subscript zero-compression) and sca
 
 // ------------------------------------------------------------------ task-1366: market-cap axis
 
-test('task-1366 fmtMcapAxis mirrors the terminal formatter (K/M/B/T, tiny and huge values)', () => {
-  for (const n of [0, 0.42, 0.0001234, 1, 12.34, 950, 999.9, 4500, 45_000, 300_000, 999_499, 999_999, 1_200_000, 1_234_567, 12_345_678, 123_456_789, 999_999_999, 1.2e9, 2.5e12, 3.2e15, -1.5e6]) {
-    assert.equal(C.fmtMcapAxis(n), tuiFmtMcapBare(n), String(n));
+test('task-1472 fmtCompact / fmtMcapAxis mirror the terminal formatter (lowercase k, M/B/T, tiny and huge values)', () => {
+  const ns = [0, 0.42, 0.0001234, 4.93e-6, 1.2e-10, 1, 4.93, 12.34, 950, 999, 999.9, 1000, 4500, 4930, 9_949, 9_960, 42_100, 45_000, 99_960, 300_000, 487_000,
+    999_499, 999_500, 999_900, 999_999, 1_200_000, 1_234_567, 12_345_678, 48e6, 123_456_789, 999_999_999, 1.2e9, 1.3e9, 2.5e12, 3.2e15, -1.5e6, -4930];
+  for (const n of ns) {
+    assert.equal(C.fmtMcapAxis(n), tuiFmtCompact(n), String(n));
+    assert.equal(C.fmtCompactUsd(n), tuiFmtCompactUsd(n), `usd ${n}`);
+    for (const x of [1, 2, 3]) assert.equal(C.fmtCompact(n, x), tuiFmtCompact(n, x), `${n} +${x}`);
   }
-  assert.equal(C.fmtMcapAxis(300_000), '300K');
+  assert.equal(C.fmtMcapAxis(300_000), '300k');
   assert.equal(C.fmtMcapAxis(1_200_000), '1.2M');
   assert.equal(C.fmtMcapAxis(Number.NaN), '—');
 });
@@ -137,15 +141,16 @@ test('task-1366 displayOf: mcap only with a usable supply; mcap mode without one
   assert.equal(d.mode, 'mcap'); assert.equal(d.supply, 1e9); assert.equal(d.label, 'mcap (current supply)');
   for (const supply of [null, 0, -5, Number.NaN, undefined]) {
     const f = C.displayOf({ priceMode: 'mcap', supply });
-    assert.equal(f.mode, 'price', String(supply)); assert.equal(f.label, 'supply unknown · showing price');
+    assert.equal(f.mode, 'price', String(supply)); assert.equal(f.label, 'price (mcap unavailable)');
   }
   // a tick that moves the supply below the 4th significant digit keeps the key (no re-format per tick)
   assert.equal(C.displayOf({ priceMode: 'mcap', supply: 1_000_000_000 }).key, C.displayOf({ priceMode: 'mcap', supply: 1_000_040_000 }).key);
 });
 
-test('task-1366 popup Y-axis formatter: price × supply in K/M/B; price mode keeps the price label', () => {
+test('task-1366/1472 popup Y-axis formatter: price × supply in compact k/M/B; price mode keeps the price label', () => {
   const mc = C.axisFormatter(C.displayOf({ priceMode: 'mcap', supply: 1e9 }));
-  assert.equal(mc(0.0003), '300K');
+  assert.equal(mc(0.0003), '300k');
+  assert.equal(mc(0.00000493), '4.9k');
   assert.equal(mc(0.0012), '1.2M');
   assert.equal(mc(1.5), '1.5B');
   const px = C.axisFormatter(C.displayOf({ priceMode: 'price' }));
@@ -156,7 +161,8 @@ test('task-1366 popup Y-axis formatter: price × supply in K/M/B; price mode kee
 test('task-1366 crosshair legend: mcap with the price in parentheses on the close; price mode unchanged', () => {
   const bar = C.toBars([candle(0, 0.001, 0.0012, 0.0009, 0.0011)])[0];
   const lg = C.legendFor(bar, null, C.displayOf({ priceMode: 'mcap', supply: 1e9 }));
-  assert.equal(lg.o, '1M'); assert.equal(lg.h, '1.2M'); assert.equal(lg.l, '900K');
+  assert.equal(lg.o, '1M'); assert.equal(lg.h, '1.2M'); assert.equal(lg.l, '900k');
+  assert.equal(lg.v, C.fmtCompactUsd(bar.volume)); // task-1472: volume stays USD, compact k/M
   assert.equal(lg.c, `1.1M (${C.fmtPrice(0.0011)})`);
   const pl = C.legendFor(bar, null);
   assert.equal(pl.c, C.fmtAxis(0.0011));

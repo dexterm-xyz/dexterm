@@ -13,6 +13,11 @@ import { DevHistoryBook, devRows, linkedFrom, devBookOf } from '../src/live/dev-
 import { ruleRowsOf } from '../src/rules.ts';
 import { NewPairsLive } from '../src/live/newpairs.ts';
 import { makeFixtureState } from '../src/index.ts';
+import { Cache, type DataLayer } from '@dexterm/data';
+import { Canvas, THEMES } from '@dexterm/tui';
+import { emptyView } from '../src/live/token.ts';
+import { renderTokenLive } from '../src/live/screens/token-live.ts';
+import type { LiveContext } from '../src/live/index.ts';
 
 const DEV = 'DevW1111111111111111111111111111111111111111';
 const PAL = 'PaLW1111111111111111111111111111111111111111';
@@ -63,15 +68,43 @@ test('no recorder = unknown with the reason; a Jupiter-named dev the recorder ha
   assert.equal(hinted.report?.labelled.rug, 2);
 });
 
-test('DEV rows: every value carries the sample (n=) or says unknown; levels follow the record', () => {
+test('DEV rows: every value carries its source, sample (n=) and age, or says unknown; levels follow the record', () => {
   const rec = seeded();
-  const rows = devRows(new DevHistoryBook(() => rec.database).forMint(MINT));
-  assert.deepEqual(rows[0], ['Dev rugs (recorded)', '2/3 · n=3', 'bad'], 'two labelled rugs = serial rugger = bad');
-  assert.equal(rows[1][0], 'Dev launches seen');
-  assert.match(rows[1][1], /^3 prior/);
-  assert.deepEqual(rows[2], ['Dev sold its bag', 'median 20m · n=3', 'warn']);
-  const unknown = devRows(new DevHistoryBook(() => rec.database).forMint('MintNobody111111111111111111111111111111111'));
-  assert.deepEqual(unknown[0], ['Dev rugs (recorded)', 'unknown', 'na']);
+  const book = new DevHistoryBook(() => rec.database);
+  const e = book.forMint(MINT);
+  const rows = devRows(e);
+  // seeded: labels known 7 days ago (T0 + 72 h, newest launch T0 + 2 h), exits 20 min after each launch
+  assert.deepEqual(rows[0], ['Dev rugs', '2/3 · n=3 · rec 7d', 'bad'], 'two labelled rugs = serial rugger = bad');
+  assert.deepEqual(rows[1], ['Dev launches', 'n=3 · rec 10d · dev:jup', 'na'], 'count from the recorder; the creator link named by Jupiter');
+  assert.deepEqual(rows[2], ['Dev sold bag', 'med 20m · n=3 · rec 10d', 'warn']);
+  for (const [, v] of rows) assert.match(v, /^unknown$|(rec|scan) \d+[mhd]/, `source + age on: ${v}`);
+  for (const [, v] of rows.slice(0, 3)) assert.match(v, /n=\d+/, `sample on: ${v}`);
+  // the age moves with the clock (the rows are not frozen at the read)
+  assert.equal(devRows(e, e.at + 3 * 86_400_000)[0][1], '2/3 · n=3 · rec 10d');
+  const unknown = devRows(book.forMint('MintNobody111111111111111111111111111111111'));
+  assert.deepEqual(unknown[0], ['Dev rugs', 'unknown', 'na']);
+  assert.deepEqual(unknown[1], ['Dev launches', 'unknown', 'na']);
+});
+
+test('verify-1425 repro: the same record settled 40 days ago vs 1 hour ago renders different ages', () => {
+  const build = (labelsAgoMs: number): Array<[string, string, string]> => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cli-devhist-age-')), 'h.db');
+    const rec = new Recorder({ path: file });
+    const out = rec.database.prepare("INSERT INTO outcomes (mint, t0, horizon_sec, t1, label, label_tier, evidence, labeler_version) VALUES (?, ?, 259200, ?, ?, 'keyless-proxy', '{}', '0.2.0')");
+    const snap = rec.database.prepare("INSERT INTO token_snapshots (mint, t, kind, hash, src_market, sources, dev_pct) VALUES (?, ?, 'live', 'h', 'dexscreener', '[]', ?)");
+    const t0 = Date.now() - labelsAgoMs - 259_200_000;
+    ['rug', 'rug', 'runner'].forEach((label, i) => {
+      rec.recordCreator(m(i), DEV, 'jupiter-tokens', t0, t0);
+      out.run(m(i), t0, t0 + 259_200_000, label);
+      snap.run(m(i), t0, 6); snap.run(m(i), t0 + 20 * 60_000, 0);
+    });
+    rec.recordCreator(MINT, DEV, 'jupiter-tokens', Date.now(), null);
+    return devRows(new DevHistoryBook(() => rec.database).forMint(MINT));
+  };
+  const old = build(40 * 86_400_000), fresh = build(3_600_000);
+  assert.equal(old[0][1], '2/3 · n=3 · rec 40d');
+  assert.equal(fresh[0][1], '2/3 · n=3 · rec 1h');
+  assert.notDeepEqual(old, fresh);
 });
 
 test('linked wallets from the wallet-intel scan: funder, cluster, and the cluster mates that rugged', () => {
@@ -86,8 +119,13 @@ test('linked wallets from the wallet-intel scan: funder, cluster, and the cluste
   assert.deepEqual(l.cluster, { name: 'C1', kind: 'funder', members: 3, pct: 12.5 });
   assert.equal(l.linkedCreators, 1, 'PAL launched coins too');
   assert.equal(l.linkedRugs, 1);
-  const rows = devRows(new DevHistoryBook(() => rec.database).forMint(MINT, null, analysis));
-  assert.deepEqual(rows.at(-1), ['Dev linked', 'funder 3w · 1 devs 1 rugs', 'bad']);
+  const scannedAt = Date.now() - 4 * 60_000;
+  const rows = devRows(new DevHistoryBook(() => rec.database).forMint(MINT, null, analysis, scannedAt));
+  assert.deepEqual(rows.at(-2), ['Dev linked', 'funder 3w · scan 4m', 'na']);
+  assert.deepEqual(rows.at(-1), ['Linked dev rugs', '1 · n=1 devs · rec 7d', 'bad']);
+  const noCluster = { ...(analysis as object), clusters: [] } as never;
+  const fundedOnly = devRows(new DevHistoryBook(() => rec.database).forMint(MINT, null, noCluster, null));
+  assert.deepEqual(fundedOnly.at(-1), ['Dev linked', 'funded by Fund…1111 · scan age ?', 'na'], 'no scan time = says so');
 });
 
 test('rule field devrugs: parses, and fires for a screener row and a brand-new pair from a wallet that rugged before', () => {
@@ -141,4 +179,24 @@ test('the token-dossier pack flags serial_rugger from local-history prior rugs (
   assert.ok(a.flags.includes('serial_rugger'));
   const b = assembleTokenDossier({ ...base, creator: { tier: 'needs-key', devHistory: null } } as never) as { flags: string[] };
   assert.ok(!b.flags.includes('serial_rugger'), 'no record, no flag');
+});
+
+test('token screen renders the DEV rows with source, sample and age in the ON-CHAIN panel (what verify-1425 read)', () => {
+  const rec = seeded();
+  const cache = new Cache({ path: ':memory:' });
+  const dl = { cache } as unknown as DataLayer;
+  const v = emptyView({ mint: MINT, symbol: 'JDG', name: 'Judged', launchpad: 'pump.fun', price: 0.001 });
+  const live = { dl, intel: null, recorder: { database: rec.database }, token: { dl, view: v }, rpc: { provider: 'helius', basis: 'test' }, fastLane: null, badgeFor: () => 'POLL', livePrice: () => null, watch: { has: () => false }, creditsStatus: () => undefined } as unknown as LiveContext;
+  const state = makeFixtureState({ screen: 'token', theme: THEMES.midnight, calm: true });
+  state.screener.source = 'live';
+  state.live = live;
+  state.now = new Date();
+  const c = new Canvas(176, 48, THEMES.midnight);
+  c.fill(0, 0, 176, 48, ' ', { bg: THEMES.midnight.bg });
+  renderTokenLive(c, state, v);
+  const out = c.toPlain().split('\n');
+  const row = (label: string): string => out.find((l) => l.includes(label)) ?? '';
+  assert.match(row('Dev rugs'), /2\/3 · n=3 · rec 7d/);
+  assert.match(row('Dev launches'), /n=3 · rec 10d · dev:jup/);
+  assert.match(row('Dev sold bag'), /med 20m · n=3 · rec 10d/);
 });

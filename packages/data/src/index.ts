@@ -53,6 +53,8 @@ export * from './larp/links.ts';
 export * from './larp/safe-fetch.ts';
 export * from './larp/evidence.ts';
 export * from './larp/link-baseline.ts';
+export * from './larp/x-account.ts';
+export * from './larp/score.ts';
 // task-1401: parse a CA / coin link from any input (go-to, analyst chat, filter line, --mint, MCP refs).
 export * from './coin-target.ts';
 export * from './analyst-actions.ts';

@@ -29,7 +29,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { PopupKind, PopupVM, ServerEvent, ThemeTokens, PopupRainConfig, WidgetPage, WidgetTopic, WidgetPayload, ProbeReason } from './protocol.ts';
-import { PROTOCOL_VERSION, CHART_INTERVALS, CHART_INDICATORS, CHART_STYLES, CHART_SCALES, WIDGET_TOPICS, WIDGET_HTML_MAX } from './protocol.ts';
+import { PROTOCOL_VERSION, CHART_INTERVALS, CHART_INDICATORS, CHART_STYLES, CHART_SCALES, CHART_AXES, WIDGET_TOPICS, WIDGET_HTML_MAX } from './protocol.ts';
 import { auditWidgetHtml, inlineHashes, normalizeWidgetHtml } from './widget-html.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +53,8 @@ export const POPUP_EVENTS = new Set<string>([
   'event:popup.close-request', 'event:popup.focus', 'event:popup.drag',
   // task-1325 chart v2 requests (payloads validated by validateEventPayload below)
   'event:chart.interval', 'event:chart.indicator', 'event:chart.style', 'event:chart.scale', 'event:chart.painted',
+  // task-1472: the chart's Y axis (market cap ⇄ price): a display preference the terminal saves, nothing else
+  'event:chart.axis',
   // task-1345 agent roster: per-agent pause / kick, by agent name (the only writes this popup can send)
   'event:roster.pause', 'event:roster.resume', 'event:roster.kick',
   // task-1355 order plans: cancel a plan by id (the ONLY write the plans popup can send — never arm/cap/sign)
@@ -99,6 +101,8 @@ export function validateEventPayload(name: string, payload: unknown): Record<str
       return oneOf(CHART_STYLES, p.style) ? { style: p.style } : null;
     case 'chart.scale':
       return oneOf(CHART_SCALES, p.scale) ? { scale: p.scale } : null;
+    case 'chart.axis':
+      return oneOf(CHART_AXES, p.axis) ? { axis: p.axis } : null;
     case 'chart.painted':
       return (p.kind === 'first' || p.kind === 'data') && finiteIn(p.ms, 0, 600_000) && finiteIn(p.sentAt, 0, 1e15)
         ? { kind: p.kind, ms: p.ms, sentAt: p.sentAt } : null;

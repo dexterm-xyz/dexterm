@@ -51,3 +51,30 @@ test('follow mode never allows data-changing UI actions, and without a follower 
   const noFollower = new McpTools({} as DataLayer, () => ({ ...snap() }));
   assert.ok((await noFollower.call('open_token', { mint: MINT })).error);
 });
+
+// task-1443 capture round 4 (run25): the agent vetted a coin it had seen on the screener, bought it on PAPER, and
+// open_token then refused it ("mint not among the tokens currently on screen") because the list had moved on, so the
+// terminal never showed the held coin. Mints the agent read on the following terminal (screen_state), from the
+// narrative board, or holds a paper position in are now follow-mode VIEW-ONLY targets too.
+test('follow mode: a mint seen via screen_state stays a nav target after the screen moves on', async () => {
+  let mints = [MINT];
+  const tools = new McpTools({} as DataLayer, () => ({ ...snap(mints), source: 'follow' }));
+  await tools.call('screen_state', {});
+  mints = [OTHER];
+  assert.equal((await tools.call('open_token', { mint: MINT })).ok, true, 'seen on screen earlier');
+  const notFollow = new McpTools({} as DataLayer, () => ({ ...snap(mints) }));
+  await notFollow.call('screen_state', {});
+  assert.ok((await notFollow.call('open_token', { mint: MINT })).error, 'outside follow mode nothing is widened');
+});
+
+test('follow mode: the mint of a PAPER fill (and of listed paper positions) is a nav target', async () => {
+  const HELD = '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R';
+  const fill = { id: 1, t: 1, mint: HELD, symbol: 'H', side: 'buy', paper: true, solDelta: -1n, tokenDelta: 10n, decimals: 6, priceSol: 1, priceUsd: 1, priceImpactPct: 0, slippageBps: 0, feeLamports: 0n, realizedLamports: 0n, route: 'x' };
+  const desk = { confirm: async () => ({ fill, position: null, quoteAttempts: 1 }), positions: () => [{ mint: OTHER, symbol: 'O', decimals: 9, tokens: 1, costSol: 1, realizedSol: 0, avgEntrySol: 1 }] };
+  const tools = new McpTools({} as DataLayer, () => ({ ...snap([]), source: 'follow' }), null, null, { desk: async () => desk as never, watched: () => true });
+  assert.ok((await tools.call('open_token', { mint: HELD })).error, 'not a target before the fill');
+  assert.equal((await tools.call('paper_confirm', { ticketId: 't' })).paper, true);
+  assert.equal((await tools.call('open_token', { mint: HELD })).ok, true, 'the held coin can be put on screen');
+  await tools.call('paper_positions', {});
+  assert.equal((await tools.call('open_token', { mint: OTHER })).ok, true, 'a listed paper position can be put on screen');
+});

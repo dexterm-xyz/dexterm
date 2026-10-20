@@ -1,0 +1,36 @@
+LARP SCORE BACKTEST  link-shape flags only (what the eval set holds point-in-time)
+  eval set built 2026-10-16T04:59:12.726Z, 1054 coins, horizon 259200s; recorder outcome at 259200s (keyless proxy, labeler 0.2.0); bad = rug ∪ dead, ok = flat ∪ fade ∪ runner; unobserved dropped
+  fitted points (train split):
+    no_website             n= 299 bad= 170 ln OR=  1.17  →  9 pts (calibrated)
+    no_x                   n= 213 bad= 130 ln OR=  1.20  → 10 pts (calibrated)
+    x_not_account          n= 167 bad=  86 ln OR=  0.58  →  5 pts (calibrated)
+    no_telegram            n= 566 bad= 278 ln OR=  2.13  → 12 pts (calibrated)
+    site_is_social         n=  33 bad=  14 ln OR=  0.09  →  1 pts (calibrated)
+    site_is_launchpad      n=   6 bad=   1 ln OR=   —    →  4 pts (prior)
+    site_linktree          n=   3 bad=   0 ln OR=   —    →  2 pts (prior)
+    site_free_host         n=   3 bad=   2 ln OR=   —    →  2 pts (prior)
+    domain_no_name_match   n=  75 bad=  25 ln OR= -0.33  →  0 pts (calibrated)
+    cheap_tld              n= 159 bad=  55 ln OR= -0.32  →  0 pts (calibrated)
+  shipped weights match this fit: yes
+  train: n=726 bad=294 (40.5%)  AUROC=0.727  score p10/p50/p90/max=0/17/31/31
+    band low    n= 466 bad= 136  P(bad)=29.2% [25–33]
+    band medium n= 260 bad= 158  P(bad)=60.8% [55–67]
+    band high   n=   0 bad=   0  P(bad)=counts only (n < 20)
+    score ≥ 25: flagged 260  precision=60.8% [55–67]  recall=53.7% [48–59]
+    score ≥ 50: flagged 0  precision=counts only (n < 20)  recall=0.0% [0–1]
+  TEST (held out): n=328 bad=61 (18.6%)  AUROC=0.691  score p10/p50/p90/max=0/13/31/31
+    band low    n= 218 bad=  27  P(bad)=12.4% [9–17]
+    band medium n= 110 bad=  34  P(bad)=30.9% [23–40]
+    band high   n=   0 bad=   0  P(bad)=counts only (n < 20)
+    score ≥ 25: flagged 110  precision=30.9% [23–40]  recall=55.7% [43–67]
+    score ≥ 50: flagged 0  precision=counts only (n < 20)  recall=0.0% [0–6]
+  method:
+    - fit on the train split only (726 coins): points = clamp(round(8 × ln odds ratio of a bad outcome), 0, 12) for a flag on ≥ 20 train coins; rarer flags keep their prior points
+    - bands fixed before scoring: low < 25 ≤ medium < 50 ≤ high (not tuned)
+    - AUROC with ties counted half; rates with 95% Wilson intervals, printed only for n ≥ 20
+    - meaning: how well the link-shape points rank coins that went bad (a price outcome) above the rest, NOT whether a product is real
+  not measured:
+    - website page flags (default page, wallet connect, drainer markers, never names the token): pages were not captured at t0
+    - domain flags (new domain, registrant privacy) and GitHub flags: not captured at t0
+    - X-account flags (new account, tiny following, no posts, suspended, handle mismatch): not captured at t0, and a lookup today leaks the outcome (dead coins' accounts get deleted or suspended); the X sources' robots.txt also rule out bulk crawling them for a backfill
+    - the high band: link shape alone tops out below it by design, so its precision is unmeasured

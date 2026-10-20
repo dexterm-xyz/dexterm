@@ -14,6 +14,7 @@ import { defaultDbPath, LINK_RUBRIC_V0, DEFAULT_LINK_RUBRIC } from '@dexterm/dat
 import { exportRecorded, openHistoryReadOnly, readLarpJoin, type Label } from '@dexterm/recorder';
 import {
   runBacktest, h1Model, larpEval, renderLarpEvalText, skillBacktest, renderSkillBacktestText, tuneLinkRubric, tuneRugRules,
+  larpScoreBacktest, renderLarpScoreBacktestText,
   RUG_RULES_V0, RUG_RULES_V1, SKILL_EVAL_SCHEMA, type BacktestKind, type BacktestResult, type SkillEvalSet,
 } from '@dexterm/packs';
 import { buildSkillEvalSet } from './skill-eval-build.ts';
@@ -33,6 +34,7 @@ export const BACKTEST_HELP = `dexterm backtest: score the rug model against reco
 
   dexterm backtest [--subject heuristic|pack_verdicts|larp] [--horizon SEC] [--db PATH] [--json]
   dexterm backtest --subject skills [--eval FILE] [--tune] [--report FILE] [--json]
+  dexterm backtest --subject larp-score [--eval FILE] [--report FILE] [--json]
   dexterm backtest --build-eval FILE [--db PATH] [--horizon SEC] [--max-lag SEC]
 
   --subject   heuristic (default, the pre-registered H1 rug model), pack_verdicts (recorded pack rug_p), or
@@ -42,6 +44,9 @@ export const BACKTEST_HELP = `dexterm backtest: score the rug model against reco
               check's links-only baseline, the rug-check verdict rules), per-grade precision/recall on a train
               and a held-out TEST split. Default eval: packages/packs/eval/skills-eval.json. --tune re-tunes on
               the train split only and prints before (v0) vs tuned; --report writes the JSON report.
+  larp-score  task-1471: the 0-100 LARP score's link-shape points fitted on the same eval set's train split,
+              with AUROC and P(bad) per band on train and the held-out TEST split. Page, domain, GitHub and
+              X-account points are pre-registered priors (not replayable on history) and are listed as such.
   --build-eval  build that eval set from a recorder DB (read-only; no network; no URLs or names written).
   --horizon   outcome horizon in seconds: ${HORIZONS.join(', ')} (default 3600 = 1h).
   --json      print the full result object instead of the human table.
@@ -106,7 +111,7 @@ export function renderBacktestText(subject: string, horizon: number, labeler: st
 export function backtestCommand(argv: string[], io: BacktestIo): number {
   const opts = parse(argv);
   if (opts.help || opts.h) { io.stdout.write(BACKTEST_HELP + '\n'); return 0; }
-  if (opts.subject === 'skills') return skillsCommand(opts, io);
+  if (opts.subject === 'skills' || opts.subject === 'larp-score') return skillsCommand(opts, io);
   const path = typeof opts.db === 'string' ? opts.db : (io.env.DEXTERM_DB_PATH || defaultDbPath(io.env));
   if (path === ':memory:') { io.stderr.write('dexterm backtest: an in-memory DB has no history\n'); return 2; }
   const horizon = typeof opts.horizon === 'string' && HORIZONS.includes(Number(opts.horizon)) ? Number(opts.horizon) : 3600;
@@ -172,6 +177,12 @@ function skillsCommand(opts: Record<string, string | true>, io: BacktestIo): num
   }
   try { set = JSON.parse(readFileSync(file, 'utf8')) as SkillEvalSet; } catch (e) { io.stderr.write(`dexterm backtest: cannot read eval set ${file}: ${e instanceof Error ? e.message : String(e)}\n`); return 2; }
   if (set.schema !== SKILL_EVAL_SCHEMA || !Array.isArray(set.rows)) { io.stderr.write(`dexterm backtest: ${file} is not a ${SKILL_EVAL_SCHEMA} file\n`); return 2; }
+  if (opts.subject === 'larp-score') {
+    const r = larpScoreBacktest(set);
+    if (typeof opts.report === 'string') writeFileSync(opts.report, JSON.stringify(r, null, 1) + '\n');
+    io.stdout.write(opts.json ? JSON.stringify(r, null, 2) + '\n' : renderLarpScoreBacktestText(r));
+    return 0;
+  }
   let larpAfter = DEFAULT_LINK_RUBRIC, rugAfter = RUG_RULES_V1, tuned = null;
   if (opts.tune) {
     const train = set.rows.filter((r) => r.split === 'train');

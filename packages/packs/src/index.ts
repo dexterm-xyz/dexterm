@@ -20,5 +20,6 @@ export * from './backtest.ts';
 // task-1359: LARP eval (recorded product verdicts vs outcome labels; counts only below n = 50).
 export * from './larp-eval.ts';
 export * from './skill-backtest.ts';
+export * from './larp-score-backtest.ts';
 // task-1414: skill care — rolling split, the proposal gate (new-coins + interval-noise + frozen canary), trend.
 export * from './skill-care.ts';

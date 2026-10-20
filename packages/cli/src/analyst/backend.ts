@@ -237,9 +237,14 @@ export interface ResultEvent {
   sessionId: string | null;
 }
 
+/** task-1471: tools whose result the app parses back from the stream. */
+const RESULT_TOOLS = new Set(['larp_check']);
+
 export interface AnalystHandlers {
   onInit?: (info: { model: string | null; skills: string[]; mcp: string[]; sessionId: string | null }) => void;
   onToolCall?: (ev: ToolCallEvent) => void;
+  /** task-1471: the parsed JSON result of a dexterm MCP tool the app reads back (only RESULT_TOOLS). */
+  onToolResult?: (ev: { name: string; result: Record<string, unknown> }) => void;
   onText?: (delta: string) => void;
   /** A UI action the analyst requested over the authenticated channel (task-1313). */
   onAction?: (ev: ActionEvent) => void;
@@ -492,6 +497,19 @@ export function runAnalyst(req0: AnalystRequest, handlers: AnalystHandlers, deps
         }
       }
       streamedChars = 0; // next assistant turn's deltas start fresh
+      return;
+    }
+    // task-1471: the dexterm MCP server's own larp_check result (the score the panel gauge shows comes from the
+    // tool, not from the model's answer). Only named tools are parsed, capped in size.
+    if (type === 'user' && Array.isArray((ev.message as { content?: unknown })?.content)) {
+      for (const b of (ev.message as { content: Array<Record<string, unknown>> }).content) {
+        if (b.type !== 'tool_result') continue;
+        const name = toolCalls.get(b.tool_use_id as string);
+        if (!name || !RESULT_TOOLS.has(name)) continue;
+        const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? (b.content as Array<{ type?: string; text?: unknown }>).filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join('') : '';
+        if (!text || text.length > 512 * 1024) continue;
+        try { const result = JSON.parse(text) as unknown; if (result && typeof result === 'object') handlers.onToolResult?.({ name, result: result as Record<string, unknown> }); } catch { /* not JSON: ignore */ }
+      }
       return;
     }
     if (type === 'stream_event') {

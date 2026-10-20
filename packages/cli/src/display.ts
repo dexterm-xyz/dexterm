@@ -1,4 +1,5 @@
-// dexterm — the price display mode (task-1366): show USD price or MARKET CAP on every screen and both charts.
+// dexterm — the price display mode (task-1366): show USD price or MARKET CAP on every screen; task-1472: the chart
+// Y axis (both charts) is its own setting, `display.chartAxis`, default MARKET CAP, toggled with `A`.
 //
 // A DISPLAY mode only. Market cap = price × supply, where the supply is what the data layer already reports
 // (the row's mcap / price at the latest tick: the "supply ratio"). Historical candles are scaled by the CURRENT
@@ -7,18 +8,20 @@
 // missing / zero), the screen falls back to price and SAYS so; it never invents a number.
 //
 // No network calls, nothing here is read by the signer, the caps, tickets, plans or the confirm gate.
-import { fmtMcap, fmtMcapBare, fmtPrice } from '@dexterm/tui';
-import { applyAndJournal, configPath, dextermHome, loadConfig, DEFAULT_PRICE_MODE, PRICE_MODES, type PriceMode } from '@dexterm/custom';
+import { fmtMcap, fmtCompact, fmtPrice } from '@dexterm/tui';
+import { applyAndJournal, configPath, dextermHome, loadConfig, DEFAULT_PRICE_MODE, PRICE_MODES, CHART_AXES, DEFAULT_CHART_AXIS, type PriceMode, type ChartAxis } from '@dexterm/custom';
 import type { AppState } from './state.ts';
 import type { OrderPlan, Trigger } from '@dexterm/data/plans';
 
-export type { PriceMode };
-export { PRICE_MODES, DEFAULT_PRICE_MODE };
+export type { PriceMode, ChartAxis };
+export { PRICE_MODES, DEFAULT_PRICE_MODE, CHART_AXES, DEFAULT_CHART_AXIS };
 
 /** Axis / caption label for an mcap chart: the history is scaled by today's supply, and says so. */
 export const MCAP_AXIS_LABEL = 'mcap (current supply)';
 /** Shown wherever mcap mode is on but a token's supply is unknown, so the number on screen is a price. */
 export const MCAP_FALLBACK_NOTE = 'supply unknown · showing price';
+/** task-1472: the chart title when the Y axis wants market cap but the token's supply is unknown (it plots price). */
+export const MCAP_UNAVAILABLE_LABEL = 'price (mcap unavailable)';
 /** Short per-cell marker for a price shown in an MCAP column (fallback). */
 export const FALLBACK_MARK = 'ᵖ';
 
@@ -103,12 +106,22 @@ export interface ChartMode {
   label: string | null;
 }
 
-/** The chart scale for a token: mcap mode with a known supply scales by the CURRENT supply ratio, else prices (+ a note). */
-export function chartMode(mode: PriceMode, price: number | null | undefined, mcap: number | null | undefined): ChartMode {
+/**
+ * The chart scale for a token: an mcap axis with a known supply scales by the CURRENT supply ratio (labels in the shared
+ * compact k/M/B formatter), else prices (+ `price (mcap unavailable)`). task-1472: the charts pass the chart axis
+ * (chartAxisOf, default mcap); the token header still passes the table price mode.
+ */
+export function chartMode(mode: PriceMode | ChartAxis, price: number | null | undefined, mcap: number | null | undefined): ChartMode {
   if (mode !== 'mcap') return { scale: null, axisFmt: undefined, kind: 'price', label: null };
   const ratio = supplyRatio(price, mcap);
-  if (ratio === null) return { scale: null, axisFmt: undefined, kind: 'price', label: MCAP_FALLBACK_NOTE };
-  return { scale: ratio, axisFmt: fmtMcapBare, kind: 'mcap', label: MCAP_AXIS_LABEL };
+  if (ratio === null) return { scale: null, axisFmt: undefined, kind: 'price', label: MCAP_UNAVAILABLE_LABEL };
+  return { scale: ratio, axisFmt: fmtCompact, kind: 'mcap', label: MCAP_AXIS_LABEL };
+}
+
+/** task-1472: the chart box title: `WIF · MCAP (current supply) · 1h`, `WIF/USD · 1h`, or `WIF/USD · price (mcap unavailable) · 1h`. */
+export function chartTitle(symbol: string, interval: string, cm: ChartMode, quote = 'USD'): string {
+  if (cm.kind === 'mcap') return `${symbol} · MCAP ${MCAP_AXIS_LABEL.replace(/^mcap /, '')} · ${interval}`;
+  return cm.label ? `${symbol}/${quote} · ${cm.label} · ${interval}` : `${symbol}/${quote} · ${interval}`;
 }
 
 /**
@@ -170,7 +183,7 @@ export function configPriceMode(cfg: { display?: { priceMode?: unknown } } | nul
 export function togglePriceMode(state: AppState): string {
   const next: PriceMode = priceModeOf(state) === 'mcap' ? 'price' : 'mcap';
   state.priceMode = next;
-  const what = next === 'mcap' ? `showing MARKET CAP · charts: ${MCAP_AXIS_LABEL}` : 'showing USD PRICE';
+  const what = next === 'mcap' ? 'showing MARKET CAP' : 'showing USD PRICE'; // task-1472: the charts follow A, not $
   const ui = state.custom;
   if (!ui) return `${what} (not saved: no config on this run)`;
   try {
@@ -178,6 +191,39 @@ export function togglePriceMode(state: AppState): string {
     const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `$ price mode ${next}`, now: state.now.getTime() });
     ui.config = config;
     return `${what} · saved ($ to switch back)`;
+  } catch (e) {
+    return `${what} (not saved: ${(e as Error).message})`;
+  }
+}
+
+export function isChartAxis(v: unknown): v is ChartAxis { return (CHART_AXES as readonly unknown[]).includes(v); }
+
+/** task-1472: the chart Y axis in effect: the state's (from config or `A`), default MARKET CAP. */
+export function chartAxisOf(state: Pick<AppState, 'chartAxis'> | null | undefined): ChartAxis {
+  return state?.chartAxis === 'price' ? 'price' : 'mcap';
+}
+
+/** task-1472: the chart axis a run starts with: config.display.chartAxis, else mcap (also for configs written before it). */
+export function configChartAxis(cfg: { display?: { chartAxis?: unknown } } | null | undefined): ChartAxis {
+  const a = cfg?.display?.chartAxis;
+  return isChartAxis(a) ? a : DEFAULT_CHART_AXIS;
+}
+
+/**
+ * task-1472: set the chart Y axis (both chart surfaces) and persist it to config.display.chartAxis through the journal
+ * (actor user, so `undo` works). `next` absent = flip. Returns the toast text; a save failure keeps it for this run.
+ */
+export function setChartAxis(state: AppState, next?: ChartAxis): string {
+  const axis: ChartAxis = next ?? (chartAxisOf(state) === 'mcap' ? 'price' : 'mcap');
+  state.chartAxis = axis;
+  const what = axis === 'mcap' ? 'chart Y axis: MARKET CAP' : 'chart Y axis: PRICE';
+  const ui = state.custom;
+  if (!ui) return `${what} (not saved: no config on this run)`;
+  try {
+    const op = ui.config.display ? { op: 'add' as const, path: '/display/chartAxis', value: axis } : { op: 'add' as const, path: '/display', value: { chartAxis: axis } };
+    const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `A chart axis ${axis}`, now: state.now.getTime() });
+    ui.config = config;
+    return `${what} · saved (A to switch)`;
   } catch (e) {
     return `${what} (not saved: ${(e as Error).message})`;
   }
@@ -194,7 +240,9 @@ export function displayCommand(argv: string[], io: DisplayIo): number {
   if (arg === undefined) {
     if (!loaded.ok) { io.stderr.write(`dexterm display: ${loaded.errors[0]}\n`); return 1; }
     const m = configPriceMode(loaded.config);
-    io.stdout.write(`display.priceMode = ${m}${m === 'mcap' ? ` (tables show MCAP; charts: ${MCAP_AXIS_LABEL}; tokens without a supply fall back to price)` : ' (USD price per token)'}\n`);
+    io.stdout.write(`display.priceMode = ${m}${m === 'mcap' ? ' (tables show MCAP; tokens without a supply fall back to price)' : ' (USD price per token)'}\n`);
+    const a = configChartAxis(loaded.config);
+    io.stdout.write(`display.chartAxis = ${a}${a === 'mcap' ? ` (charts: ${MCAP_AXIS_LABEL}; A switches)` : ' (charts plot USD price; A switches)'}\n`);
     return 0;
   }
   if (!isPriceMode(arg)) { io.stderr.write(`dexterm display: unknown mode ${JSON.stringify(arg.slice(0, 20))}\n${DISPLAY_USAGE}\n`); return 2; }

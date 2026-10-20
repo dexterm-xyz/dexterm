@@ -5,7 +5,7 @@
 // background (hard cells); glow is only ever applied to neighbouring blank cells or to bg tints.
 import { Canvas, type Style } from './canvas.ts';
 import { mix, luminance, type Hex } from './color.ts';
-import { fmtUsd, fmtPct, fmtNum, fmtPrice, fmtAgeSec, shortAddr, clamp } from './fmt.ts';
+import { fmtUsd, fmtPct, fmtNum, fmtPrice, fmtPriceBare, fmtCompactUsd, compactDecimalsFor, fmtAgeSec, shortAddr, clamp } from './fmt.ts';
 import { launchpadColor } from './theme.ts';
 import type { Candle, CandleInterval, Launchpad } from '@dexterm/data';
 
@@ -121,15 +121,19 @@ export interface CandleOpts {
    * are drawn from the prices, so the chart is glyph-for-glyph identical; volume is untouched.
    */
   scale?: number;
-  /** task-1366: the right-hand axis / last-value formatter (default: the price formatter). */
-  axisFmt?: (n: number) => string;
+  /**
+   * task-1366: the right-hand axis / last-value formatter (default: the price formatter). task-1472: `extra` is the
+   * number of additional decimals the axis needs so two ticks never read the same (fmtCompact honours it).
+   */
+  axisFmt?: (n: number, extra?: number) => string;
 }
 
+/** task-1472: the price axis never prints scientific notation: subscript zeros below 0.01 (0.0₅493), like fmtPrice. */
 function fmtPriceAxis(p: number): string {
   if (p >= 1000) return p.toFixed(0);
   if (p >= 1) return p.toFixed(3);
   if (p >= 0.001) return p.toFixed(5);
-  return p.toExponential(2);
+  return fmtPriceBare(p);
 }
 
 /**
@@ -152,7 +156,6 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
   // task-1366: the bars are laid out in price units either way (identical glyphs); only the labels are scaled
   const s = opts.scale && Number.isFinite(opts.scale) && opts.scale > 0 ? opts.scale : 1;
   const baseFmt = opts.axisFmt ?? fmtPriceAxis;
-  const fmtAxis = s === 1 ? baseFmt : (p: number) => baseFmt(p * s);
   let lo = Infinity, hi = -Infinity, vmax = 0;
   for (const k of data) { lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); vmax = Math.max(vmax, k.v); }
   const pad = (hi - lo) * 0.06 || hi * 0.01;
@@ -162,6 +165,9 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
   const gridStyle: Style = { fg: mix(bg, t.border, 0.9), bg, soft: true };
   const labelStyle: Style = { fg: t.muted, bg };
   const ticks = Math.max(2, Math.min(6, Math.floor(plotH / 3)));
+  // task-1472: one more decimal only when two neighbouring ticks would otherwise print the same compact label
+  const extra = opts.axisFmt ? compactDecimalsFor(((hi + lo) / 2) * s, (range / ticks) * s) : 0;
+  const fmtAxis = (p: number) => baseFmt(p * s, extra);
   for (let i = 0; i <= ticks; i++) {
     const row = Math.round((i / ticks) * (plotH - 1));
     const price = hi - (row / (plotH - 1)) * range;
@@ -235,7 +241,7 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
       }
     }
     c.text(x + plotW + 1, vy, 'vol', labelStyle);
-    c.text(x + plotW + 1, vy + 1, fmtUsd(last.v, { digits: 1 }), { fg: t.text, bg });
+    c.text(x + plotW + 1, vy + 1, fmtCompactUsd(last.v), { fg: t.text, bg }); // task-1472: volume stays USD, compact k/M
   }
   const ty = y + h - 1;
   const labels = Math.max(2, Math.floor(plotW / 18));
@@ -375,6 +381,8 @@ export interface TableSpec<R> {
   sortDir?: 'asc' | 'desc';
   bg?: Hex;
   zebra?: boolean;
+  /** task-1466: record each drawn row on the canvas under this key (Canvas.rowMarks), e.g. the mint. */
+  rowKey?: (row: R) => string;
 }
 
 export interface TableResult {
@@ -421,6 +429,7 @@ export function table<R>(c: Canvas, x: number, y: number, w: number, h: number, 
     const selected = ri === spec.selected;
     const rowBg = selected ? t.selBg : (r % 2 === 1 && spec.zebra !== false ? mix(bg, t.panelAlt, 1) : bg);
     c.fill(x, ry, w, 1, ' ', { bg: rowBg });
+    if (spec.rowKey) c.rowMarks.push({ key: spec.rowKey(row), x, y: ry, w });
     if (selected) c.put(x - 1 >= 0 ? x - 1 : x, ry, '▎', { fg: t.accent, bg: rowBg, soft: true });
     cx = x;
     for (const col of cols) {

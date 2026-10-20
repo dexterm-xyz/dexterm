@@ -61,6 +61,7 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   fetch_page: 'observe',
   check_domain: 'observe',
   check_github: 'observe',
+  check_x: 'observe',
   agent_whoami: 'observe',
   list_proposals: 'observe',
   subscribe: 'observe',

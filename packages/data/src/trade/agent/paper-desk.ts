@@ -58,6 +58,45 @@ export class PaperDeskError extends Error {
 /** A quote fetcher: the keyless Jupiter swap-QUOTE (never the build/sign/send path). */
 export type QuoteFn = (req: QuoteRequest, signal?: AbortSignal) => Promise<SwapQuote>;
 
+/**
+ * Bounded re-quote on a rate limit (task-1443 capture round 3). In a live run, a +25% TP1 sell was refused on
+ * a keyless Jupiter 429 ("retry in 58s") and only filled a minute later, after the dump. The desk now waits
+ * out a short rate limit itself and asks again for a FRESH quote, inside a hard budget. When the budget is
+ * spent it refuses exactly as before. Every retry is journaled and reported (`onQuoteRetry`), so the screen
+ * shows it. A retry never reuses an old quote and never invents a price: every fill is still booked from a
+ * quote fetched in this call, through the same price-impact check, re-gate and executor match.
+ */
+export interface QuoteRetryPolicy {
+  /** Total quote attempts per confirm/close, including the first. */
+  maxAttempts: number;
+  /** The longest single wait between attempts. A longer stated wait is cut to this; the next attempt is still a real quote. */
+  maxWaitMs: number;
+  /** Hard budget for the whole pricing step (waits plus attempts). An attempt still in flight at the budget is aborted. */
+  maxTotalMs: number;
+}
+export const DEFAULT_QUOTE_RETRY: QuoteRetryPolicy = { maxAttempts: 4, maxWaitMs: 6_000, maxTotalMs: 25_000 };
+
+/** What the desk reports before each re-quote (journaled as `agent.paper.quote-retry`, shown by the spectator). */
+export interface QuoteRetryInfo {
+  stage: string;
+  mint: string;
+  side: Side;
+  /** The attempt about to run (2 = the first retry). */
+  attempt: number;
+  maxAttempts: number;
+  waitMs: number;
+  /** The failed attempt's rate-limit message, verbatim. */
+  message: string;
+}
+
+/** A keyless rate limit (a 429, or the data layer's own 429 cool-down / bucket pause), which is worth a bounded re-quote. */
+export function isRateLimitedQuoteError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.name === 'JupiterRateLimitedError') return true;
+  if (e.name === 'SourceUnavailableError') return /jupiter/.test(e.message);
+  return e.name === 'HttpError' && (e as { status?: unknown }).status === 429;
+}
+
 export interface PaperAgentDeskDeps {
   /**
    * The armed mandate whose caps bound every agent paper trade. A function is re-read on EVERY call (null ⇒
@@ -81,6 +120,10 @@ export interface PaperAgentDeskDeps {
   clock?: Clock;
   /** Label for the journal/spectator (never a real name). */
   agent?: string;
+  /** Bounded re-quote on a rate limit (default `DEFAULT_QUOTE_RETRY`; `maxAttempts: 1` turns it off). */
+  quoteRetry?: QuoteRetryPolicy;
+  /** Called before each re-quote, so the spectator view can show the retry while the call is in flight. Its errors never reach the desk. */
+  onQuoteRetry?: (info: QuoteRetryInfo) => void;
 }
 
 /** An in-flight ticket (ephemeral, in memory). A ticket is inert until `confirm`. */
@@ -139,6 +182,8 @@ export class PaperAgentDesk {
   private readonly kill: KillSwitch;
   private readonly clock: Clock;
   private readonly agent: string;
+  private readonly quoteRetry: QuoteRetryPolicy;
+  private readonly onQuoteRetry: ((info: QuoteRetryInfo) => void) | null;
   private readonly tickets = new Map<string, PaperTicket>();
   private ticketSeq = 0;
 
@@ -159,6 +204,9 @@ export class PaperAgentDesk {
     this.kill = deps.killSwitch ?? new KillSwitch();
     this.clock = deps.clock ?? systemClock;
     this.agent = deps.agent ?? 'mcp-agent';
+    const r = deps.quoteRetry ?? DEFAULT_QUOTE_RETRY;
+    this.quoteRetry = { maxAttempts: Math.max(1, Math.floor(r.maxAttempts)), maxWaitMs: Math.max(0, r.maxWaitMs), maxTotalMs: Math.max(0, r.maxTotalMs) };
+    this.onQuoteRetry = deps.onQuoteRetry ?? null;
   }
 
   /** The agent's effective per-trade cap: the mandate cap times the weakest-tier multiplier. */
@@ -298,20 +346,20 @@ export class PaperAgentDesk {
   }
 
   /** Confirm a sized ticket: re-check the gate and the caps, fetch a FRESH quote, book the PAPER fill. */
-  async confirm(ticketId: string): Promise<{ fill: TradeRecord; position: PaperPositionView | null }> {
+  async confirm(ticketId: string): Promise<{ fill: TradeRecord; position: PaperPositionView | null; quoteAttempts: number }> {
     const t = this.tickets.get(ticketId);
     if (!t) this.refuse('confirm', 'unknown-ticket', 'no such open ticket');
     this.gate('confirm', { ticketId });
     this.requireAction('confirm', t!.side, { ticketId });
     this.requireMintAllowed('confirm', t!.mint, { ticketId });
     const order = await this.buildOrder('confirm', t!);
-    const rec = await this.book('confirm', order, { ticketId });
+    const { rec, quoteAttempts } = await this.book('confirm', order, { ticketId });
     this.tickets.delete(ticketId);
-    return { fill: rec, position: this.positionView(this.wallet.position(t!.mint)) };
+    return { fill: rec, position: this.positionView(this.wallet.position(t!.mint)), quoteAttempts };
   }
 
   /** Close a fraction of a held PAPER position in one call (open sell → size fraction → confirm). */
-  async close(input: { mint: string; fraction?: number }): Promise<{ fill: TradeRecord; position: PaperPositionView | null }> {
+  async close(input: { mint: string; fraction?: number }): Promise<{ fill: TradeRecord; position: PaperPositionView | null; quoteAttempts: number }> {
     this.gate('close', { mint: input.mint });
     this.requireAction('close', 'sell', { mint: input.mint });
     this.requireMintAllowed('close', input.mint, {});
@@ -322,8 +370,8 @@ export class PaperAgentDesk {
     const t: PaperTicket = { id: `pt_close_${++this.ticketSeq}`, mint: input.mint, symbol: pos!.symbol, decimals: pos!.decimals, side: 'sell', usd: null, fraction, openedAt: this.clock.now() };
     this.note('agent.paper.close', { mint: input.mint, fraction });
     const order = await this.buildOrder('close', t);
-    const rec = await this.book('close', order, { mint: input.mint });
-    return { fill: rec, position: this.positionView(this.wallet.position(input.mint)) };
+    const { rec, quoteAttempts } = await this.book('close', order, { mint: input.mint });
+    return { fill: rec, position: this.positionView(this.wallet.position(input.mint)), quoteAttempts };
   }
 
   /** Build the paper order from a ticket, re-checking the buy caps against the live wallet at execute time. */
@@ -345,11 +393,50 @@ export class PaperAgentDesk {
     return { mint: t.mint, symbol: pos!.symbol, side: 'sell', decimals: pos!.decimals, amountRaw, slippageBps: this.mandate.limits.maxSlippageBps };
   }
 
+  /**
+   * Fetch a FRESH quote for this call. A short rate limit is re-quoted inside the bounded `quoteRetry` budget:
+   * each retry is journaled and reported first, waits min(stated wait, maxWaitMs), then re-runs the gate, so a
+   * pause during the wait still halts the agent. Any other error, the last allowed attempt, or the spent budget
+   * (an attempt still in flight is aborted) refuses with the verbatim message. No quote outlives the call.
+   */
+  private async freshQuote(stage: string, order: PaperOrder, extra: Record<string, unknown>): Promise<{ quote: SwapQuote; attempts: number }> {
+    const { maxAttempts, maxWaitMs, maxTotalMs } = this.quoteRetry;
+    const started = this.clock.now();
+    let lastRateLimit: string | null = null;
+    for (let attempt = 1; ; attempt++) {
+      const budget = new AbortController();
+      const disarm = new AbortController();
+      void this.clock.sleep(Math.max(1, maxTotalMs - (this.clock.now() - started)), disarm.signal)
+        .then(() => { if (!disarm.signal.aborted) budget.abort(); });
+      let quote: SwapQuote | null = null;
+      let failure: unknown = null;
+      try { quote = await this.quote(buildQuoteRequest(order), budget.signal); } catch (e) { failure = e; } finally { disarm.abort(); }
+      if (quote && !budget.signal.aborted) return { quote, attempts: attempt };
+      const msg = failure instanceof Error ? failure.message : failure === null ? 'no quote' : String(failure);
+      const elapsed = this.clock.now() - started;
+      const tried = attempt > 1 ? ` (${attempt} quote attempts in ${Math.round(elapsed / 1000)}s)` : '';
+      if (budget.signal.aborted) {
+        this.refuse(stage, 'quote-failed', `could not price the trade within ${Math.round(maxTotalMs / 1000)}s${lastRateLimit ? `: ${lastRateLimit}` : ''}${tried}`, { ...extra, quoteAttempts: attempt });
+      }
+      if (!isRateLimitedQuoteError(failure)) this.refuse(stage, 'quote-failed', `could not price the trade: ${msg}${tried}`, { ...extra, quoteAttempts: attempt });
+      lastRateLimit = msg;
+      const stated = (failure as { retryAfterMs?: unknown }).retryAfterMs;
+      const wait = Math.min(maxWaitMs, Math.max(1_000, typeof stated === 'number' && Number.isFinite(stated) ? stated : 2_000 * attempt));
+      if (attempt >= maxAttempts || elapsed + wait >= maxTotalMs) {
+        this.refuse(stage, 'quote-failed', `could not price the trade: ${msg}${tried}`, { ...extra, quoteAttempts: attempt });
+      }
+      const info: QuoteRetryInfo = { stage, mint: order.mint, side: order.side, attempt: attempt + 1, maxAttempts, waitMs: wait, message: msg };
+      this.note('agent.paper.quote-retry', { ...extra, ...info });
+      try { this.onQuoteRetry?.(info); } catch { /* the spectator is best-effort */ }
+      await this.clock.sleep(wait);
+      this.gate(stage, extra);
+    }
+  }
+
   /** Fetch a fresh quote and book the fill through the PAPER executor; journal the booked fill. */
-  private async book(stage: string, order: PaperOrder, extra: Record<string, unknown>): Promise<TradeRecord> {
-    let quote: SwapQuote;
-    try { quote = await this.quote(buildQuoteRequest(order)); }
-    catch (e) { this.refuse(stage, 'quote-failed', `could not price the trade: ${e instanceof Error ? e.message : String(e)}`, extra); }
+  private async book(stage: string, order: PaperOrder, extra: Record<string, unknown>): Promise<{ rec: TradeRecord; quoteAttempts: number }> {
+    const { quote, attempts } = await this.freshQuote(stage, order, extra);
+    if (attempts > 1) extra = { ...extra, quoteAttempts: attempts };
     // Buys honour the mandate's price-impact ceiling (SwapQuote.priceImpactPct is already a PERCENT — the source
     // converts Jupiter's 0..1 fraction once). Exits are never trapped by it, like the plan engine's stop leg.
     if (order.side === 'buy' && isFiniteNum(quote!.priceImpactPct) && quote!.priceImpactPct > this.mandate.limits.maxPriceImpactPct + 1e-9) {
@@ -365,7 +452,7 @@ export class PaperAgentDesk {
       solDelta: rec!.solDelta.toString(), tokenDelta: rec!.tokenDelta.toString(),
       priceSol: rec!.priceSol, priceUsd: rec!.priceUsd, realizedLamports: rec!.realizedLamports.toString(), fillId: rec!.id,
     });
-    return rec!;
+    return { rec: rec!, quoteAttempts: attempts };
   }
 
   // ───────────────────────────── the two reads ─────────────────────────────

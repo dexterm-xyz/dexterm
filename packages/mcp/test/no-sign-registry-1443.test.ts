@@ -19,7 +19,7 @@ const DATA_SRC = join(HERE, '..', '..', 'data', 'src');
 const READ_DATA_TOOLS = [
   'screen_state', 'screener_query', 'get_token', 'get_dossier', 'analyze_token', 'get_holders', 'get_trades',
   'get_candles', 'rugcheck', 'get_dev_history', 'dev_history', 'narrative_board', 'rug_backtest', 'kb_lookup', 'kb_search',
-  'case_lookup', 'get_links', 'fetch_page', 'check_domain', 'check_github', 'larp_check', 'app_help', 'app_state',
+  'case_lookup', 'get_links', 'fetch_page', 'check_domain', 'check_github', 'check_x', 'larp_check', 'app_help', 'app_state',
 ];
 const UI_NAV_TOOLS = [...ANALYST_ACTION_TYPES]; // task-1313/1413 non-financial navigation + display config
 const PAPER_TOOLS = [...PAPER_WRITE_TOOLS, ...PAPER_READ_TOOLS];
@@ -138,6 +138,6 @@ test('the paper tools dispatch only to the desk verbs, and the desk exposes noth
   assert.deepEqual([...called].sort(), ['close', 'confirm', 'open', 'pnl', 'positions', 'size']);
   const { PaperAgentDesk } = await import('@dexterm/data');
   const methods = Object.getOwnPropertyNames(PaperAgentDesk.prototype).filter((n) => n !== 'constructor');
-  const isPublic = (n: string) => !/^(perTradeCapUsd|note|refuse|gate|requireAction|requireMintAllowed|price|costUsd|openCostUsd|realizedLossUsd|admitBuy|buildOrder|book|positionView)$/.test(n);
+  const isPublic = (n: string) => !/^(perTradeCapUsd|note|refuse|gate|requireAction|requireMintAllowed|price|costUsd|openCostUsd|realizedLossUsd|admitBuy|buildOrder|freshQuote|book|positionView)$/.test(n);
   assert.deepEqual(methods.filter(isPublic).sort(), ['close', 'confirm', 'open', 'pnl', 'positions', 'size'], 'a new desk method must be reviewed here');
 });

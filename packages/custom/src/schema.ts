@@ -123,6 +123,13 @@ export const LAYOUT_SCREENS = ['screener', 'token', 'newpairs', 'watchlist', 'an
 export const PRICE_MODES = ['price', 'mcap'] as const;
 export type PriceMode = (typeof PRICE_MODES)[number];
 export const DEFAULT_PRICE_MODE: PriceMode = 'price';
+/**
+ * task-1472: what the CHART Y axis shows (the terminal token chart and the chart popup), separate from the table/header
+ * price mode: `mcap` (default; absent = mcap, so existing configs get it too) or `price`. `A` / the popup control toggle it.
+ */
+export const CHART_AXES = ['mcap', 'price'] as const;
+export type ChartAxis = (typeof CHART_AXES)[number];
+export const DEFAULT_CHART_AXIS: ChartAxis = 'mcap';
 
 const tokenProps = (): Record<string, SchemaNode> => Object.fromEntries([...THEME_TOKENS.map((t) => [t, 'hex'] as const), ...THEME_RAMPS.map((t) => [t, 'ramp'] as const)]);
 
@@ -221,8 +228,8 @@ export const SCHEMAS: Record<string, SchemaNode> = {
       user: { type: 'object', values: 'userTheme' },
     } },
     fx: { type: 'object', additional: false, props: { intensity: { type: 'string', enum: ['off', 'normal', 'fever'] }, sound: { type: 'boolean' } } },
-    /** task-1366: display options. `priceMode` price | mcap (the `$` key toggles and persists it). */
-    display: { type: 'object', additional: false, props: { priceMode: { type: 'string', enum: PRICE_MODES } } },
+    /** task-1366: display options. `priceMode` price | mcap (the `$` key toggles and persists it). task-1472: `chartAxis` mcap | price (`A`; absent = mcap). */
+    display: { type: 'object', additional: false, props: { priceMode: { type: 'string', enum: PRICE_MODES }, chartAxis: { type: 'string', enum: CHART_AXES } } },
     layout: { type: 'object', additional: false, props: {
       workspace: { type: 'string', pattern: WS_NAME },
       workspaces: { type: 'object', values: 'workspace' },
@@ -332,7 +339,7 @@ export interface DextermConfig {
   version: number;
   theme?: { name?: string; overrides?: Record<string, Hex | Hex[]>; user?: Record<string, UserTheme> };
   fx?: { intensity?: Intensity; sound?: boolean };
-  display?: { priceMode?: PriceMode };
+  display?: { priceMode?: PriceMode; chartAxis?: ChartAxis };
   layout?: { workspace?: string; workspaces?: Record<string, unknown> };
   keymap?: KeymapConfig;
   rules?: RuleJson[];

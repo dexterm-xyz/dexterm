@@ -43,3 +43,48 @@
 .spec-act-age { color: var(--warn); }
 
 .spec-foot-redact { color: var(--up); font-weight: 600; }
+
+/* task-1466 spectator v2: the agent story (phase rail + heartbeat, thought ribbon, call timeline, vetting + PAPER cards) */
+.spec-story { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; font: 12px ui-monospace, Menlo, monospace; }
+.spec-rail { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.spec-heart { width: 10px; height: 10px; border-radius: 50%; background: var(--down); margin-right: 6px; box-shadow: 0 0 8px var(--down); animation: spec-beat 1s infinite ease-out; }
+.spec-heart.still { animation: none; background: var(--warn); box-shadow: none; }
+.spec-heart.dead { animation: none; background: var(--dim); box-shadow: none; }
+@keyframes spec-beat { 0% { transform: scale(1.35); opacity: 1; } 30% { transform: scale(0.9); opacity: 0.7; } 100% { transform: scale(1); opacity: 0.85; } }
+.spec-bpm { color: var(--muted); margin-right: 8px; min-width: 44px; }
+.spec-phase { padding: 2px 8px; border-radius: 4px; color: var(--dim); border: 1px solid transparent; letter-spacing: 0.05em; }
+.spec-phase.done { color: var(--muted); }
+.spec-phase.on { color: #000; background: var(--accent); font-weight: 700; box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 60%, transparent); }
+.spec-phase.on.p-vetting { background: var(--borderFocus); box-shadow: 0 0 12px color-mix(in srgb, var(--borderFocus) 60%, transparent); }
+.spec-phase.on.p-sizing { background: var(--warn); }
+.spec-phase.on.p-executing { background: var(--up); }
+.spec-phase.on.p-holding { background: var(--pump); }
+.spec-phase.on.p-exiting { background: var(--ai, var(--accent)); }
+.spec-sep { color: var(--border); }
+.spec-paper { margin-left: auto; padding: 1px 6px; border-radius: 4px; background: var(--warn); color: #000; font-weight: 700; }
+.spec-ctlstate { padding: 1px 6px; border-radius: 4px; font-weight: 700; color: #000; }
+.spec-ctlstate.paused { background: var(--warn); }
+.spec-ctlstate.takeover { background: var(--accent); }
+.spec-ctlstate.killed { background: var(--down); color: #fff; }
+.spec-ribbon { padding: 6px 8px; border-left: 3px solid var(--ai, var(--accent)); background: color-mix(in srgb, var(--panel) 85%, transparent); color: var(--text); min-height: 1.4em; }
+.spec-ribbon.ours { border-left-color: var(--border); color: var(--muted); font-style: italic; }
+.spec-ribbon-who { color: var(--ai, var(--accent)); margin-right: 6px; font-style: normal; }
+.spec-timeline { display: flex; align-items: flex-start; gap: 0; overflow: hidden; justify-content: flex-end; }
+.spec-node { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0 2px; }
+.spec-node-l { color: var(--text); white-space: nowrap; }
+.spec-node.paper .spec-node-l { color: var(--warn); font-weight: 700; }
+.spec-chip { font-size: 10px; padding: 0 5px; border-radius: 3px; background: color-mix(in srgb, var(--up) 18%, transparent); color: var(--up); }
+.spec-chip.slow { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.spec-chip.fail, .spec-chip.refused { background: color-mix(in srgb, var(--down) 22%, transparent); color: var(--down); }
+.spec-link { color: var(--border); align-self: flex-start; margin-top: 1px; }
+.spec-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+.spec-card { flex: 1 1 220px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); }
+.spec-card-h { color: #000; background: var(--borderFocus); font-weight: 700; padding: 0 6px; border-radius: 3px; display: inline-block; margin-bottom: 4px; }
+.spec-card.trade .spec-card-h { background: var(--pump); }
+.spec-check { margin-right: 8px; color: var(--dim); }
+.spec-check.ok { color: var(--up); font-weight: 600; }
+.spec-big { font-size: 30px; font-weight: 800; letter-spacing: 0.02em; line-height: 1.1; }
+.spec-big.up { color: var(--up); text-shadow: 0 0 14px color-mix(in srgb, var(--up) 45%, transparent); }
+.spec-big.down { color: var(--down); }
+.spec-kv { color: var(--muted); }
+.spec-kv b { color: var(--text); font-weight: 600; }
