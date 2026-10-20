@@ -25,7 +25,7 @@ sources:
 date: 2026-10-16
 ---
 
-From a source checkout, `npm install` and then `npm test` runs the typecheck and three test lanes, in order (from 0.1.4, not in a release yet):
+From a source checkout, `npm install` and then `npm test` runs the typecheck and three test lanes, in order (since 0.1.4):
 
 - **parallel**: every `packages/*/test/*.test.ts` file at once, one process each.
 - **serial** (`npm run test:serial`, `packages/*/test/serial/`): the tests that drive a real terminal through a pty, run the real binary, or assert a wall-clock bound (the under-a-second quit, the 50 ms filter fuzz). They run one file at a time after the parallel lane, so they never share the CPU with it.

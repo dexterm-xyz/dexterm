@@ -13,8 +13,9 @@ import { renderTokenLive } from '../live/screens/token-live.ts';
 import { aiTranscript, type FixtureToken } from '../fixtures.ts';
 import { renderAnalystSession } from './analyst-session.ts';
 import { renderSocialPanel } from './social-panel.ts';
+import { brainFor, factsFromFixture, renderBrainPanel } from './brain.ts';
 import { layoutFor } from '../custom.ts';
-import { chartMode, priceModeOf } from '../display.ts';
+import { chartMode, chartTitle, chartAxisOf, priceModeOf } from '../display.ts';
 
 type Level = 'ok' | 'warn' | 'bad';
 
@@ -51,11 +52,11 @@ export function renderToken(c: Canvas, state: AppState): void {
   // price line: pump glow = gold bg band, dump = red band (the rain ramp of the moment)
   const priceBg = pumping ? mix(t.bg, t.rainPump[2], 0.3) : dumping ? mix(t.bg, t.rainDump[2], 0.3) : t.bg;
   // task-1366: mcap mode leads with the market cap and keeps the price beside it (fixture tokens always carry a supply)
-  const cm = chartMode(priceModeOf(state), tk.price, tk.mcap);
-  if (cm.kind === 'mcap') {
+  const pm = chartMode(priceModeOf(state), tk.price, tk.mcap);
+  if (pm.kind === 'mcap') {
     x = c.text(1, y, fmtMcap(tk.mcap), { fg: pumping ? t.rainPump[3] : t.text, bg: priceBg, b: true });
     x = c.text(x, y, ` (${fmtPrice(tk.price)})`, { fg: t.dim, bg: priceBg });
-  } else x = c.text(1, y, fmtPrice(tk.price), { fg: cm.label ? t.warn : pumping ? t.rainPump[3] : t.text, bg: priceBg, b: true });
+  } else x = c.text(1, y, fmtPrice(tk.price), { fg: pm.label ? t.warn : pumping ? t.rainPump[3] : t.text, bg: priceBg, b: true });
   const deltas: Array<[string, number]> = [['5m', tk.chg.m5], ['1h', tk.chg.h1], ['6h', tk.chg.h6], ['24h', tk.chg.h24]];
   x = c.text(x, y, '  ', { bg: t.bg });
   for (const [k, vv] of deltas) {
@@ -70,7 +71,9 @@ export function renderToken(c: Canvas, state: AppState): void {
 
   // ---- chart
   const chartH = Math.max(10, Math.floor((bottom - y) * lay.chartFrac));
-  const cb = c.box(0, y, mainW, chartH, { title: cm.label ? (cm.kind === 'mcap' ? `${tk.symbol} ${cm.label} · 1h` : `${tk.symbol}/SOL · ${cm.label} · 1h`) : `${tk.symbol}/SOL · 1h`, caption: 'ohlcv: geckoterminal' });
+  // task-1472: the chart Y axis is its own setting (default MARKET CAP, `A` toggles); the header above keeps `$`
+  const cm = chartMode(chartAxisOf(state), tk.price, tk.mcap);
+  const cb = c.box(0, y, mainW, chartH, { title: chartTitle(tk.symbol, '1h', cm, 'SOL'), caption: 'ohlcv: geckoterminal' });
   const tfx = cb.x + cb.w - 2;
   const tfs = ['1m', '5m', '15m', '1h', '4h', '1d'];
   let tx = tfx - tfs.reduce((s, f) => s + f.length + 1, 0) - 24;
@@ -165,7 +168,12 @@ export function renderToken(c: Canvas, state: AppState): void {
   }
 
   }
-  if (showAi) analystPanel(c, mainW, top, aiW, bottom - top, tk, state);
+  if (showAi) {
+    // task-1473: in an auto mode (following an agent / AI scan) the panel is the BRAIN VIEW; otherwise the analyst
+    const brain = brainFor(state, factsFromFixture(tk, state.larpByMint?.get(tk.mint)?.verdict ?? null), isCalm(v), state.live?.scanMeterLabel?.() ?? '');
+    if (brain) renderBrainPanel(c, mainW, top, aiW, bottom - top, brain.model, brain.opts);
+    else analystPanel(c, mainW, top, aiW, bottom - top, tk, state);
+  }
   footer(c, state.tokenSocial
     ? [['esc', 'back'], ['s', 'on-chain'], ['f', 'filter'], ['x', state.socialShowSpam ? 'hide spam' : 'show hidden'], ['K', 'KOL lists'], ['a', showAi ? 'hide analyst' : 'analyst'], ['w', 'watch'], ['q', 'quit']]
     : [['esc', 'back'], ['g', 'go to'], ['a', showAi ? 'hide analyst' : 'analyst'], ['h/t/r', 'holders/trades/traders'], ['w', 'watch'], ['b', 'alert'], ['1-6', 'timeframe'], ['q', 'quit']], state.theme.name, isCalm(v));

@@ -30,7 +30,7 @@ All three read the same events from one in-memory hub, which `agent serve` creat
 
 | surface | start it with | what you get |
 | --- | --- | --- |
-| AGENT ACTIVITY window | `dexterm agent serve --spectator-popup` | a window titled "watch the agent cook" with live activity and the pause, take over and kill controls |
+| AGENT ACTIVITY window | `dexterm agent serve --spectator-popup` | a window titled "watch the agent cook": the agent's phase rail and heartbeat, its thought ribbon, a call timeline with result chips, the coin it is vetting and its PAPER trade, over the live activity, with the pause, take over and kill controls |
 | read-only stream | `dexterm agent serve --spectate` | a loopback WebSocket that sends events out and accepts no commands |
 | save and replay | `dexterm agent serve --record FILE`, then `dexterm spectate --replay FILE` | a redacted JSONL file of the session that you can replay offline |
 

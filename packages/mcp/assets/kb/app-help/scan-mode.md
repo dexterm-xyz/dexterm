@@ -32,6 +32,6 @@ sources:
 date: 2026-10-16
 ---
 
-Scan mode is an observe-only AI watcher (off by default, zero extra requests). Toggle it with `Z` (or `/scan on|off` on the screener line, or `--scan` at launch); `R` resumes a paused scan. It can only surface findings, never take a UI action or trade (structurally observe-only). The analyst can turn it on or off for you.
+Scan mode is an observe-only AI watcher (off by default, zero extra requests). Toggle it with `Z` (or `/scan on|off` on the screener line, or `--scan` at launch); `R` resumes a paused scan. It can only surface findings, never take a UI action or trade (structurally observe-only). While it is on, the token screen's analyst panel shows its brain view: the scan log (locks, refreshes, releases, blocked actions) with the read streaming under it, the vetting checklist and the data strip. While it runs and you hold a paper or live position, a PnL chip shows it on the band under the header of every screen and on the chart popup; display only. The analyst can turn it on or off for you.
 
 Keys: `Z`, `R`.

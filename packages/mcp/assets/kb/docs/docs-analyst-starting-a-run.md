@@ -30,4 +30,6 @@ Nothing runs behind your back. Opening a token with `⏎` is free. A paid run st
 - type a question (`i` or `⏎` to focus, `⏎` to send). A question is a chat turn on the warm session, or a new session with that question as its first turn, never a structured skill run;
 - let AI scan mode (https://dexterm.xyz/docs/scan) lock a coin.
 
+In an auto mode (following an agent with `--spectate-mcp`, or AI scan mode (https://dexterm.xyz/docs/scan#the-read)), the token screen's analyst panel shows the brain view (https://dexterm.xyz/docs/spectator#the-brain-view-and-the-pnl-chip) until you type into it.
+
 Each token keeps its own conversation for the run; the analyst tab has its own. `esc` interrupts a running answer from any screen. The caption under an answer shows cost, latency, tool calls and the model.

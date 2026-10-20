@@ -130,6 +130,11 @@ export class Canvas {
    */
   images: ImageSlotRecord[];
   imageMode: 'cells' | 'pixels';
+  /**
+   * task-1466: where each keyed list row was drawn (a table with `rowKey`, e.g. a screener row by mint), so an
+   * overlay drawn later (the agent HUD's row glow / cursor) can find the row on screen. Not emitted anywhere.
+   */
+  rowMarks: Array<{ key: string; x: number; y: number; w: number }>;
 
   constructor(w: number, h: number, theme: Theme) {
     this.w = w;
@@ -147,6 +152,7 @@ export class Canvas {
     this.shields = [];
     this.images = [];
     this.imageMode = 'cells';
+    this.rowMarks = [];
   }
 
   idx(x: number, y: number): number { return y * this.w + x; }
@@ -164,6 +170,7 @@ export class Canvas {
     this.shields = src.shields.slice();
     this.images = src.images.slice();
     this.imageMode = src.imageMode;
+    this.rowMarks = src.rowMarks.slice();
   }
 
   put(x: number, y: number, ch: string, st: Style = {}): void {

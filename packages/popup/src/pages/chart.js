@@ -12,6 +12,7 @@
   const $ = (id) => document.getElementById(id);
   const titleEl = $('title'), legendEl = $('legend'), liveEl = $('live'), bannerEl = $('banner'), hintEl = $('hint');
   const posEl = $('pos'), posTitleEl = $('pos-title'), posCapEl = $('pos-cap'), posCellsEl = $('pos-cells');
+  const chipEl = $('pnlchip');
   const imgSlot = $('coin-img-slot');
   const chartEl = $('chart'), drawCv = $('draw'), dctx = drawCv.getContext('2d');
   const STALE_MS = 20_000;
@@ -57,7 +58,7 @@
     if (type === 2) return String(d.getUTCDate());
     return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
   }
-  const volFmt = (v) => C.fmtUsd(v);
+  const volFmt = (v) => C.fmtCompactUsd(v); // task-1472: volume stays USD, compact k/M
 
   // ---------------------------------------------------------------- chart + series
   const chart = L.createChart(chartEl, {
@@ -80,7 +81,7 @@
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     handleScale: { axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: true, mouseWheel: true, pinch: true },
   });
-  // task-1366: the axis formatter follows the terminal's price mode (mcap = price × the current supply, K/M/B)
+  // task-1366/1472: the axis formatter follows the terminal's chart axis (mcap = price × the current supply, compact k/M/B)
   const pricePF = (p) => ({ type: 'custom', formatter: C.axisFormatter(S.display), minMove: C.priceFormatFor(p).minMove });
   // Keep the position levels (entry / stop / target) and the live price in view: autoscale widens to include them
   // when they are within 3× of the last close (a far-away level would squash the candles; its row cell still shows it).
@@ -159,13 +160,16 @@
   DT.onTheme(applyChartTheme);
 
   // ---------------------------------------------------------------- toolbar (buttons built with textContent only)
-  const btns = { tf: new Map(), styles: new Map(), scales: new Map(), inds: new Map(), draws: new Map() };
+  const btns = { tf: new Map(), axis: new Map(), styles: new Map(), scales: new Map(), inds: new Map(), draws: new Map() };
   function mkBtn(group, id, label, title, onClick) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'tb'; b.textContent = label; b.title = title;
     b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
     $(group).appendChild(b); btns[group].set(id, b); return b;
   }
   C.INTERVALS.forEach((iv, i) => mkBtn('tf', iv, iv, `timeframe ${iv} (${i + 1})`, () => requestInterval(iv)));
+  // task-1472: MCAP | PRICE asks the terminal to switch (and save) the chart axis; the next VM re-labels the page
+  mkBtn('axis', 'mcap', 'MCAP', 'Y axis: market cap (A / y toggles; saved by the terminal)', () => setAxis('mcap'));
+  mkBtn('axis', 'price', 'PRICE', 'Y axis: USD price (A / y toggles; saved by the terminal)', () => setAxis('price'));
   mkBtn('styles', 'candles', 'candles', 'candlesticks (c cycles)', () => setStyle('candles', true));
   mkBtn('styles', 'line', 'line', 'line (c cycles)', () => setStyle('line', true));
   mkBtn('styles', 'area', 'area', 'area (c cycles)', () => setStyle('area', true));
@@ -183,6 +187,8 @@
   mkBtn('draws', 'x', '✕ clear', 'clear drawings (x; backspace = undo last)', () => clearDrawings());
   function syncToolbar() {
     for (const [iv, b] of btns.tf) { b.classList.toggle('on', iv === S.interval); b.classList.toggle('pending', iv === S.pendingInterval && iv !== S.interval); }
+    const ax = S.vm && S.vm.priceMode === 'mcap' ? 'mcap' : 'price';
+    for (const [k, b] of btns.axis) b.classList.toggle('on', k === ax);
     for (const [k, b] of btns.styles) b.classList.toggle('on', k === S.style);
     for (const [k, b] of btns.scales) b.classList.toggle('on', k === S.scale);
     for (const [k, b] of btns.inds) b.classList.toggle('on', S.ind.has(k));
@@ -195,6 +201,11 @@
     if (iv === S.interval && !S.pendingInterval) return;
     S.pendingInterval = iv; S.reqAt = performance.now(); syncToolbar();
     DT.send({ type: 'event', name: 'chart.interval', payload: { interval: iv } });
+  }
+  /** task-1472: ask the terminal for a Y axis; nothing changes here until its next VM carries the new mode. */
+  function setAxis(axis) {
+    if (axis !== 'mcap' && axis !== 'price') return;
+    DT.send({ type: 'event', name: 'chart.axis', payload: { axis } });
   }
   function setStyle(st, user) {
     if (!C.STYLES.includes(st) || st === S.style) return;
@@ -397,6 +408,23 @@
     }
   }
 
+  // task-1473 r2: the POSITION PnL chip (formatted terminal-side; textContent only, display only)
+  function renderChip() {
+    const chip = S.vm && S.vm.chip;
+    if (!chipEl) return;
+    if (!chip || !Array.isArray(chip.segments) || !chip.segments.length) { chipEl.hidden = true; return; }
+    chipEl.hidden = false;
+    while (chipEl.firstChild) chipEl.removeChild(chipEl.firstChild);
+    const tone = ['up', 'down'].includes(chip.tone) ? chip.tone : '';
+    for (const sg of chip.segments.slice(0, 8)) {
+      const id = ['head', 'pnl', 'peak', 'px', 'held', 'dd', 'tp'].includes(sg.id) ? sg.id : 'x';
+      let cls = `seg ${id}`;
+      if (id === 'pnl') cls += ` ${tone}${chip.newPeak ? ' flash' : ''}`;
+      if (id === 'peak') cls += ` ${/^peak −/.test(String(sg.text)) ? 'down' : 'up'}`;
+      chipEl.appendChild(el('span', cls, String(sg.text).slice(0, 48)));
+    }
+  }
+
   // ---------------------------------------------------------------- incoming view models
   function onData(vm) {
     if (!vm || typeof vm !== 'object') return;
@@ -409,7 +437,7 @@
     // task-1366: a mode / supply change re-labels the axis in place (the bars are prices either way)
     const disp = C.displayOf(vm);
     if (disp.key !== S.display.key) { S.display = disp; applyPriceFormat(); }
-    if (tail && (!vm.seriesKey || vm.seriesKey !== S.key)) { S.vm = { ...vm, candles: [] }; renderHeader(); renderPosition(); renderOverlays(); return; }
+    if (tail && (!vm.seriesKey || vm.seriesKey !== S.key)) { S.vm = { ...vm, candles: [] }; renderHeader(); renderPosition(); renderChip(); renderOverlays(); return; }
     const intervalChanged = vm.interval !== S.interval;
     S.interval = vm.interval;
     const answered = S.pendingInterval === vm.interval ? S.reqAt : null;
@@ -425,7 +453,7 @@
       if (intervalChanged || S.key !== prevKey) S.fitNext = true;
       renderFull();
     }
-    renderHeader(); renderLegend(S.hover); renderDataBanner(); renderPosition(); syncToolbar(); renderLive();
+    renderHeader(); renderLegend(S.hover); renderDataBanner(); renderPosition(); renderChip(); syncToolbar(); renderLive();
     // rain mood follows direction (gold on a pump, red-shift on a dump), as in the v1 HUD; chg is in percent
     const dir = vm.chg ? (vm.chg.h24 ?? vm.chg.h1 ?? 0) : 0;
     if (rain) { rain.setMood(dir > 1 ? 'rainPump' : dir < -1 ? 'rainDump' : 'rain'); rain.setActivity(Math.min(1, 0.4 + Math.abs(dir) / 100)); rain.setSources([String(vm.symbol || ''), String(vm.mint || '').slice(0, 6)]); }
@@ -514,6 +542,7 @@
     const n = parseInt(k, 10);
     if (n >= 1 && n <= 6) { requestInterval(C.INTERVALS[n - 1]); return; }
     switch (k) {
+      case 'A': case 'y': setAxis(S.vm && S.vm.priceMode === 'mcap' ? 'price' : 'mcap'); break; // task-1472
       case 'c': setStyle(C.STYLES[(C.STYLES.indexOf(S.style) + 1) % C.STYLES.length], true); break;
       case 'a': setScale('auto', true); break;
       case 'l': setScale(S.scale === 'log' ? 'auto' : 'log', true); break;

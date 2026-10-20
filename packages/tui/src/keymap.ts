@@ -234,6 +234,8 @@ export type AppAction =
   | 'screen.rules' | 'rules.new' | 'rules.edit' | 'rules.toggle' | 'rules.remove' | 'rules.tab' | 'rules.dismiss' | 'rules.act'
   // task-1366: `$` flips the price display mode (USD price ⇄ market cap) everywhere and persists it to config.json.
   | 'display.priceMode'
+  // task-1472: `A` (token screen) flips the CHART Y axis between market cap (default) and price; persisted.
+  | 'display.chartAxis'
   // task-1388 GO-TO prompt: `g` on the list and token screens opens a one-line input; paste or type a base58
   // mint (or a dexscreener/pump.fun/solscan URL) and ⏎ opens that coin's live token screen (read-only). Esc
   // cancels, bad input shows a notice. Per-screen so the global `g` (move to top) still has `home`.
@@ -334,6 +336,10 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   // the open coin. (`P` is already the global positions key, so chart uses `C`.) Collision-free with the
   // token screen's other capitals (B/S trade, W/X/T/L links, V vet).
   { keys: ['C'], action: 'popup.chart', label: 'chart popup', screen: 'token' },
+  // task-1472: `A` (axis) on the token screen flips the chart Y axis MARKET CAP ⇄ PRICE (both charts; saved as
+  // display.chartAxis). Free capital on the token screen (A is only auto-mirror on the follows screen); deliberately
+  // not Y, which confirms inside the PAPER ticket and the modals. The chart popup uses the same `A`.
+  { keys: ['A'], action: 'display.chartAxis', label: 'chart axis mcap ⇄ price', screen: 'token' },
   // task-1359: `I` on the token screen opens/toggles the TOKEN-DETAIL HUD (identity, market, risk, snipers/bundled
   // from the wallet-intel scan); `M` on the trending screen opens/toggles the FEEDS HUD (the keyless social feed +
   // official news, newest first; ⏎ in the window opens that coin here). Both are read-only windows. `I` is unused

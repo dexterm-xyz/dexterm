@@ -687,6 +687,8 @@ export function positionRow(h: HeldPosition, tickUsd: number | null, solUsd: num
 
 /** How long a `held()` lookup is reused before re-reading the ledger (the render loop calls it per frame). */
 export const HELD_MEMO_MS = 250;
+/** task-1473 r2: how long the open-mints list is reused (a ledger read; the chip samples it every tick). */
+export const OPEN_MINTS_MEMO_MS = 1000;
 /** Minimum spacing of the token screen's automatic mark pass for a held coin missing SOL/USD or a mark. */
 export const HELD_AUTOMARK_MS = 30_000;
 
@@ -757,6 +759,17 @@ export class PositionsLive implements PositionSource {
     }
     return v;
   }
+
+  /** task-1473 r2: mints of the open paper positions (the AI-scan PnL chip), memoised OPEN_MINTS_MEMO_MS. */
+  openMints(): string[] {
+    const now = this.now();
+    if (this.openMemo && now - this.openMemo.at >= 0 && now - this.openMemo.at < OPEN_MINTS_MEMO_MS) return this.openMemo.v;
+    let v: string[] = [];
+    try { v = this.wallet.positions().filter((p) => p.tokensRaw > 0n).map((p) => p.mint); } catch { v = []; }
+    this.openMemo = { at: now, v };
+    return v;
+  }
+  private openMemo: { at: number; v: string[] } | null = null;
 
   /**
    * Mark held tokens in SOL. Prices come from DexScreener (its own fast 300 rpm bucket), not the
@@ -902,6 +915,9 @@ export class LivePositions implements PositionSource {
     return v;
   }
 
+  /** task-1473 r2: mints of the open live positions (the AI-scan PnL chip). Memoised with positions(). */
+  openMints(): string[] { return this.positions().filter((p) => p.tokensRaw > 0n).map((p) => p.mint); }
+
   /** Forget memoised reads (after a fill). */
   invalidate(): void { this.memo.clear(); this.rowsMemo = null; }
 }
@@ -920,6 +936,8 @@ export class CombinedPositions implements PositionSource {
     return p;
   }
   solUsd(): number | null { return this.paper.solUsd() ?? this.live?.solUsd() ?? null; }
+  /** task-1473 r2: every open mint, live first (the AI-scan PnL chip picks one). */
+  openMints(): string[] { return [...new Set([...(this.live?.openMints() ?? []), ...this.paper.openMints()])]; }
 }
 
 function msg(e: unknown): string {

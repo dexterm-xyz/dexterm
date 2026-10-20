@@ -63,6 +63,7 @@ keys:
   - T
   - L
   - C
+  - A
   - I
   - F
   - Z
@@ -132,6 +133,7 @@ actions:
   - open.tg
   - open.links
   - popup.chart
+  - display.chartAxis
   - popup.token
   - tape.toggle
   - scan.toggle
@@ -218,6 +220,7 @@ Keys on this screen:
   `T` — open TG
   `L` — links
   `C` — chart popup
+  `A` — chart axis mcap ⇄ price
   `I` — token popup
   `F` — flow ⇄ tape
   `Z` — AI scan

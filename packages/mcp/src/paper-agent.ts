@@ -15,7 +15,7 @@ import {
   PaperAgentDesk, PaperWallet, PaperExecutor, SharedJournal, systemClock,
   readPaperAgentRendezvous, readDeskControl, rendezvousMtimeMs, fileMtimeMs, loadMandateFromJournal,
   plansJournalPathFor, paperAgentJournalPath, withPriority,
-  type DataLayer, type PaperAgentRendezvous, type QuoteRequest,
+  type DataLayer, type PaperAgentRendezvous, type QuoteRequest, type QuoteRetryInfo,
 } from '@dexterm/data';
 import type { Mandate } from '@dexterm/data/plans';
 
@@ -61,12 +61,24 @@ async function refreshSolUsd(data: DataLayer): Promise<void> {
   } catch { /* keep the last value; it ages out */ }
 }
 
+export interface PaperDeskWiringOptions {
+  /**
+   * The data layer the desk's swap QUOTES go through (default: `data`). Capture round 3 (task-1443): the live
+   * server passes a quote-only layer with its own `jupiter` limiter and the signer's short 429 pause, so an exit
+   * quote is not parked behind the 30 s / 60 s doubling pause the agent's own READS earn on the shared bucket.
+   * Jupiter's keyless window is about 10 s. It is still the keyless swap-QUOTE: nothing built, signed or sent.
+   */
+  quoteData?: () => DataLayer;
+  /** Called before each bounded re-quote, so the spectator view shows the retry while the call is in flight. */
+  onQuoteRetry?: (info: QuoteRetryInfo) => void;
+}
+
 /**
  * Resolve the paper agent desk for this `dexterm mcp` process, or null when agent paper trading is disabled.
  * Re-reads the rendezvous (mtime-cached) so enabling/disabling in the running app is picked up; the mandate
  * and the control state are re-read inside the desk on every call, not cached across journal changes.
  */
-export async function resolvePaperAgentDesk(data: DataLayer, env: NodeJS.ProcessEnv = process.env): Promise<PaperAgentDesk | null> {
+export async function resolvePaperAgentDesk(data: DataLayer, env: NodeJS.ProcessEnv = process.env, opts: PaperDeskWiringOptions = {}): Promise<PaperAgentDesk | null> {
   const mtimeMs = rendezvousMtimeMs(env);
   if (mtimeMs === 0) { teardown(); return null; } // not enabled
   const rv = readPaperAgentRendezvous(env);
@@ -84,7 +96,8 @@ export async function resolvePaperAgentDesk(data: DataLayer, env: NodeJS.Process
     executor,
     // 'high', like the human ticket (task-1387): a paper exit must not queue behind the agent's own read polling on
     // the shared keyless `jupiter` bucket (task-1443 live run: a scale-out was refused on a 429 mid-poll).
-    quote: (req: QuoteRequest, signal?: AbortSignal) => withPriority('high', () => data.jupiterSwap.quote(req, signal)),
+    quote: (req: QuoteRequest, signal?: AbortSignal) => withPriority('high', () => (opts.quoteData?.() ?? data).jupiterSwap.quote(req, signal)),
+    ...(opts.onQuoteRetry ? { onQuoteRetry: opts.onQuoteRetry } : {}),
     solUsd: () => (sol && Date.now() - sol.at <= PAPER_SOL_USD_MAX_AGE_MS ? sol.price : null),
     control: () => readDeskControl(env),
     journal: new SharedJournal(paperAgentJournalPath(env), systemClock),

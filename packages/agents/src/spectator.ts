@@ -27,6 +27,33 @@ export interface SpectatorNav {
   side?: string;
 }
 
+/**
+ * task-1466: the app-computed numbers behind a call, so the follow view can SHOW the work (which rows a scan
+ * returned, the verdict, the PAPER ticket / fill / position) instead of a tool name. Every figure is copied from
+ * the tool's own result, never derived from agent text. Optional and local: the MCP wire is unchanged; this rides
+ * only on the 0600 spectator channel and is redacted (addresses masked) like every other field when it leaves.
+ */
+export interface SpectatorDetail {
+  /** Rows a screener/list call returned, in screen order (≤ 12). `chg` is the 1h change in percent. */
+  rows?: Array<{ mint: string; symbol: string; chg?: number | null }>;
+  /** The coin a read/nav call was about, with its price when the result carried one. */
+  coin?: { mint: string; symbol?: string | null; priceUsd?: number | null };
+  /** analyze_token: the deterministic verdict and the pre-registered rug heuristic (0..1). */
+  verdict?: { label: string; rug?: number | null };
+  /** larp_check: mechanical evidence flags found (not a verdict). */
+  larp?: { flags: number; items: string[] };
+  /** A PAPER ticket (open / size). `usd` for a buy, `fraction` for a sell. */
+  ticket?: { side: 'buy' | 'sell'; symbol: string; mint: string; usd?: number | null; fraction?: number | null };
+  /** A booked PAPER fill (confirm / close). `sol` is the signed SOL change; `qty` the token amount. */
+  fill?: { side: 'buy' | 'sell'; symbol: string; mint: string; sol: number; qty: number; priceUsd: number | null; impactPct: number | null; realizedSol: number | null };
+  /** The PAPER position after a fill (cost basis, realized; the mark is layered on by the viewer). */
+  position?: { mint: string; symbol: string; qty: number; costSol: number; realizedSol: number };
+  /** paper_pnl: the mandate caps in force (USD), as the desk replayed them. */
+  caps?: { perTradeUsd: number; totalUsd: number; maxPriceImpactPct: number | null };
+  /** A paper desk refusal's stable reason code (per-trade cap, paused, stopped, …). */
+  refusal?: string;
+}
+
 /** One observable action. Stored raw in the hub; redacted on the way to any non-local audience. */
 export interface SpectatorEvent {
   v: typeof SPECTATOR_SCHEMA;
@@ -43,6 +70,8 @@ export interface SpectatorEvent {
   dataAgeSec?: number | null;
   refusal?: string | null;
   nav?: SpectatorNav | null;
+  /** task-1466: app-computed numbers behind the call (see SpectatorDetail). */
+  detail?: SpectatorDetail | null;
   /** Marked sensitive by the producer → the summary is fully redacted in spectator/saved output. */
   sensitive?: boolean;
   /** Set by redactSpectatorEvent once a copy has been produced for a non-local audience. */
@@ -120,7 +149,54 @@ export function redactSpectatorEvent(ev: SpectatorEvent): SpectatorEvent {
     if (out.nav.highlight) out.nav.highlight = maskAddress(out.nav.highlight);
     if (out.nav.side) out.nav.side = redactString(out.nav.side);
   }
+  // task-1466: the detail carries mints and symbols; every string in it is scrubbed (addresses masked).
+  if (ev.detail) out.detail = redactDeep(ev.detail) as SpectatorDetail;
   return out;
+}
+
+const finiteOr = (x: unknown, d: number | null = null): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : d);
+// eslint-disable-next-line no-control-regex
+const UNSAFE_RE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g;
+const shortStr = (x: unknown, max: number): string => (typeof x === 'string' ? x.replace(UNSAFE_RE, '').slice(0, max) : '');
+const isMintish = (x: unknown): x is string => typeof x === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(x);
+
+/**
+ * task-1466: re-validate a detail read off the local channel (shape, types, lengths). The channel is our own
+ * server's 0600 file and token-checked, but the viewer still treats it as data: anything malformed is dropped,
+ * strings are stripped of control/bidi characters and capped, numbers must be finite. Returns null when empty.
+ */
+export function sanitizeDetail(raw: unknown): SpectatorDetail | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const out: SpectatorDetail = {};
+  if (Array.isArray(r.rows)) {
+    const rows = r.rows.slice(0, 12).flatMap((x) => {
+      const o = x as Record<string, unknown> | null;
+      return o && isMintish(o.mint) ? [{ mint: o.mint, symbol: shortStr(o.symbol, 16) || '?', chg: finiteOr(o.chg) }] : [];
+    });
+    if (rows.length) out.rows = rows;
+  }
+  const c = r.coin as Record<string, unknown> | undefined;
+  if (c && isMintish(c.mint)) out.coin = { mint: c.mint, symbol: shortStr(c.symbol, 16) || null, priceUsd: finiteOr(c.priceUsd) };
+  const v = r.verdict as Record<string, unknown> | undefined;
+  if (v && typeof v.label === 'string' && v.label) out.verdict = { label: shortStr(v.label, 18), rug: finiteOr(v.rug) };
+  const l = r.larp as Record<string, unknown> | undefined;
+  if (l && finiteOr(l.flags) !== null) out.larp = { flags: Math.max(0, Math.min(99, Math.round(l.flags as number))), items: Array.isArray(l.items) ? l.items.slice(0, 6).map((s) => shortStr(s, 60)).filter(Boolean) : [] };
+  const side = (s: unknown): 'buy' | 'sell' | null => (s === 'buy' || s === 'sell' ? s : null);
+  const tk = r.ticket as Record<string, unknown> | undefined;
+  if (tk && side(tk.side) && isMintish(tk.mint)) out.ticket = { side: side(tk.side)!, symbol: shortStr(tk.symbol, 16) || '?', mint: tk.mint, usd: finiteOr(tk.usd), fraction: finiteOr(tk.fraction) };
+  const f = r.fill as Record<string, unknown> | undefined;
+  if (f && side(f.side) && isMintish(f.mint) && finiteOr(f.sol) !== null && finiteOr(f.qty) !== null) {
+    out.fill = { side: side(f.side)!, symbol: shortStr(f.symbol, 16) || '?', mint: f.mint, sol: f.sol as number, qty: f.qty as number, priceUsd: finiteOr(f.priceUsd), impactPct: finiteOr(f.impactPct), realizedSol: finiteOr(f.realizedSol) };
+  }
+  const p = r.position as Record<string, unknown> | undefined;
+  if (p && isMintish(p.mint) && finiteOr(p.qty) !== null && finiteOr(p.costSol) !== null) {
+    out.position = { mint: p.mint, symbol: shortStr(p.symbol, 16) || '?', qty: p.qty as number, costSol: p.costSol as number, realizedSol: finiteOr(p.realizedSol, 0) as number };
+  }
+  const cp = r.caps as Record<string, unknown> | undefined;
+  if (cp && finiteOr(cp.perTradeUsd) !== null && finiteOr(cp.totalUsd) !== null) out.caps = { perTradeUsd: cp.perTradeUsd as number, totalUsd: cp.totalUsd as number, maxPriceImpactPct: finiteOr(cp.maxPriceImpactPct) };
+  if (typeof r.refusal === 'string' && r.refusal) out.refusal = shortStr(r.refusal, 40);
+  return Object.keys(out).length ? out : null;
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -385,12 +385,15 @@ function render(h: Harness, w = 176, ht = 48): string {
   return c.toPlain();
 }
 
+/** task-1472: the chart box title (FLOW has no supply here, so `FLOW/USD · price (mcap unavailable) · 1h`). */
+const isChartTitle = (l: string): boolean => /╭─ FLOW( · MCAP|\/USD)/.test(l);
+
 test('token screen, HELD coin: a POSITION row under the chart with size, value, entry, price, unrealized $/%', () => {
   const h = harness({ held: true });
   const out = render(h);
   const lines = out.split('\n');
   const title = lines.findIndex((l) => l.includes('◈ POSITION · PAPER'));
-  const chartTop = lines.findIndex((l) => l.includes('FLOW/USD · 1h'));
+  const chartTop = lines.findIndex(isChartTitle);
   assert.ok(title > chartTop, 'position panel sits below the chart');
   assert.match(lines[title], /paper ledger · SOL \$150\.00/);
   assert.match(lines[title + 1], /SIDE +SIZE +VALUE +AVG ENTRY +PRICE +UNREALIZED/);
@@ -414,11 +417,11 @@ test('token screen, NOT held: nothing extra — no position panel, chart keeps i
   const out = render(h);
   assert.doesNotMatch(out, /POSITION|LONG|UNREALIZED/);
   const lines = out.split('\n');
-  const chartTop = lines.findIndex((l) => l.includes('FLOW/USD · 1h'));
+  const chartTop = lines.findIndex(isChartTitle);
   const onchain = lines.findIndex((l) => l.includes('ON-CHAIN'));
   assert.equal(onchain - chartTop, Math.max(10, Math.floor((47 - chartTop) * 0.46)), 'same chart height as before task-1323');
   const heldOut = render(harness({ held: true })).split('\n');
-  assert.equal(heldOut.findIndex((l) => l.includes('ON-CHAIN')) - heldOut.findIndex((l) => l.includes('FLOW/USD · 1h')), Math.max(10, Math.floor((47 - chartTop - 4) * 0.46)) + 4, 'held: chart shares its height with the 4-row panel');
+  assert.equal(heldOut.findIndex((l) => l.includes('ON-CHAIN')) - heldOut.findIndex(isChartTitle), Math.max(10, Math.floor((47 - chartTop - 4) * 0.46)) + 4, 'held: chart shares its height with the 4-row panel');
 });
 
 test('token screen: BUY/SELL FLOW is the default panel; F toggles the tape in place and back', () => {

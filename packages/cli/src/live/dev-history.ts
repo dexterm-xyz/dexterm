@@ -3,7 +3,7 @@
 // series). Synchronous, local, keyless: no request is made here. Linked wallets come from the wallet-intel scan the
 // token screen already runs (the creator's funder and any linked cluster it sits in); without a scan they are unknown.
 import type { DatabaseSync } from 'node:sqlite';
-import { creatorOf, devHistoryLine, queryDevHistory, type CreatorLink, type DevHistoryReport } from '@dexterm/recorder';
+import { ageShort, creatorOf, devHistoryLine, queryDevHistory, type CreatorLink, type DevHistoryReport } from '@dexterm/recorder';
 import type { IntelAnalysis } from '@dexterm/data';
 
 export interface DevLinked {
@@ -14,7 +14,11 @@ export interface DevLinked {
   /** Other wallets in that cluster that dexterm has recorded launching coins, with their labelled rugs. */
   linkedCreators: number;
   linkedRugs: number;
+  /** When the newest of those mates' labels became known (unix ms); null = none labelled. */
+  linkedNewestT: number | null;
   source: 'wallet-intel scan' | null;
+  /** When the scan settled (unix ms); null = not given. */
+  at: number | null;
 }
 
 export interface DevEntry {
@@ -43,9 +47,10 @@ export class DevHistoryBook {
 
   /**
    * The entry for `mint` (cached for `ttlMs`). `creatorHint` is the dev wallet a source named on screen (Jupiter
-   * `dev`) for a coin the recorder has not linked yet; `intel` is the coin's settled wallet-intel scan, if any.
+   * `dev`) for a coin the recorder has not linked yet; `intel` is the coin's settled wallet-intel scan, if any, and
+   * `intelAt` when that scan settled (the linked row's age).
    */
-  forMint(mint: string, creatorHint?: string | null, intel?: IntelAnalysis | null): DevEntry {
+  forMint(mint: string, creatorHint?: string | null, intel?: IntelAnalysis | null, intelAt?: number | null): DevEntry {
     const now = this.now();
     const hit = this.cache.get(mint);
     if (hit && now - hit.at < this.ttlMs && (hit.creator || !creatorHint) && (hit.linked || !intel)) return hit;
@@ -57,7 +62,7 @@ export class DevHistoryBook {
     if (creator && db) {
       try { report = queryDevHistory(db, { creator: creator.creator, mint, asOf: now }); } catch { report = null; }
     }
-    if (creator && intel) linked = linkedFrom(intel, creator.creator, db);
+    if (creator && intel) linked = linkedFrom(intel, creator.creator, db, intelAt ?? null);
     const line = !db ? 'unknown: the history recorder is off (--no-recorder / DEXTERM_RECORDER=0)'
       : !creator ? 'unknown: no source named the creator yet'
         : report ? devHistoryLine(report) : 'unknown: dev history unreadable';
@@ -75,11 +80,11 @@ export class DevHistoryBook {
 }
 
 /** Linked wallets from a settled wallet-intel scan: the creator's funder and any multi-wallet cluster it sits in. */
-export function linkedFrom(a: IntelAnalysis, creator: string, db: DatabaseSync | null): DevLinked {
+export function linkedFrom(a: IntelAnalysis, creator: string, db: DatabaseSync | null, at: number | null = null): DevLinked {
   const h = a.holders.find((x) => x.owner === creator);
   const fundedBy = h?.funder?.address ?? a.funding[creator]?.funder ?? null;
   const c = a.clusters.find((x) => x.members.includes(creator) && x.members.length > 1) ?? null;
-  let linkedCreators = 0, linkedRugs = 0;
+  let linkedCreators = 0, linkedRugs = 0, linkedNewestT: number | null = null;
   if (c && db) {
     try {
       const others = c.members.filter((m) => m !== creator).slice(0, 50);
@@ -87,23 +92,38 @@ export function linkedFrom(a: IntelAnalysis, creator: string, db: DatabaseSync |
       for (const w of others) {
         if (Number((launched.get(w) as { n: number }).n) <= 0) continue;
         linkedCreators++;
-        linkedRugs += queryDevHistory(db, { creator: w, devExit: false }).labelled.rug;
+        const r = queryDevHistory(db, { creator: w, devExit: false });
+        linkedRugs += r.labelled.rug;
+        if (r.labelled.newestT !== null) linkedNewestT = Math.max(linkedNewestT ?? 0, r.labelled.newestT);
       }
     } catch { /* an old DB without the table: nothing linked */ }
   }
-  return { fundedBy, cluster: c ? { name: c.name, kind: c.kind, members: c.members.length, pct: c.pct } : null, linkedCreators, linkedRugs, source: h || c || a.funding[creator] ? 'wallet-intel scan' : null };
+  return { fundedBy, cluster: c ? { name: c.name, kind: c.kind, members: c.members.length, pct: c.pct } : null, linkedCreators, linkedRugs, linkedNewestT, source: h || c || a.funding[creator] ? 'wallet-intel scan' : null, at };
 }
 
-/** Rows for the token screen's DEV block: [label, value, level]. Every value names its source/sample/age or says unknown. */
-export function devRows(e: DevEntry): Array<[string, string, 'ok' | 'warn' | 'bad' | 'na']> {
+/** Short source tags for a panel cell: `rec` = dexterm's recorder, `scan` = the wallet-intel scan; creator links by feed. */
+const LINK_TAG: Record<string, string> = { 'jupiter-tokens': 'jup', pumpportal: 'pump', rugcheck: 'rc' };
+const linkTag = (src: string | null | undefined): string => (src ? LINK_TAG[src] ?? src : '?');
+const ageAt = (t: number | null | undefined, now: number): string => ageShort(t === null || t === undefined ? null : Math.max(0, Math.round((now - t) / 1000)));
+
+/**
+ * Rows for the token screen's DEV block: [label, value, level]. Every value names its source, sample and age (or
+ * says unknown): `rec` = dexterm's recorder, `scan` = the wallet-intel scan, `dev:jup` = which feed named the creator.
+ * Ages are measured from `now` (default: when the entry was read): the newest label / sighting / exit / scan behind it.
+ */
+export function devRows(e: DevEntry, now: number = e.at): Array<[string, string, 'ok' | 'warn' | 'bad' | 'na']> {
   const rows: Array<[string, string, 'ok' | 'warn' | 'bad' | 'na']> = [];
   const r = e.report;
   const rugLevel = (): 'ok' | 'warn' | 'bad' | 'na' => !r || r.labelled.n === 0 ? 'na' : r.serialRugger ? 'bad' : r.labelled.rug > 0 || (r.badRate ?? 0) >= 0.5 ? 'warn' : 'ok';
-  rows.push(['Dev rugs (recorded)', r && r.labelled.n ? `${r.labelled.rug}/${r.labelled.n} · n=${r.labelled.n}` : 'unknown', rugLevel()]);
-  rows.push(['Dev launches seen', r && r.status === 'ok' ? `${r.launches.n} prior · ${e.creator?.source === 'jupiter-tokens' ? 'jup' : e.creator?.source ?? ''}` : 'unknown', 'na']);
-  if (r && r.devExit.n) rows.push(['Dev sold its bag', `median ${Math.round(r.devExit.medianMin!)}m · n=${r.devExit.n}`, r.devExit.medianMin! <= 60 ? 'warn' : 'ok']);
+  rows.push(['Dev rugs', r && r.labelled.n ? `${r.labelled.rug}/${r.labelled.n} · n=${r.labelled.n} · rec ${ageAt(r.labelled.newestT, now)}` : 'unknown', rugLevel()]);
+  rows.push(['Dev launches', r && r.status === 'ok' ? `n=${r.launches.n} · rec ${ageAt(r.launches.newestT, now)} · dev:${linkTag(e.creator?.source)}` : 'unknown', 'na']);
+  if (r && r.devExit.n) rows.push(['Dev sold bag', `med ${Math.round(r.devExit.medianMin!)}m · n=${r.devExit.n} · rec ${ageAt(r.devExit.newestT, now)}`, r.devExit.medianMin! <= 60 ? 'warn' : 'ok']);
   const l = e.linked;
-  if (l && (l.fundedBy || l.cluster)) rows.push(['Dev linked', l.cluster ? `${l.cluster.kind} ${l.cluster.members}w${l.linkedCreators ? ` · ${l.linkedCreators} devs ${l.linkedRugs} rugs` : ''}` : `funded by ${shortAddr(l.fundedBy)}`, l.linkedRugs > 0 ? 'bad' : 'na']);
+  if (l && (l.fundedBy || l.cluster)) {
+    const scan = `scan ${ageAt(l.at, now)}`;
+    rows.push(['Dev linked', l.cluster ? `${l.cluster.kind} ${l.cluster.members}w · ${scan}` : `funded by ${shortAddr(l.fundedBy)} · ${scan}`, 'na']);
+    if (l.linkedCreators) rows.push(['Linked dev rugs', `${l.linkedRugs} · n=${l.linkedCreators} devs · rec ${ageAt(l.linkedNewestT, now)}`, l.linkedRugs > 0 ? 'bad' : 'na']);
+  }
   return rows;
 }
 

@@ -15,12 +15,12 @@
 // keeps running — we simply stop moving the screen), and kill removes the rendezvous so the server stops
 // emitting. Any user keypress during an agent move takes control, so the human and the agent never fight.
 
-import { writeFileSync, readFileSync, rmSync, mkdirSync, statSync } from 'node:fs';
+import { writeFileSync, readFileSync, rmSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
-  SpectatorHub, FollowController, SpectatorServer,
-  type AgentControls, type SpectatorEvent, type SpectatorNav, type FollowView,
+  SpectatorHub, FollowController, SpectatorServer, AgentStory, sanitizeDetail,
+  type AgentControls, type StoryView, type SpectatorEvent, type SpectatorNav, type FollowView,
 } from '@dexterm/agents';
 import { rendezvousPath, writeFollowScreen, clearFollowScreen } from '@dexterm/mcp';
 
@@ -33,6 +33,8 @@ interface IngestRecord {
   ms?: number | null;
   dataAgeSec?: number | null;
   nav?: SpectatorNav | null;
+  /** task-1466: app-computed numbers behind the call (re-validated with sanitizeDetail before use). */
+  detail?: unknown;
   ok?: boolean;
   t?: number;
   token?: string;
@@ -62,9 +64,44 @@ export interface McpFollowOptions {
    * server can answer screen_state and validate view-only nav calls against it. Omitted → nothing is published.
    */
   snapshot?: () => Record<string, unknown>;
+  /**
+   * task-1466: a JSONL file the agent's own words stream into (Claude Code `-p --output-format stream-json`, a
+   * capture brain feed `{tEpoch, ev}`, or plain `{"thought": "…"}` lines). Tailed for the HUD's thought ribbon only:
+   * display, scrubbed and clipped by the story; nothing in it is parsed for actions or fed back anywhere.
+   */
+  thoughtsFile?: string;
   /** Also start the read-only, loopback, token-gated spectator stream (redacted). Default off. */
   stream?: boolean;
   now?: () => number;
+}
+
+/**
+ * task-1466: the agent's own words in one JSONL line of a thoughts feed. Understands Claude Code stream-json
+ * (`assistant` messages: text and thinking blocks), the capture harness's brain feed (`{tEpoch, ev}` wrapping one),
+ * and plain `{"thought": "…"}` / `{"text": "…"}` lines. Anything else yields nothing. Text only; never acted on.
+ */
+export function thoughtsOf(line: string): Array<{ text: string; t: number | null; demo?: boolean }> {
+  const s = line.trim();
+  if (!s || s[0] !== '{' || s.length > 200_000) return [];
+  let o: Record<string, unknown>;
+  try { o = JSON.parse(s) as Record<string, unknown>; } catch { return []; }
+  let t: number | null = typeof o.tEpoch === 'number' && Number.isFinite(o.tEpoch) ? o.tEpoch : null;
+  if (o.ev && typeof o.ev === 'object') o = o.ev as Record<string, unknown>;
+  if (t === null && typeof o.t === 'number' && Number.isFinite(o.t) && o.t > 1e12) t = o.t;
+  // task-1473: a demo / stand-in feed marks its scripted lines `"demo": true` (the brain view tags them "demo text")
+  if (typeof o.thought === 'string') return [{ text: o.thought, t, ...(o.demo === true ? { demo: true } : {}) }];
+  if (o.type === 'assistant' && o.message && typeof o.message === 'object') {
+    const content = (o.message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return [];
+    const out: Array<{ text: string; t: number | null }> = [];
+    for (const b of content as Array<Record<string, unknown>>) {
+      if (b?.type === 'text' && typeof b.text === 'string') out.push({ text: b.text, t });
+      else if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) out.push({ text: b.thinking, t });
+    }
+    return out;
+  }
+  if (typeof o.text === 'string' && !o.type) return [{ text: o.text, t }];
+  return [];
 }
 
 function navLabel(agent: string, nav: SpectatorNav): string {
@@ -87,6 +124,8 @@ function navLabel(agent: string, nav: SpectatorNav): string {
 export class McpFollowSession {
   readonly hub: SpectatorHub;
   readonly follow: FollowController;
+  /** task-1466: the story the spectator v2 HUD draws (phase rail, timeline, thoughts, PAPER trade arc). */
+  readonly story: AgentStory;
   private readonly opts: McpFollowOptions;
   private readonly rvPath: string;
   private readonly channelPath: string;
@@ -94,6 +133,7 @@ export class McpFollowSession {
   private readonly agentLabel: string;
   private currentAgent: string;
   private offset = 0;
+  private thoughtsOffset = 0;
   private timer: NodeJS.Timeout | null = null;
   private stream: SpectatorServer | null = null;
   private armed = false;
@@ -114,7 +154,8 @@ export class McpFollowSession {
       kickAgent: () => { this.disarm(); return 1; },
     };
     this.follow = new FollowController({ controls, activityCap: Math.max(1, opts.activityCap ?? 200) });
-    this.hub.on((ev) => this.follow.apply(ev));
+    this.story = new AgentStory(this.agentLabel);
+    this.hub.on((ev) => { this.follow.apply(ev); this.story.apply(ev); });
   }
 
   /** Arm the rendezvous (so a `dexterm mcp` server starts emitting) and begin tailing. Idempotent. */
@@ -162,6 +203,38 @@ export class McpFollowSession {
 
   /** Read and fold any records appended since the last pump. Public so tests can drive it without timers. */
   pump(): void {
+    this.pumpThoughts();
+    this.pumpChannel();
+  }
+
+  /** task-1466: new lines of the agent's own words → the story's thought ribbon (bounded: ≤ 256 KB per pump). */
+  private pumpThoughts(): void {
+    const file = this.opts.thoughtsFile;
+    if (!file) return;
+    let text: string;
+    try {
+      const st = statSync(file);
+      if (st.size < this.thoughtsOffset) this.thoughtsOffset = 0;
+      if (st.size === this.thoughtsOffset) return;
+      if (st.size - this.thoughtsOffset > 256 * 1024) this.thoughtsOffset = st.size - 256 * 1024; // skip a backlog, keep the tail
+      const fd = openSync(file, 'r');
+      try {
+        const buf = Buffer.alloc(st.size - this.thoughtsOffset);
+        readSync(fd, buf, 0, buf.length, this.thoughtsOffset);
+        text = buf.toString('utf8');
+      } finally { closeSync(fd); }
+    } catch { return; }
+    const nl = text.lastIndexOf('\n');
+    if (nl < 0) return;
+    this.thoughtsOffset += Buffer.byteLength(text.slice(0, nl + 1), 'utf8');
+    const now = (this.opts.now ?? Date.now)();
+    for (const line of text.slice(0, nl).split('\n')) {
+      for (const th of thoughtsOf(line)) this.story.thought(th.text, th.t ?? now, 'agent', th.demo === true);
+    }
+    try { this.opts.onEvent?.(); } catch { /* ignore */ }
+  }
+
+  private pumpChannel(): void {
     let text: string;
     try {
       const st = statSync(this.channelPath);
@@ -197,6 +270,7 @@ export class McpFollowSession {
       ms: rec.ms ?? null,
       dataAgeSec: rec.dataAgeSec ?? null,
       nav: rec.nav ?? null,
+      detail: sanitizeDetail(rec.detail),
       ok: rec.ok ?? true,
       t: typeof rec.t === 'number' ? rec.t : undefined,
     });
@@ -227,7 +301,11 @@ export class McpFollowSession {
   takeOver(): string { const l = this.follow.takeOver(this.currentAgent); this.paused = false; this.control('takeover'); this.opts.onStatus?.(l); return l; }
   resume(): string { const l = this.follow.resume(this.currentAgent); this.paused = false; this.control('running'); this.opts.onStatus?.(l); return l; }
   kill(): string { const l = this.follow.kill(this.currentAgent); this.paused = false; this.control('stopped'); this.opts.onStatus?.(l); return l; }
-  private control(state: 'running' | 'paused' | 'takeover' | 'stopped'): void { try { this.opts.onControl?.(state); } catch { /* never breaks the key loop */ } }
+  private control(state: 'running' | 'paused' | 'takeover' | 'stopped'): void {
+    const now = (this.opts.now ?? Date.now)();
+    this.story.setControl(state === 'stopped' ? 'killed' : state, now);
+    try { this.opts.onControl?.(state); } catch { /* never breaks the key loop */ }
+  }
 
   /** Any physical keypress while the agent is driving: the human takes over (no fight over the screen). */
   userKey(): void { if (this.follow.controlState === 'agent') this.takeOver(); }
@@ -237,6 +315,8 @@ export class McpFollowSession {
   get screenModel() { return this.follow.screenModel; }
   get streamPort(): number { return this.stream?.port ?? 0; }
   view(): FollowView { return this.follow.view(); }
+  /** task-1466: the story at `now` for the HUD. */
+  storyView(now = (this.opts.now ?? Date.now)()): StoryView { return this.story.view(now); }
 
   /** Tear down: stop the timer, remove the rendezvous, close the stream. Safe to call more than once. */
   async stop(): Promise<void> {

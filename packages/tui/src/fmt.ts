@@ -100,6 +100,50 @@ export function fmtMcap(n: number | null | undefined): string {
   return bare.startsWith('-') ? `-$${bare.slice(1)}` : `$${bare}`;
 }
 
+/**
+ * task-1472: THE chart number formatter (Y axis, crosshair/legend, last-value tag, volume): compact with a LOWERCASE k
+ * for thousands, then M, B, T. One decimal while the value is below 10 of its unit, none after, trailing `.0` dropped:
+ * 4930 → 4.9k, 42100 → 42k, 487000 → 487k, 1.23e6 → 1.2M, 4.8e7 → 48M, 1.3e9 → 1.3B, 999 → 999. The unit is promoted
+ * AFTER rounding, so 999 900 reads 1M (never 1000k). Below 1 it is the subscript price form (0.0000123 → 0.0₄123):
+ * never scientific notation, never a long run of zeros. `extra` (0..3) adds decimals when an axis needs them to keep
+ * two neighbouring ticks apart (see compactDecimalsFor). No currency symbol; fmtCompactUsd adds the `$`.
+ */
+export function fmtCompact(n: number | null | undefined, extra = 0): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  if (n === 0) return '0';
+  const sign = n < 0 ? '-' : '';
+  const a = Math.abs(n);
+  if (a < 1) return sign + trimZeros(fmtPriceBare(a));
+  const units = ['', 'k', 'M', 'B', 'T'];
+  const x = Math.max(0, Math.min(3, Math.floor(extra)));
+  const round = (q: number): number => Number(q.toFixed((q < 10 ? 1 : 0) + x));
+  let u = 0, v = a;
+  while (u < units.length - 1 && v >= 1000) { v /= 1000; u++; }
+  let r = round(v);
+  if (r >= 1000 && u < units.length - 1) { u++; r = round(r / 1000); }
+  return `${sign}${trimZeros(r.toFixed((r < 10 ? 1 : 0) + x))}${units[u]}`;
+}
+
+/** USD form of fmtCompact: `$4.9k`, `$48M`, `-$1.2k`. */
+export function fmtCompactUsd(n: number | null | undefined, extra = 0): string {
+  const bare = fmtCompact(n, extra);
+  if (bare === '—') return bare;
+  return bare.startsWith('-') ? `-$${bare.slice(1)}` : `$${bare}`;
+}
+
+/**
+ * task-1472: the extra decimals (0..3) fmtCompact needs so that axis ticks `step` apart around `around` never print
+ * the same label (a 48.1M–48.6M range would otherwise read 48M on every tick). 0 for a normal memecoin range.
+ */
+export function compactDecimalsFor(around: number, step: number): number {
+  if (!Number.isFinite(around) || !Number.isFinite(step) || step <= 0 || Math.abs(around) < 1) return 0;
+  for (let x = 0; x < 3; x++) {
+    const a = fmtCompact(around, x);
+    if (a !== fmtCompact(around + step, x) && a !== fmtCompact(around - step, x)) return x;
+  }
+  return 3;
+}
+
 export function fmtPct(n: number | null | undefined, { sign = true, digits = 1 }: { sign?: boolean; digits?: number } = {}): string {
   if (n == null || Number.isNaN(n)) return '—';
   const a = Math.abs(n);

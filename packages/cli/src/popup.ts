@@ -9,14 +9,15 @@
 // changed, otherwise just the last two bars ("tail"), so a live tick costs the page one `series.update`.
 // When the coin is held (task-1323 PositionSource) the VM carries the position row + entry/stop/target levels
 // and the fills of the current position from the paper ledger. Read-only: nothing here can trade.
-import { createPopupManager, loadConfig, nativeShellAvailable, TerminalDock, CHART_INTERVALS, type DockPlacement, type PopupConfig, type PopupManager, type PopupManagerOptions, type ChartVM, type TokenDetailVM, type ThemeTokens, type ChartPrefs, type ChartPosition, type ChartFill, type PositionCell, type ChartIndicator, type ServerEvent, type BubbleVM, type NarrativeBoardVM, type PlansVM, type FeedVM, type WidgetPage, type WidgetTopic, type WidgetPayload } from '@dexterm/popup';
+import { createPopupManager, loadConfig, nativeShellAvailable, TerminalDock, CHART_INTERVALS, type DockPlacement, type PopupConfig, type PopupManager, type PopupManagerOptions, type ChartVM, type ChartChip, type TokenDetailVM, type ThemeTokens, type ChartPrefs, type ChartPosition, type ChartFill, type PositionCell, type ChartIndicator, type ServerEvent, type BubbleVM, type NarrativeBoardVM, type PlansVM, type FeedVM, type WidgetPage, type WidgetTopic, type WidgetPayload } from '@dexterm/popup';
 import type { Candle, CandleInterval } from '@dexterm/data';
 import type { Theme } from '@dexterm/tui';
 import { fmtPrice, fmtNum } from '@dexterm/tui';
 import type { TokenView } from './live/token.ts';
 import { positionRow, type HeldPosition, type HeldRow, type PositionSource } from './live/trade.ts';
 import { signedUsd, signedPctOf, fmtUsdFine, sol as fmtSol, signedSol } from './screens/positions.ts';
-import { supplyRatio, positionPriceCells, type PriceMode } from './display.ts';
+import { supplyRatio, positionPriceCells, type PriceMode, type ChartAxis } from './display.ts';
+import { chipSegments, type PnlChipVM } from './screens/pnl-chip.ts';
 
 /** The subset of the popup controller the interactive loop (and AppState) depends on. */
 export interface PopupController {
@@ -256,6 +257,18 @@ export interface ChartSource {
   imagePath?(view: TokenView): string | null;
   /** task-1366: the terminal's price display mode right now (`$` toggles it); absent = price. */
   priceMode?(): PriceMode;
+  /** task-1472: the chart Y axis (display.chartAxis, default mcap); when present the popup follows it, not priceMode. */
+  chartAxis?(): ChartAxis;
+  /** task-1472: the popup's MCAP | PRICE control asked for an axis: set + persist it (display only). */
+  setChartAxis?(axis: ChartAxis): void;
+  /** task-1473 r2: the app's PnL chip right now (state.ts pnlChipFor), or null. */
+  pnlChip?(): PnlChipVM | null;
+}
+
+/** task-1473 r2: the chip as the chart page draws it (same segments as the terminal). */
+export function chartChipFrom(m: PnlChipVM | null): ChartChip | null {
+  if (!m) return null;
+  return { kind: m.kind, symbol: m.symbol, tone: m.pnlPct === null ? 'muted' : m.pnlPct >= 0 ? 'up' : 'down', newPeak: m.newPeak, segments: chipSegments(m) };
 }
 
 /** What TokenPopups needs from the dock (TerminalDock in the app; a fake in tests). */
@@ -500,6 +513,12 @@ export class TokenPopups implements PopupController {
       }
       case 'chart.style': this.prefs = { ...this.prefs, style: p.style as ChartPrefs['style'] }; return;
       case 'chart.scale': this.prefs = { ...this.prefs, scale: p.scale as ChartPrefs['scale'] }; return;
+      case 'chart.axis': { // task-1472: a display preference the terminal saves; nothing else
+        if (p.axis !== 'mcap' && p.axis !== 'price') return;
+        this.source?.setChartAxis?.(p.axis);
+        if (this.lastView) this.push(this.lastView);
+        return;
+      }
       case 'chart.painted': {
         const ms = Number(p.ms);
         if (p.kind === 'first' && this.metrics.openedAt !== null && this.metrics.openToFirstPaintMs === null) this.metrics.openToFirstPaintMs = this.now() - this.metrics.openedAt;
@@ -562,8 +581,9 @@ export class TokenPopups implements PopupController {
       prefs: this.prefs,
       now: this.now(),
       image: src.imagePath?.(view) ?? null,
-      priceMode: src.priceMode?.() ?? 'price',
+      priceMode: src.chartAxis?.() ?? src.priceMode?.() ?? 'price', // task-1472: the chart axis drives the popup
     });
+    vm.chip = chartChipFrom(src.pnlChip?.() ?? null); // task-1473 r2
     const key = vm.seriesKey ?? null;
     const n = vm.candles.length;
     const canTail = !full && this.ready && key !== null && key === this.lastKey && this.lastLen > 0 && n >= this.lastLen && n <= this.lastLen + 1;

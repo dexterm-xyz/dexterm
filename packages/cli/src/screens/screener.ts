@@ -160,6 +160,7 @@ export function renderScreener(c: Canvas, state: AppState): void {
     : null;
   table(c, box.x + 1, box.y, box.w - 2, box.h, {
     columns: screenerColumns(c, bp, sc.gates, state.larpByMint ?? null, icon, mode), rows, selected: sel, scroll: Math.max(0, scroll), sortKey: sc.sort.key, sortDir: sc.sort.dir, bg: box.bg,
+    rowKey: (r) => r.mint, // task-1466: the agent HUD finds the rows it scanned
   });
   if (rows.length === 0) emptyState(c, box, sc);
   if (sideW) {

@@ -70,7 +70,7 @@ export function renderNewPairs(c: Canvas, state: AppState): void {
       if (!r.flags.length) cv.text(x, y, '✓ clean', { fg: mix(bg, t.up, 0.7), bg });
     } },
   ];
-  table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: cols, rows: pairs, selected: sel, scroll: 0, bg: box.bg });
+  table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: cols, rows: pairs, selected: sel, scroll: 0, bg: box.bg, rowKey: (r) => r.mint });
   if (sideW) {
     c.rainZone(tableW, top, 1, bottom - top, 1);
     pairSpotlight(c, c.w - sideW, top, sideW, bottom - top, pairs[sel], priceModeOf(state));

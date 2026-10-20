@@ -48,3 +48,12 @@
 /* LWC attribution logo: the library injects this exact rule too (allowed by CSP hash); repeated here so the
    logo stays positioned even if a future build changes its inline style text. */
 a#tv-attr-logo { position: absolute; left: 10px; bottom: 10px; height: 19px; width: 35px; margin: 0; padding: 0; border: 0; z-index: 3; }
+/* task-1473 r2: the persistent POSITION PnL chip (the held coin, which need not be the charted coin). Display only. */
+.pnlchip { display: flex; flex-wrap: nowrap; gap: 0; padding: 2px 10px; font-size: 11px; white-space: nowrap; overflow: hidden; border-bottom: 1px solid var(--border); background: rgba(255,45,240,.07); color: var(--muted); }
+.pnlchip .seg + .seg::before { content: ' │ '; color: var(--border); }
+.pnlchip .head { color: var(--pump); font-weight: 700; }
+.pnlchip .pnl { font-weight: 700; }
+.pnlchip .pnl.up, .pnlchip .peak.up { color: var(--up); } .pnlchip .pnl.down, .pnlchip .peak.down { color: var(--down); }
+.pnlchip .dd { color: var(--warn); }
+.pnlchip .pnl.flash { background: var(--up); color: var(--bg, #000); padding: 0 3px; border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) { .pnlchip .pnl.flash { background: none; color: var(--up); padding: 0; } }

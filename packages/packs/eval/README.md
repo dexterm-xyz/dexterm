@@ -92,3 +92,22 @@ and a price label cannot see the freeze or honeypot risk the rule exists for, so
   human labelled a coin, and chain-verified labels are not in this set.
 - **Small grades.** The tuned LARP grade has 14 test coins; its rate is not reported.
 - No accuracy or profit claim follows from any of this. A clean grade is not "safe".
+
+## LARP score (task-1471)
+
+`larp_check` returns a 0-100 LARP score: the sum of named flags, each with its points (`larp_score.flags`), a
+low (< 25) / medium (25-49) / high (50+) band, and a `missing` list that widens the range instead of lowering
+the score. `larp-score-backtest.json` / `.txt` is the report; re-run with `dexterm backtest --subject larp-score`.
+
+- **What could be fitted.** Only the link-shape flags: this eval set is the only point-in-time evidence. Points
+  are `clamp(round(8 × ln odds ratio), 0, 12)` on the TRAIN split for flags on ≥ 20 train coins (no Telegram 12,
+  no X 10, no website 9, X link not an account 5, social page as the website 1; domain-name match and cheap TLD
+  came out at 0). Launchpad / link-hub / free-host sites were too rare (3-6 coins) and keep prior points.
+- **Held-out TEST split (328 coins, 18.6 % bad):** AUROC 0.691 (train 0.727). Low band 27/218 went bad
+  (12.4 % [9-17]); medium 34/110 (30.9 % [23-40]); high 0 coins: link shape alone tops out at 31, below the high
+  band by design. A medium-or-higher score caught 55.7 % of the coins that went bad.
+- **Priors, not fitted:** the website page, domain, GitHub and X-account points. Those facts were not captured
+  at t0; looking them up now leaks the outcome (dead coins' sites and X accounts disappear), and the keyless X
+  sources' robots.txt rule out bulk-crawling them for a backfill. They are labelled `prior` in every result.
+- The score is agreement with a price outcome on one machine's few days of history, not a measure of whether a
+  product is real, and a low score is not a safety check.

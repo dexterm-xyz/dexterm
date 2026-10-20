@@ -52,7 +52,7 @@ test('$ toggles price ⇄ mcap, persists display.priceMode through the journal, 
   assert.equal(priceModeOf(state), 'price');
   keys(state, '$');
   assert.equal(state.priceMode, 'mcap');
-  assert.match(state.pendingToast ?? '', /MARKET CAP .*mcap \(current supply\).*saved/);
+  assert.match(state.pendingToast ?? '', /MARKET CAP .*saved/);
   assert.equal(JSON.parse(readFileSync(configPath(home), 'utf8')).display.priceMode, 'mcap');
   assert.equal(readJournal(home).at(-1)?.actor, 'user');
   assert.equal(configPriceMode(initCustom({ DEXTERM_HOME: home }).config), 'mcap');
@@ -108,6 +108,7 @@ test('dexterm display shows and sets the saved mode; a bad mode exits 2', () => 
 const frame = (screen: ScreenKey, mode: 'price' | 'mcap', mutate?: (s: ReturnType<typeof makeFixtureState>) => void): string[] => {
   const s = makeFixtureState({ screen, calm: true });
   s.priceMode = mode;
+  s.chartAxis = mode; // task-1472: the chart axis is its own setting; these tests drive both together
   mutate?.(s);
   return renderFrame(s, 176, 48).toPlain().split('\n');
 };
@@ -175,7 +176,7 @@ test('token screen mcap mode: header leads with mcap (price beside it), the char
   assert.ok(pl.some((l) => /^ \$0\.1624  5m/.test(l)));
   assert.ok(pl.some((l) => /SIGMA\/SOL · 1h/.test(l)) && pl.some((l) => /0\.20056 │/.test(l)));
   assert.ok(ml.some((l) => /^ \$162M \(\$0\.1624\)  5m/.test(l)), 'header');
-  assert.ok(ml.some((l) => /SIGMA mcap \(current supply\) · 1h/.test(l)), 'chart title');
+  assert.ok(ml.some((l) => /SIGMA · MCAP \(current supply\) · 1h/.test(l)), 'chart title');
   assert.ok(ml.some((l) => /\s201M │/.test(l)) && ml.some((l) => /\s162M │/.test(l)), 'axis + last-value tag in K/M/B');
   assert.ok(!ml.some((l) => /0\.20056/.test(l)), 'no price labels on the mcap axis');
   // same data underneath: the candles are drawn identically, only the axis labels change
@@ -185,7 +186,7 @@ test('token screen mcap mode: header leads with mcap (price beside it), the char
 test('token screen mcap mode without a supply: the price stays, the title says supply unknown, the axis stays prices', () => {
   const ml = frame('token', 'mcap', (s) => { (s.token as { mcap: number | null }).mcap = null; });
   assert.ok(ml.some((l) => /^ \$0\.1624  5m/.test(l)), 'header falls back to the price');
-  assert.ok(ml.some((l) => /SIGMA\/SOL · supply unknown · showing price · 1h/.test(l)), 'title says why');
+  assert.ok(ml.some((l) => /SIGMA\/SOL · price \(mcap unavailable\) · 1h/.test(l)), 'title says why');
   assert.ok(ml.some((l) => /0\.20056 │/.test(l)), 'price axis');
 });
 

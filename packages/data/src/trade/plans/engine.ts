@@ -253,6 +253,7 @@ export class PlanEngine {
    */
   authorizeCopy(mandateId: string, proof: GestureProof, wallet: string) {
     if (!this.gate.handsFreeAllowed()) throw new PolicyRefusal('gate-on', 'copy automation needs the less-safe opt-in');
+    if (this.mandates.get(mandateId)?.m.paperOnly) throw new PolicyRefusal('paper-only-mandate', 'a paper-only mandate is for the agent paper desk; copy automation cannot use it');
     this.armMandate(mandateId, proof);
     return (input: PlanInput, supply: number, ref: string) => {
       const check = () => {
@@ -283,6 +284,8 @@ export class PlanEngine {
     const tier = gestureTier(proof!.gesture);
     const x = this.mandates.get(mandateId); if (!x) refuse('unknown-mandate', 'no such mandate');
     const alive = mandateAlive(x!.m, this.clock.now()); if (!alive.ok) refuse(alive.reason, 'mandate is not alive');
+    // task-1469: a paper-only mandate (PAPER_HARD ceilings) feeds the agent paper desk only; no plan arms into it.
+    if (x!.m.paperOnly) refuse('paper-only-mandate', 'a paper-only mandate is for the agent paper desk; plans cannot arm into it');
     if (TIERS[tier].rank > TIERS[x!.m.maxTier].rank) refuse('tier-not-allowed', `this mandate accepts up to ${x!.m.maxTier}; ${tier} is weaker`);
     const v = this.admit(r, x!, tier); if (!v.ok) refuse(v.reason!, v.message!);
     this.#consume(proof!);
@@ -483,6 +486,7 @@ export class PlanEngine {
     const no = (reason: string, message: string, transient = false): PolicyVerdict => ({ ok: false, reason, message, transient });
     if (this.panicked) return no('panicked', 'panic engaged');
     const alive = mandateAlive(m, now); if (!alive.ok) return no(alive.reason, 'mandate not alive');
+    if (m.paperOnly) return no('paper-only-mandate', 'a paper-only mandate never fires a plan');
     if (now > p.expiresAt) return no('plan-expired', 'plan expired');
     if (!m.allowed.actions.includes(side)) return no('action-not-allowed', `${side} not allowed`);
     // task-1363: a live executor carries the SIGNER's own refusal reason (caps, policy, no fast wallet…) so the

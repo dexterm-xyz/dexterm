@@ -84,6 +84,7 @@ test('queryDevHistory: counts with sample size + age, longest known label, dev-e
   assert.equal(r.devExit.within60m, 1);
   assert.equal(r.devExit.medianMin, (30 + 180) / 2);
   assert.ok(r.labelled.ageSec !== null && r.launches.ageSec !== null);
+  assert.ok(r.devExit.newestT !== null && r.devExit.ageSec !== null && r.devExit.ageSec >= 0, 'the exit timing carries its age too');
   assert.equal(r.source.includes('keyless'), true);
   assert.match(devHistoryLine(r), /^rugged 2 of 4 labelled prior launches \(\+1 dead\) · 5 recorded · labels \d+[mhd] ago$/);
 });

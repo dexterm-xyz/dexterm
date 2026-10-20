@@ -48,7 +48,7 @@ export interface DevHistoryReport {
   /** (rug + dead) / labelled: the backtest harness's "bad" outcome. */
   badRate: number | null;
   /** How fast the dev sold its own bag on prior launches (recorded dev_pct series). */
-  devExit: { n: number; medianMin: number | null; within60m: number };
+  devExit: { n: number; medianMin: number | null; within60m: number; newestT: number | null; ageSec: number | null };
   /** Prior rugs >= SERIAL_RUGGER_MIN. */
   serialRugger: boolean;
   /** Newest prior launches (≤ 10). */
@@ -89,7 +89,7 @@ export function queryDevHistory(db: DatabaseSync, q: DevHistoryQuery): DevHistor
     creator: q.creator, status: 'unknown', asOf, source: DEV_HISTORY_SOURCE,
     launches: { n: 0, newestT: null, ageSec: null },
     labelled: { n: 0, rug: 0, dead: 0, fade: 0, flat: 0, runner: 0, horizon: '72h preferred', tier: 'keyless-proxy', newestT: null, ageSec: null },
-    rugRate: null, badRate: null, devExit: { n: 0, medianMin: null, within60m: 0 }, serialRugger: false, recent: [],
+    rugRate: null, badRate: null, devExit: { n: 0, medianMin: null, within60m: 0, newestT: null, ageSec: null }, serialRugger: false, recent: [],
   };
   let links: Array<{ mint: string; first_t: number; created_at: number | null }>;
   try {
@@ -103,6 +103,7 @@ export function queryDevHistory(db: DatabaseSync, q: DevHistoryQuery): DevHistor
   const counts = { rug: 0, dead: 0, fade: 0, flat: 0, runner: 0 };
   let labelledN = 0, labelledNewest: number | null = null;
   const exits: number[] = [];
+  let exitNewest: number | null = null;
   const launches: DevLaunch[] = [];
   for (const l of links) {
     const firstT = Number(l.first_t);
@@ -134,6 +135,7 @@ export function queryDevHistory(db: DatabaseSync, q: DevHistoryQuery): DevHistor
           const from = createdAt ?? Number(series[held].t);
           devExitMin = Math.max(0, (Number(out.t) - from) / 60_000);
           exits.push(devExitMin);
+          exitNewest = Math.max(exitNewest ?? 0, Number(out.t));
         }
       }
     }
@@ -150,13 +152,15 @@ export function queryDevHistory(db: DatabaseSync, q: DevHistoryQuery): DevHistor
     labelled: { ...empty.labelled, n: labelledN, ...counts, newestT: labelledNewest, ageSec: labelledNewest === null ? null : Math.max(0, Math.round((asOf - labelledNewest) / 1000)) },
     rugRate: labelledN ? counts.rug / labelledN : null,
     badRate: labelledN ? (counts.rug + counts.dead) / labelledN : null,
-    devExit: { n: exits.length, medianMin: median(exits), within60m: exits.filter((m) => m <= 60).length },
+    devExit: { n: exits.length, medianMin: median(exits), within60m: exits.filter((m) => m <= 60).length, newestT: exitNewest, ageSec: exitNewest === null ? null : Math.max(0, Math.round((asOf - exitNewest) / 1000)) },
     serialRugger: counts.rug >= SERIAL_RUGGER_MIN,
     recent: launches,
   };
 }
 
-const ago = (sec: number | null): string => sec === null ? 'age unknown' : sec < 3600 ? `${Math.max(1, Math.round(sec / 60))}m ago` : sec < 172800 ? `${Math.round(sec / 3600)}h ago` : `${Math.round(sec / 86400)}d ago`;
+/** Compact age for a panel cell: `5m`, `3h`, `40d`; `age ?` when unknown. */
+export const ageShort = (sec: number | null): string => sec === null ? 'age ?' : sec < 3600 ? `${Math.max(1, Math.round(sec / 60))}m` : sec < 172800 ? `${Math.round(sec / 3600)}h` : `${Math.round(sec / 86400)}d`;
+const ago = (sec: number | null): string => sec === null ? 'age unknown' : `${ageShort(sec)} ago`;
 
 /**
  * The one-line summary every surface shows (DEV panel, rug-signal row, MCP note): counts with the sample size and

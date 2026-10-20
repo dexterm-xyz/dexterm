@@ -26,6 +26,21 @@ export interface McpSpectatorRecord {
   dataAgeSec: number | null;
   nav: { screen?: string; mint?: string; feed?: string; filter?: string; highlight?: string; side?: string } | null;
   ok: boolean;
+  /**
+   * task-1466: the app-computed numbers behind the call (rows scanned, verdict, PAPER ticket / fill / position).
+   * Mirrors @dexterm/agents SpectatorDetail; the viewer re-validates it with sanitizeDetail.
+   */
+  detail?: {
+    rows?: Array<{ mint: string; symbol: string; chg?: number | null }>;
+    coin?: { mint: string; symbol?: string | null; priceUsd?: number | null };
+    verdict?: { label: string; rug?: number | null };
+    larp?: { flags: number; items: string[] };
+    ticket?: { side: 'buy' | 'sell'; symbol: string; mint: string; usd?: number | null; fraction?: number | null };
+    fill?: { side: 'buy' | 'sell'; symbol: string; mint: string; sol: number; qty: number; priceUsd: number | null; impactPct: number | null; realizedSol: number | null };
+    position?: { mint: string; symbol: string; qty: number; costSol: number; realizedSol: number };
+    caps?: { perTradeUsd: number; totalUsd: number; maxPriceImpactPct: number | null };
+    refusal?: string;
+  } | null;
   /** The channel token, so the TUI tailing the file can confirm the writer (never printed). */
   token?: string;
 }
@@ -100,8 +115,80 @@ export function recordForToolCall(opts: { seq: number; agent: string; tool: stri
     agent: opts.agent, transport: 'mcp', tool: opts.tool,
     summary: isErr ? `error: ${String(opts.result.error).slice(0, 80)}` : paperSummary(opts.tool, opts.args, opts.result) ?? `${opts.tool}${shortMint(opts.args)}`,
     ms: opts.ms, dataAgeSec: isErr ? null : maxAgeSec(opts.result), nav, ok: !isErr,
+    ...(() => { const d = detailFor(opts.tool, opts.args, opts.result); return d ? { detail: d } : {}; })(),
     ...(opts.token ? { token: opts.token } : {}),
   };
+}
+
+const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+/** A firewalled field's inner text (`<untrusted …>X</untrusted>` → X; the inner text is already scrubbed upstream). */
+const unwrap = (x: string): string => x.replace(/^<untrusted\b[^>]*>([\s\S]*?)<\/untrusted>$/, '$1');
+const str = (x: unknown, max = 16): string | null => (typeof x === 'string' && x ? unwrap(x).slice(0, max) || null : null);
+const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const mintOf = (x: unknown): string | null => (typeof x === 'string' && MINT_RE.test(x) ? x : null);
+
+/**
+ * task-1466: the app-computed numbers behind one call, for the follow view (SpectatorDetail in @dexterm/agents).
+ * Copied from the tool's OWN result (a screener page, a verdict, a PAPER ticket / fill / position, the caps the
+ * desk replayed); agent-supplied args only name the coin. null when the call has nothing worth showing.
+ */
+export function detailFor(tool: string, args: Record<string, unknown>, result: Record<string, unknown>): McpSpectatorRecord['detail'] {
+  const d: NonNullable<McpSpectatorRecord['detail']> = {};
+  if (typeof result.error === 'string') {
+    if (tool.startsWith('paper_') && typeof result.reason === 'string') d.refusal = result.reason.slice(0, 40);
+    return Object.keys(d).length ? d : null;
+  }
+  if (tool === 'screener_query' && Array.isArray(result.rows)) {
+    d.rows = (result.rows as Array<Record<string, unknown>>).slice(0, 12).flatMap((r) => {
+      const mint = mintOf(r.mint); if (!mint) return [];
+      const pc = (r.priceChange ?? {}) as Record<string, unknown>;
+      return [{ mint, symbol: str(r.symbol) ?? '?', chg: num(pc.h1) }];
+    });
+  }
+  if (tool === 'screen_state' && Array.isArray(result.visible)) {
+    d.rows = (result.visible as Array<Record<string, unknown>>).slice(0, 12).flatMap((r) => {
+      const mint = mintOf(r.mint); return mint ? [{ mint, symbol: str(r.symbol) ?? '?', chg: num(r.chg1h) }] : [];
+    });
+  }
+  if (tool === 'get_token') {
+    const tk = (result.token ?? {}) as Record<string, unknown>;
+    const pair = (result.pair ?? {}) as Record<string, unknown>;
+    const mint = mintOf(tk.mint) ?? mintOf(args.mint);
+    if (mint) d.coin = { mint, symbol: str(tk.symbol), priceUsd: num(pair.priceUsd) };
+  } else if (tool === 'analyze_token') {
+    const mint = mintOf(result.mint) ?? mintOf(args.mint);
+    if (mint) d.coin = { mint, symbol: str(result.symbol) };
+    const label = str(result.deterministic_verdict, 18);
+    if (label) d.verdict = { label, rug: num(result.rug_probability) };
+  } else if (tool === 'larp_check') {
+    const mint = mintOf(result.mint) ?? mintOf(args.mint);
+    if (mint) d.coin = { mint, symbol: str(result.symbol) };
+    const flags = Array.isArray(result.flags) ? (result.flags as unknown[]).filter((f): f is string => typeof f === 'string') : [];
+    d.larp = { flags: flags.length, items: flags.slice(0, 6).map((f) => f.slice(0, 60)) };
+  } else if (['open_token', 'get_trades', 'get_candles', 'get_holders', 'rugcheck', 'get_dev_history', 'dev_history', 'get_dossier'].includes(tool)) {
+    const mint = mintOf(args.mint);
+    if (mint) d.coin = { mint, symbol: str(args.symbol) };
+  }
+  if (tool === 'paper_open_ticket' || tool === 'paper_size_ticket') {
+    const t = (result.ticket ?? {}) as Record<string, unknown>;
+    const mint = mintOf(t.mint);
+    if (mint && (t.side === 'buy' || t.side === 'sell')) d.ticket = { side: t.side, symbol: str(t.symbol) ?? '?', mint, usd: num(t.usd), fraction: num(t.fraction) };
+  }
+  if (tool === 'paper_confirm' || tool === 'paper_close') {
+    const f = (result.fill ?? {}) as Record<string, unknown>;
+    const mint = mintOf(f.mint);
+    if (mint && (f.side === 'buy' || f.side === 'sell') && num(f.solDelta) !== null && num(f.tokens) !== null) {
+      d.fill = { side: f.side, symbol: str(f.symbol) ?? '?', mint, sol: num(f.solDelta)!, qty: num(f.tokens)!, priceUsd: num(f.priceUsd), impactPct: num(f.priceImpactPct), realizedSol: num(f.realizedSol) };
+    }
+    const p = (result.position ?? null) as Record<string, unknown> | null;
+    const pm = p ? mintOf(p.mint) : null;
+    if (p && pm && num(p.tokens) !== null && num(p.costSol) !== null) d.position = { mint: pm, symbol: str(p.symbol) ?? '?', qty: num(p.tokens)!, costSol: num(p.costSol)!, realizedSol: num(p.realizedSol) ?? 0 };
+  }
+  if (tool === 'paper_pnl') {
+    const m = (result.mandate ?? null) as Record<string, unknown> | null;
+    if (m && num(m.perTradeUsd) !== null && num(m.totalUsd) !== null) d.caps = { perTradeUsd: num(m.perTradeUsd)!, totalUsd: num(m.totalUsd)!, maxPriceImpactPct: num(m.maxPriceImpactPct) };
+  }
+  return Object.keys(d).length ? d : null;
 }
 
 /** A sink that appends records to a file (0600). Returns null when no spectator file is configured. */

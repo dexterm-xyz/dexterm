@@ -32,7 +32,7 @@ import {
 } from '@dexterm/tui';
 import { resolveRpcUrl, redactSecrets, defaultDbPath, extraRpcUrls, wsUrlFor, SOLANA_PUBLIC_RPC_WS, parseHttpUrl, validateAnalystAction, ACTION_RATE, ACTION_TIER, configChangeForAction, ImageService, encodePng, SummaryLimiter, buildSummaryWindow, KolStore, Cache, PackError, normalizeHandle, terminalSafe, type CandleInterval, type FastLaneEndpoint, type RpcConfig, type Launchpad, type TrendRow, type AnalystAction } from '@dexterm/data';
 import { Recorder, recorderEnabled, MaintenanceSchedule } from '@dexterm/recorder';
-import { makeFixtureState, makeFeedState, syncFeed, renderFrame, isScreenKey, activityFor, SCREEN_NAMES, analystKey, syncAnalyst, pinNewpairsSelection, ANALYST_TAB_KEY, computeNarrativeView, newPlansUi, plansService, plansRows, newFollowsUi, copyService, copyAutoService, MIRROR_DEFAULT_CAP_USD, type AppState } from './state.ts';
+import { makeFixtureState, makeFeedState, syncFeed, renderFrame, isScreenKey, activityFor, SCREEN_NAMES, analystKey, syncAnalyst, pinNewpairsSelection, ANALYST_TAB_KEY, computeNarrativeView, newPlansUi, plansService, plansRows, newFollowsUi, copyService, copyAutoService, MIRROR_DEFAULT_CAP_USD, pnlChipFor, type AppState } from './state.ts';
 import { mulberry32, tick, spawnPair, shock, type FixtureToken, type WatchRow, type Rng } from './fixtures.ts';
 import type { ScreenerRow } from './screener/rows.ts';
 import { createLiveFeed, createReplayFeed, type ScreenerFeed } from './feed.ts';
@@ -52,7 +52,9 @@ import {
 } from './screener/view.ts';
 import { readBootState, bootPlan, recordBoot, bootTrace, dextermHome } from './boot-state.ts';
 import { socialOf, kolOf, trendingRows, kolRows, nextSocialFilter, feedsPopupModel, type KolRow } from './social/view.ts';
-import { TokenPopups, tokenDetailVMFromView } from './popup.ts';
+import { TokenPopups, tokenDetailVMFromView, currentPositionFills } from './popup.ts';
+import { OwnPnlTracker, type OwnHeldSample } from './screens/pnl-chip.ts';
+import { positionRow } from './live/trade.ts';
 import { widgetPage, widgetEnabled, syncWidgetPopups } from './widgets.ts';
 import { recordLarpVerdict } from './larp-record.ts';
 import { rulesUiOf, rulesTick, rulesMove, beginRuleInput, saveRuleInput, dryRunNow, removeSelectedRule, toggleSelectedRule, dismissSelectedProposal, actOnSelectedProposal, RULE_INPUT_MAX } from './rules.ts';
@@ -67,7 +69,7 @@ import { resolveAnalystResults, type ResolvedResult } from './analyst/results.ts
 import { parseScanCommand, SCAN_FLAGS, checkScanFlag, SCAN_HELP, type ScanCommand } from './scan/command.ts';
 import { parseWalletCommand, WALLET_HELP } from './wallet-command.ts';
 import { X_HELP } from './x-cmd.ts';
-import { makeScanUi, MODE_LABEL, SCAN_ACTION_TYPES, SCAN_TICK_MS, SCAN_RECOMPUTE_MS } from './scan/ui.ts';
+import { makeScanUi, scanLog, MODE_LABEL, SCAN_ACTION_TYPES, SCAN_TICK_MS, SCAN_RECOMPUTE_MS } from './scan/ui.ts';
 import { buildObservations, observeSig } from './scan/observe.ts';
 import type { ScanConfig, ScanDecision, ScanEngine } from './scan/engine.ts';
 import { cleanText } from './screener/rows.ts';
@@ -78,14 +80,19 @@ import { LivePlanExecutor, defaultPlansJournalPath } from '@dexterm/data/plans';
 import type { PlanInput } from '@dexterm/data/plans';
 import { isWalletAddress, shortAddr, buildMirror, leaderSoldSince, autoSizeCap, type MirrorMarket, type MirrorResult, type CopyAlert } from '@dexterm/data/copy';
 import { FOLLOW_INPUT_MAX } from './screens/follows.ts';
+import { HUD_MIN_H, hudAnimating } from './screens/agent-hud.ts';
 import type { VoiceHud } from './voice-hud.ts';
-import { isPriceMode, configPriceMode, togglePriceMode, priceModeOf, planLevels, type PriceMode } from './display.ts';
+import { isPriceMode, configPriceMode, togglePriceMode, priceModeOf, planLevels, configChartAxis, setChartAxis, chartAxisOf, type PriceMode } from './display.ts';
 import { VERSION } from './version.ts';
 import { initCustom, planWorkspace, planPopupOpens, findWorkspace, nextWorkspaceName, workspaceSlots, saveWorkspace, themeFor, themeByName, cycleTheme, themeNames, CHORD_TTL_MS, MAX_WORKSPACE_NAME, type WorkspacePlan } from './custom.ts';
 import { DEFAULT_WORKSPACE, MORNING_HUD, applyAndJournal, policyCheck } from '@dexterm/custom';
 
 /** A compact, firewalled view of one visible pool row for the analyst context (task-1313). */
-interface VisibleRow { mint: string; symbol: string; priceUsd: number | null; chg1h: number | null; chg24h: number | null; liq: number | null; vol24: number | null }
+interface VisibleRow {
+  mint: string; symbol: string; priceUsd: number | null; chg1h: number | null; chg24h: number | null; liq: number | null; vol24: number | null;
+  /** New-pairs screen only (task-1443 capture r2): the launch fields the PumpPortal table shows. */
+  ageSec?: number | null; mcap?: number | null; chg5m?: number | null; bonding?: number | null; buys?: number | null; sells?: number | null;
+}
 
 /**
  * Context the `screen_state` MCP tool returns AND the per-turn context block is rendered from
@@ -147,16 +154,34 @@ export function buildScreenState(state: AppState): Record<string, unknown> {
   const sc = state.screener;
   // The screener and the Analyst-tab coin list both show the filtered/sorted screener view, so the
   // selection + visible rows must come from that same view (task-1313); other screens use the raw pool.
-  const rows = state.screen === 'screener' || state.screen === 'analyst' ? screenerView(sc) : sc.rows;
+  // The new-pairs screen shows the live PumpPortal list (task-1443 capture r2: it used to report the screener pool
+  // here, so an agent watching new pairs could not read what was on screen or what was highlighted).
+  const newPairs = state.screen === 'newpairs' && live ? live.newpairs.list() : null;
+  const rows: readonly unknown[] = state.screen === 'screener' || state.screen === 'analyst' ? screenerView(sc) : newPairs ?? sc.rows;
   const toRow = (r: unknown): VisibleRow | null => {
     const x = r as { mint?: string; symbol?: string; price?: number | null; liq?: number | null; vol24?: number | null; chg?: { h1?: number | null; h24?: number | null } } | undefined;
     if (!x?.mint) return null;
     return { mint: x.mint, symbol: x.symbol ?? '', priceUsd: x.price ?? null, chg1h: x.chg?.h1 ?? null, chg24h: x.chg?.h24 ?? null, liq: x.liq ?? null, vol24: x.vol24 ?? null };
   };
-  const visible = rows.slice(0, 12).map(toRow).filter((r): r is VisibleRow => r !== null);
+  const toNewPairRow = (r: unknown): VisibleRow | null => {
+    const x = r as NewPairRow;
+    if (!x?.mint) return null;
+    return {
+      mint: x.mint, symbol: x.symbol ?? '', priceUsd: x.price ?? null, chg1h: x.chg?.h1 ?? null, chg24h: null, liq: x.liq ?? null, vol24: x.vol ?? null,
+      ageSec: Number.isFinite(x.createdAt) ? Math.max(0, Math.round((Date.now() - x.createdAt) / 1000)) : null,
+      mcap: x.mcap ?? null, chg5m: x.chg?.m5 ?? null, bonding: x.bonding ?? null, buys: x.buys ?? null, sells: x.sells ?? null,
+    };
+  };
+  const mapRow = newPairs ? toNewPairRow : toRow;
+  const visible = rows.slice(0, 12).map(mapRow).filter((r): r is VisibleRow => r !== null);
   let selected: { mint: string; symbol: string } | null = null;
   if (state.screen === 'token' && live?.token?.view) selected = { mint: live.token.view.mint, symbol: live.token.view.symbol };
-  else { const r = toRow(rows[state.selected || 0]); if (r) selected = { mint: r.mint, symbol: r.symbol }; }
+  else {
+    // Same pick as the new-pairs screen's own highlight (selectedMint first, then the cursor row).
+    const hit = newPairs && state.selectedMint ? newPairs.find((x) => x.mint === state.selectedMint) : undefined;
+    const r = mapRow(hit ?? rows[state.selected || 0]);
+    if (r) selected = { mint: r.mint, symbol: r.symbol };
+  }
 
   // Watchlist (live only): the saved entries' mint + symbol.
   const watchlist: Array<{ mint: string; symbol: string }> = [];
@@ -307,6 +332,8 @@ export interface CliArgs {
   priceMode: PriceMode | null;
   /** task-1421: follow an agent driving over MCP — the terminal moves with it, and a read-only stream opens. */
   spectateMcp: boolean;
+  /** task-1466: a JSONL file the agent's own words stream into (Claude stream-json, a brain feed, or {thought}) for the thought ribbon. */
+  spectateThoughts: string | null;
   /** task-1443: let the MCP agent PAPER-trade inside this armed mandate (needs --spectate-mcp). Paper only. */
   agentPaper: string | null;
   help: boolean;
@@ -360,6 +387,8 @@ export interface FrameGate {
   awake: boolean;
   /** An event animation (glitch / shake / stutter) is live. */
   fxBusy: boolean;
+  /** task-1466: the agent HUD is animating (recent calls, an open PAPER position, an execution moment, a kill). */
+  hud?: boolean;
   frame: number;
   /** Frame stride at the idle rate (full fps / IDLE_FPS). */
   idleEvery: number;
@@ -376,7 +405,7 @@ export interface FrameGate {
 export function shouldDrawFrame(g: FrameGate): boolean {
   if (g.transition || g.aiLive || g.awake) return true;
   if (g.calm) return g.onTick;
-  if (g.fxBusy) return true;
+  if (g.fxBusy || g.hud) return true;
   return g.frame % g.idleEvery === 0;
 }
 
@@ -415,6 +444,8 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   --record FILE             save every live response (and the PumpPortal session) to FILE (replay it with --replay)
   --spectate-mcp            follow an MCP agent's allowed navigation in this terminal; Ctrl+P pauses, Ctrl+K stops,
                             and any normal user keypress takes control (refused actions never move the UI)
+  --spectate-thoughts FILE  (with --spectate-mcp) stream the agent's own words into the thought ribbon from a JSONL
+                            file it writes (e.g. claude -p --output-format stream-json); display only, scrubbed
   --agent-paper MANDATE_ID  (experimental, with --spectate-mcp) let that MCP agent PAPER-trade inside a mandate you
                             armed: simulated fills only, never signs or sends, never raises a cap; Ctrl+P / Ctrl+K /
                             any key also pause, stop or take over its paper trading
@@ -529,7 +560,7 @@ export function parseArgs(argv: string[]): CliArgs {
     sound: false,
     trade: [], live: true,
     workspace: null, priceMode: null,
-    spectateMcp: false, agentPaper: null,
+    spectateMcp: false, spectateThoughts: null, agentPaper: null,
     help: false, version: false, unknown: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -600,6 +631,7 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--price-mode') { const s = str(); if (!isPriceMode(s)) throw new Error(`--price-mode expects price|mcap, got ${JSON.stringify(s.slice(0, 20))}`); a.priceMode = s; }
     // task-1421: follow an agent driving over MCP (the running terminal moves with it; a read-only stream opens).
     else if (k === '--spectate-mcp') a.spectateMcp = true;
+    else if (k === '--spectate-thoughts') a.spectateThoughts = str();
     // task-1443: agent PAPER trading inside a mandate the user armed (validated against the plans journal at start).
     else if (k === '--agent-paper') { const s = str(); if (!/^[A-Za-z0-9_-]{1,64}$/.test(s)) throw new Error(`--agent-paper expects a mandate id (see \`dexterm mandate list\`), got ${JSON.stringify(s.slice(0, 20))}`); a.agentPaper = s; }
     else if (k === '--workspace') { const s = str(); if (!/^[a-z][a-z0-9-]{0,39}(\/[a-z][a-z0-9-]{0,39})?$/.test(s)) throw new Error(`--workspace expects a name like morning-hud, got ${JSON.stringify(s.slice(0, 40))}`); a.workspace = s; }
@@ -622,6 +654,7 @@ export function parseArgs(argv: string[]): CliArgs {
   if (a.event && !a.fixtures) throw new Error('--event is a fixture demo event (add --fixtures)');
   if (a.scan && a.fixtures) throw new Error('--scan needs live data or a recording (drop --fixtures)');
   if (a.scan && a.screen) throw new Error('--scan is interactive (drop --screen)');
+  if (a.spectateThoughts && !a.spectateMcp) throw new Error('--spectate-thoughts needs --spectate-mcp (the thought ribbon is part of the follow view)');
   if (a.agentPaper && !a.spectateMcp) throw new Error('--agent-paper needs --spectate-mcp (every agent paper trade must be visible in this terminal)');
   if (a.agentPaper && a.db === ':memory:') throw new Error('--agent-paper needs an on-disk --db (the agent books into the same paper wallet)');
   return a;
@@ -1060,6 +1093,7 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     }
     for (const e of state.custom.themeErrors) io.stderr.write(`dexterm: ${e}\n`);
     state.priceMode = args.priceMode ?? configPriceMode(state.custom.config); // task-1366: --price-mode wins for the run
+    state.chartAxis = configChartAxis(state.custom.config); // task-1472: default MARKET CAP, `A` toggles + saves
     if (args.workspace) {
       const r = switchWorkspace(state, args.workspace, []);
       if (!r.ok) { ctx?.close(); feed?.close(); io.stderr.write(`dexterm: ${r.reason}\n`); return 2; }
@@ -1901,6 +1935,7 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     // task-1407 PNL CARD: the loop opens the preview (recorded fills only) and runs the share keys.
     case 'pnl.card': state.pendingPnl = true; break;
     case 'display.priceMode': state.pendingToast = togglePriceMode(state); break; // task-1366: display only, persisted
+    case 'display.chartAxis': state.pendingToast = setChartAxis(state); break; // task-1472: both charts' Y axis, display only, persisted
     case 'theme.next': state.theme = state.custom ? cycleTheme(state.custom, state.theme) : nextTheme(state.theme); break; // task-1358: user themes join the cycle
     // task-1358 workspaces. Every case is a UI action: navigate / re-theme / open read-only popups via the
     // loop (pendingPopups). Nothing here can open a ticket, confirm, arm or sign.
@@ -2010,12 +2045,14 @@ export function scanCommand(state: AppState, cmd: ScanCommand, stack: ScreenKey[
     case 'on':
       if (!e.start(now)) return `AI scan is already on (${MODE_LABEL[e.mode]})`;
       live.scanMeter = scanMeterOf(e, now);
+      scanLog(scan, now, 'start', '', `scan on · observe-only · locks at score ≥ ${e.cfg.minScore} · liquidity ≥ $${Math.round(e.cfg.minLiqUsd / 1000)}K`);
       return `AI scan ON · observe-only · warming up ${e.cfg.warmupS}s · locks at score ≥ ${e.cfg.minScore} · ai ≤ ${e.cfg.maxAiPerHour}/h · Z stop`;
     case 'off': {
       if (!e.on) return 'AI scan is already off';
       stopTurn();
       const was = e.lock?.symbol;
       e.stop(now);
+      scanLog(scan, now, 'stop', was ?? '', was ? 'scan stopped · released' : 'scan stopped');
       live.scanMeter = null;
       scan.returnTo = null;
       return `AI scan stopped${was ? ` (released ${sym(was)})` : ''}`;
@@ -2026,6 +2063,7 @@ export function scanCommand(state: AppState, cmd: ScanCommand, stack: ScreenKey[
       const locked = e.lock;
       stopTurn();
       e.resume(now);
+      scanLog(scan, now, 'release', locked?.symbol ?? '', `released · cooling down ${Math.round(e.cfg.coinCooldownS / 60)}m · watching for the next coin`);
       live.scanMeter = scanMeterOf(e, now);
       // back from the coin the lock pulled up to where the user was, so the ticker is in view
       if (locked && state.screen === 'token' && live.token?.view.mint === locked.mint) state.screen = stack.pop() ?? scan.returnTo ?? 'screener';
@@ -2315,6 +2353,54 @@ export function applyAnalystAction(state: AppState, raw: Record<string, unknown>
   }
   times.push(now);
   return { ok: true, label: res.label };
+}
+
+/**
+ * task-1466: the price this terminal itself shows for a coin, to mark the followed agent's open PAPER position (the
+ * HUD's live PnL): the open token's push price (LIVE) or polled price, else the screener row's price. null if the
+ * terminal has no price for it. Never the agent's own number.
+ */
+export function markPriceFor(state: AppState, mint: string): number | null {
+  const live = state.live;
+  if (live?.token?.view.mint === mint) {
+    const px = (live.badgeFor(mint) === 'LIVE' ? live.livePrice(mint) : null) ?? live.token.view.price;
+    if (typeof px === 'number' && Number.isFinite(px) && px > 0) return px;
+  }
+  const row = state.screener.rows.find((r) => r.mint === mint);
+  if (row && typeof row.price === 'number' && Number.isFinite(row.price) && row.price > 0) return row.price;
+  // task-1473: the held coin scrolled out of the list (run25): its fast-lane push price (the held mint is pinned there)
+  const fast = live?.livePrice(mint) ?? null;
+  return typeof fast === 'number' && Number.isFinite(fast) && fast > 0 ? fast : null;
+}
+
+let ownOpenedMemo: { mint: string; at: number; t: number | null } | null = null;
+
+/**
+ * task-1473 r2: the user's OWN held position for the AI-scan PnL chip, marked with this terminal's own price (same
+ * task-1323 position row the token screen uses): the scan's locked coin when held, else the open token, else the
+ * first open mint (live first). null when flat. Reads the ledgers only (memoised); never trades, sizes or signs.
+ */
+export function ownHeldSample(state: AppState, now: number): OwnHeldSample | null {
+  const live = state.live;
+  if (!live) return null;
+  const src = live.positionSource;
+  const open = src.openMints();
+  if (open.length === 0) return null;
+  const prefer = [state.scan?.engine.lock?.mint, live.token?.view.mint].filter((m): m is string => !!m);
+  const mint = prefer.find((m) => open.includes(m)) ?? open[0];
+  const held = src.held(mint);
+  if (!held) return null;
+  const r = positionRow(held, markPriceFor(state, mint), state.sol?.price ?? src.solUsd());
+  if (!ownOpenedMemo || ownOpenedMemo.mint !== mint || now - ownOpenedMemo.at > 5000) {
+    let t: number | null = null;
+    try { t = currentPositionFills([...(live.livePositions?.records(200, mint) ?? []), ...live.wallet.trades(500).filter((x) => x.mint === mint)])[0]?.t ?? null; } catch { t = null; }
+    ownOpenedMemo = { mint, at: now, t };
+  }
+  return {
+    mint, symbol: held.symbol, kind: held.kind === 'live' ? 'live' : 'paper',
+    entryUsd: r.avgEntryUsd, markUsd: r.priceUsd, pnlPct: r.unrealizedPct, pnlUsd: r.unrealizedUsd,
+    openedAt: ownOpenedMemo.t, targetUsd: r.targetUsd,
+  };
 }
 
 /**
@@ -2974,6 +3060,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     // task-1421: the MCP follow session (set below when `--spectate-mcp` is on). Declared here so the quit /
     // terminal-guard teardown closures can stop it.
     let followSession: McpFollowSession | null = null;
+    let lastHudMark: number | null = null; // task-1466: the last terminal price that marked the agent's PAPER position
     // task-1443: `--agent-paper <mandate-id>` (with --spectate-mcp) lets that agent PAPER-trade inside the mandate.
     const agentPaper = args.spectateMcp && args.agentPaper ? new AgentPaperSwitch({ env: io.env, mandateId: args.agentPaper, db: args.db ?? defaultDbPath(io.env) }) : null;
     // Idle economy (task-1303, retuned for task-1319 AC3): between events the ambient rain redraws at
@@ -3138,13 +3225,18 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           if (state.screen !== before) { try { startTransition(); } catch { transition = null; } }
           scheduleDraw();
         },
-        onStatus: (line) => { say(line, 'ai', 4); scheduleDraw(); },
+        // task-1466: the HUD dock says what the agent did; the toast is only the fallback for a terminal too short for it.
+        onStatus: (line) => { if (size()[1] < HUD_MIN_H) say(line, 'ai', 4); scheduleDraw(); },
         onEvent: () => scheduleDraw(),
         onControl: agentPaper ? (st) => agentPaper!.control(st) : undefined,
         snapshot: () => followSnapshot(state),
+        thoughtsFile: args.spectateThoughts ?? undefined,
       });
+      // task-1466 spectator v2: the agent HUD (phase rail, heartbeat, thought ribbon, call timeline, the PAPER
+      // execution moment, pause / kill) draws over this terminal while it follows. Calm mode = reduced motion.
+      state.agentHud = { story: followSession.story, clock: () => Date.now(), dataLabel: args.replay ? 'REPLAY DATA' : null };
       void followSession.start();
-      say('following agents over MCP · ctrl+p pause · ctrl+k stop · any key takes over', 'ai', 6);
+      if (size()[1] < HUD_MIN_H) say('following agents over MCP · ctrl+p pause · ctrl+k stop · any key takes over', 'ai', 6);
       if (agentPaper) say(agentPaper.start(), 'ai', 8);
     }
     // Launch a real Claude analyst session when a key asked for one (applyAction cannot spawn). A
@@ -3225,7 +3317,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
     /** A scan-session UI action: always refused (observe-only) and surfaced so the user sees it. */
     const onScanBlocked = (type: string, error: string): void => {
       const scan = state.scan;
-      if (scan) { scan.blocked.push(type); if (scan.blocked.length > 6) scan.blocked.shift(); }
+      if (scan) { scan.blocked.push(type); if (scan.blocked.length > 6) scan.blocked.shift(); scanLog(scan, Date.now(), 'blocked', scan.engine.lock?.symbol ?? '', `blocked analyst action "${type}" · observe-only`); }
       scanSay(`AI scan blocked analyst action "${type}" · observe-only (${error})`, 'warn', 5);
       scheduleDraw();
     };
@@ -3250,6 +3342,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         state.aiOpen = true;
         state.aiFocused = false;
         state.aiScroll = 0; state.aiRevealAll = false;
+        scanLog(scan, Date.now(), 'lock', d.symbol, `locked · score ${d.score} · ${d.hits.map((h) => h.reason).join(' · ')}`);
         startScanSession(d.mint, d.symbol, d.question, `AI scan · score ${d.score} · ${d.hits.map((h) => h.id).join(' + ')} → short read`);
         syncAnalyst(state);
         live.syncFastSet();
@@ -3259,6 +3352,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       }
       const sess = scan.session;
       if (!sess) return;
+      scanLog(scan, Date.now(), 'refresh', d.symbol, `moved: ${d.moved.join(', ')} · refreshing the read`);
       sess.ask(d.question, scanScreenState(state, d.mint, d.symbol), `AI scan refresh · ${d.moved.join(' · ')}`);
       if (state.analyst === sess) { state.aiScroll = 0; state.aiRevealAll = false; }
       scanSay(`AI scan: $${cleanText(d.symbol, 12)} moved (${d.moved.join(', ')}) · refreshing the read`, 'ai', 4);
@@ -3289,7 +3383,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       const scan = state.scan;
       if (!scan) return;
       if (scan.session?.busy) scan.session.interrupt();
-      scan.engine.cancelAnalysis(Date.now());
+      if (scan.engine.cancelAnalysis(Date.now())) scanLog(scan, Date.now(), 'cancel', scan.engine.lock?.symbol ?? '', 'analysis cancelled by you · coin held, nothing else locks');
       if (live) live.scanMeter = scanMeterOf(scan.engine, Date.now());
       scanSay(`analysis cancelled · scan holds $${cleanText(scan.engine.lock?.symbol ?? '', 12)} · R resume scan · Z stop`, 'ai', 5);
     };
@@ -3344,6 +3438,9 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             solUsd: () => state.sol?.price ?? live.positions.solUsd(),
             imagePath: (v) => popupImagePath(state, v.image),
             priceMode: () => priceModeOf(state), // task-1366
+            chartAxis: () => chartAxisOf(state), // task-1472: the popup's Y axis
+            setChartAxis: (a) => { say(setChartAxis(state, a), 'info', 3); if (!done) draw(); }, // task-1472: the popup's MCAP | PRICE control
+            pnlChip: () => pnlChipFor(state, state.agentHud?.clock() ?? Date.now()), // task-1473 r2: the chip on the chart popup
           } : null,
         });
       }
@@ -4433,6 +4530,16 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           }
           // market → rain: EMA on activity every tick, mood from the data every 4 s unless an event holds it
           blendActivity(v, activityFor(state), v.frame % (tickEvery * 8) === 0 && v.frame >= moodHoldUntil);
+          // task-1466: the agent's open PAPER position is marked with this terminal's own live price (the HUD's PnL).
+          // Only a NEW price marks (a 10 s-old view price must not overwrite a fresher one a tool result carried).
+          if (followSession && state.live && state.live.heldMint !== followSession.story.heldMint) { state.live.heldMint = followSession.story.heldMint; state.live.syncFastSet(); } // task-1473
+          if (followSession) { const held = followSession.story.heldMint; const px = held ? markPriceFor(state, held) : null; if (held && px !== null && px !== lastHudMark) { followSession.story.mark(held, px, Date.now()); lastHudMark = px; } }
+          // task-1473 r2: AI scan mode + the user's OWN held position → the PnL chip (band row, dock, chart popup)
+          if (state.scan?.engine.on && state.live) {
+            state.ownPnl ??= new OwnPnlTracker();
+            state.ownPnl.update(ownHeldSample(state, Date.now()), Date.now());
+            if (!followSession && state.live.heldMint !== state.ownPnl.mint) { state.live.heldMint = state.ownPnl.mint; state.live.syncFastSet(); } // run25: pin it
+          } else if (state.ownPnl?.mint) { state.ownPnl.update(null, 0); if (!followSession && state.live?.heldMint) { state.live.heldMint = null; state.live.syncFastSet(); } }
         }
         if (state.ai && state.ai.phase === 'thinking') {
           state.ai.ticks += 1;
@@ -4455,6 +4562,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         aiLive: !!(state.ai && state.ai.phase !== 'done'),
         awake: v.frame < wakeUntil,
         fxBusy: fxBusy(v),
+        hud: followSession !== null && hudAnimating(followSession.story.view(Date.now()), Date.now()),
         frame: v.frame,
         idleEvery,
       })) return;

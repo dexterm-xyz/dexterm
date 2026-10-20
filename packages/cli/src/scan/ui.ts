@@ -6,6 +6,7 @@
 import { clock, mix, type Canvas, type Hex, type ScreenKey } from '@dexterm/tui';
 import { cleanText } from '../screener/rows.ts';
 import { ScanEngine, type ScanConfig, type ScanMode, type TriggerId } from './engine.ts';
+import type { ScanLogEntry } from '../screens/brain.ts';
 
 /** How often the loop runs a scan tick, and the forced recompute when inputs did not change. */
 export const SCAN_TICK_MS = 2_000;
@@ -29,10 +30,18 @@ export interface ScanUi {
   blocked: string[];
   /** The screen the lock pulled the user away from (resume returns there). */
   returnTo: ScreenKey | null;
+  /** task-1473: the scan's session log (start, locks, refreshes, releases, blocked actions), newest last (≤ 40). */
+  log: ScanLogEntry[];
+}
+
+/** task-1473: append one line to the scan's session log (the analyst panel's brain view shows it). */
+export function scanLog(scan: ScanUi, t: number, kind: ScanLogEntry['kind'], symbol: string, text: string): void {
+  scan.log.push({ t, kind, symbol: cleanText(symbol, 12), text });
+  if (scan.log.length > 40) scan.log.splice(0, scan.log.length - 40);
 }
 
 export function makeScanUi(cfg: Partial<ScanConfig> = {}): ScanUi {
-  return { engine: new ScanEngine(cfg), sig: '', lastTickAt: 0, lastComputeAt: 0, session: null, blocked: [], returnTo: null };
+  return { engine: new ScanEngine(cfg), sig: '', lastTickAt: 0, lastComputeAt: 0, session: null, blocked: [], returnTo: null, log: [] };
 }
 
 export const MODE_LABEL: Record<ScanMode, string> = { off: 'OFF', scanning: 'SCANNING', locked: 'LOCKED', paused: 'PAUSED' };

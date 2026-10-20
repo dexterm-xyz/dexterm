@@ -19,11 +19,12 @@ import { renderScanWhy, renderScanTicker } from '../../scan/ui.ts';
 import { drawCoin, imagesOn } from '../../screens/coin.ts';
 import { COIN_HERO_W, COIN_HERO_H } from '@dexterm/tui';
 import { renderSocialPanel } from '../../screens/social-panel.ts';
+import { brainFor, factsFromView, renderBrainPanel } from '../../screens/brain.ts';
 import { launchIntelCells, holderTags } from '../intel.ts';
 import { devBookOf, devRows } from '../dev-history.ts';
 import { EX_POOL_TAGS } from '@dexterm/data';
 import { layoutFor } from '../../custom.ts';
-import { chartMode, priceModeOf, mcapAt, positionPriceCells, type PriceMode } from '../../display.ts';
+import { chartMode, chartTitle, priceModeOf, chartAxisOf, mcapAt, positionPriceCells, type PriceMode } from '../../display.ts';
 
 type Level = 'ok' | 'warn' | 'bad' | 'na';
 
@@ -86,11 +87,11 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   const shownPx = livePx ?? v.price;
   // task-1366: mcap mode leads with the market cap (the live price × the polled supply ratio) and keeps the price beside it;
   // without a supply it shows the price and says so.
-  const cm = chartMode(priceModeOf(state), v.price, v.mcap);
-  if (cm.kind === 'mcap' && shownPx !== null) {
-    x = c.text(x0, y, fmtMcap(mcapAt(shownPx, cm.scale)), { fg: t.text, bg: t.bg, b: true });
+  const pm = chartMode(priceModeOf(state), v.price, v.mcap);
+  if (pm.kind === 'mcap' && shownPx !== null) {
+    x = c.text(x0, y, fmtMcap(mcapAt(shownPx, pm.scale)), { fg: t.text, bg: t.bg, b: true });
     x = c.text(x + 1, y, `(${fmtPrice(shownPx)})`, { fg: t.dim, bg: t.bg });
-  } else x = c.text(x0, y, shownPx === null ? dash : fmtPrice(shownPx), { fg: cm.label && shownPx !== null ? t.warn : t.text, bg: t.bg, b: true });
+  } else x = c.text(x0, y, shownPx === null ? dash : fmtPrice(shownPx), { fg: pm.label && shownPx !== null ? t.warn : t.text, bg: t.bg, b: true });
   if (state.live?.fastLane) x = badge(c, x + 1, y, liveBadge, liveBadge === 'LIVE' ? t.up : t.muted, { on: t.bg });
   const deltas: Array<[string, number | null]> = [['5m', v.chg.m5], ['1h', v.chg.h1], ['6h', v.chg.h6], ['24h', v.chg.h24]];
   x += 2;
@@ -125,7 +126,9 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   const chartH = Math.max(10, Math.floor((bottom - y - posH) * lay.chartFrac));
   const cp = v.panels.candles;
   const chartCap = clip(cp.state === 'ok' || cp.fetchedAt !== null ? `ohlcv: geckoterminal${cp.stale || cp.state === 'error' ? ' · stale' : ''}` : panelCaption(cp, now, 'ohlcv unavailable'), 40);
-  const cb = c.box(0, y, mainW, chartH, { title: cm.label ? (cm.kind === 'mcap' ? `${v.symbol} ${cm.label} · ${v.interval}` : `${v.symbol}/USD · ${cm.label} · ${v.interval}`) : `${v.symbol}/USD · ${v.interval}`, caption: chartCap, captionFg: cp.state === 'error' && cp.fetchedAt === null ? t.warn : undefined });
+  // task-1472: the chart's Y axis is its own setting (default MARKET CAP, `A` toggles); the header above keeps `$`.
+  const cm = chartMode(chartAxisOf(state), v.price, v.mcap);
+  const cb = c.box(0, y, mainW, chartH, { title: chartTitle(v.symbol, v.interval, cm), caption: chartCap, captionFg: cp.state === 'error' && cp.fetchedAt === null ? t.warn : undefined });
   // timeframe tabs sit on the top border, left of the caption (same spot as the fixture screen)
   let tx = cb.x + cb.w - 2 - (chartCap.length + 4) - INTERVALS.reduce((s, f) => s + f.length + 1, 0);
   for (const f of INTERVALS) tx = c.text(tx, cb.y - 1, f, f === v.interval ? { fg: t.accent, bg: cb.bg, b: true } : { fg: t.dim, bg: cb.bg }) + 1;
@@ -133,10 +136,13 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   else c.textC(cb.x, cb.y + Math.floor(cb.h / 2), cb.w, cp.state === 'loading' ? 'loading candles…' : `no candles · ${cp.reason ?? 'source did not answer'}`, { fg: t.muted, bg: cb.bg, i: true });
   y += chartH;
   if (prow && src) {
-    positionPanel(c, 0, y, mainW, prow, held?.kind ?? src.kind, priceModeOf(state), cm.scale);
+    positionPanel(c, 0, y, mainW, prow, held?.kind ?? src.kind, priceModeOf(state), pm.scale);
     y += posH;
   }
 
+  // task-1473: what the ON-CHAIN band derived this frame, for the brain view's vetting list (null under SOCIAL)
+  let brainTop10: number | null = null;
+  let brainDev: [string, Level] | null = null;
   // ---- task-1330: the SOCIAL panel (`s`) replaces the ON-CHAIN / HOLDERS band; the chart + position stay.
   if (state.tokenSocial) {
     renderSocialPanel(c, 0, y, mainW, bottom - y, state, { mint: v.mint, symbol: v.symbol, now });
@@ -173,9 +179,11 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   // 0.1.5 dev history (task-1425): the creator's recorded track record from the local recorder (keyless). The rugs
   // row sits with the other rug signals; launches / bag-exit / linked wallets follow the safety list.
   const book = devBookOf(state);
-  const devAll = book ? devRows(book.forMint(v.mint, v.devAddress ?? null, state.live?.intel?.analysis(v.mint) ?? null)) : [];
+  const devAll = book ? devRows(book.forMint(v.mint, v.devAddress ?? null, state.live?.intel?.analysis(v.mint) ?? null, state.live?.intel?.entry(v.mint)?.at ?? null), now) : [];
   const devHead = devAll.slice(0, 1) as Array<[string, string, Level]>;
   const devTail = devAll.slice(1) as Array<[string, string, Level]>;
+  brainTop10 = tags.top10 ? tags.top10.exPool : v.top10;
+  brainDev = (devHead[0] ? [`${devHead[0][0]}: ${devHead[0][1]}`, devHead[0][2]] : v.devMints === null ? null : [`${v.devMints} mints by dev (jup)`, v.devMints > 3 ? 'warn' : 'ok']);
   const sniperRow: [string, Level] = [cells.snipers.text, cells.snipers.level];
   const bundleRow: [string, Level] = [cells.bundle.text, cells.bundle.level];
   const rows: Array<[string, string, Level]> = [
@@ -192,7 +200,7 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
     ['GoPlus', ...goplusRow(v)],
     ...devTail,
   ];
-  for (const [label, val0, lvl] of rows) {
+  for (const [label, val0, lvl] of fitRows(rows, sb.y + sb.h - sy)) {
     if (sy >= sb.y + sb.h) break;
     const color = lvl === 'ok' ? t.up : lvl === 'warn' ? t.warn : lvl === 'bad' ? t.down : t.dim;
     c.text(sb.x + 1, sy, lvl === 'ok' ? '●' : lvl === 'warn' ? '◐' : lvl === 'bad' ? '○' : '·', { fg: color, bg: sb.bg });
@@ -309,7 +317,13 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   }
 
   }
-  if (showAi) analystPlaceholder(c, mainW, top, aiW, bottom - top, v, state);
+  if (showAi) {
+    // task-1473: in an auto mode (following an agent / AI scan) the panel is the BRAIN VIEW; otherwise the analyst
+    const facts = factsFromView(v, { top10: brainTop10, dev: brainDev, larpVerdict: state.larpByMint?.get(v.mint)?.verdict ?? null, price: shownPx });
+    const brain = brainFor(state, facts, isCalm(state.vfx), state.live?.scanMeterLabel?.() ?? '');
+    if (brain) renderBrainPanel(c, mainW, top, aiW, bottom - top, brain.model, brain.opts);
+    else analystPlaceholder(c, mainW, top, aiW, bottom - top, v, state);
+  }
   const watched = state.live?.watch?.has(v.mint) ? 'unwatch' : 'watch';
   // task-1311: `i` asks claude about this token (chat), `a` runs the paid dossier on demand, `y`
   // copies the full contract address.
@@ -381,6 +395,21 @@ function positionPanel(c: Canvas, x: number, y: number, w: number, r: HeldRow, k
 
 function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, Math.max(1, max - 1)) + '…' : s;
+}
+
+/**
+ * task-1463: the ON-CHAIN rows for a panel `space` lines tall. When they all fit they are returned unchanged. When
+ * they do not, a short panel must not drop a red flag silently (e.g. `Dev rugs 2/3`, the last rows of the list):
+ * bad rows are kept first, then warn rows, then the rest in order, the kept rows stay in their order, and the last
+ * line says how many rows are hidden.
+ */
+export function fitRows(rows: Array<[string, string, Level]>, space: number): Array<[string, string, Level]> {
+  if (rows.length <= space || space <= 0) return rows;
+  const slots = space - 1;
+  const rank = (l: Level): number => (l === 'bad' ? 0 : l === 'warn' ? 1 : 2);
+  const keep = new Set(rows.map((r, i) => [rank(r[2]), i] as const).sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, slots).map(([, i]) => i));
+  const hidden = rows.length - keep.size;
+  return [...rows.filter((_, i) => keep.has(i)), [`+${hidden} rows hidden`, 'taller window', 'na']];
 }
 
 /** Token amounts up to trillions (fmtNum stops at B). */

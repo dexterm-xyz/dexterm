@@ -1,0 +1,250 @@
+{
+ "schema": "dexterm/packs/larp-score-backtest/1",
+ "eval": {
+  "built_at": "2026-10-16T04:59:12.726Z",
+  "horizon_sec": 259200,
+  "rows": 1054,
+  "label_rule": "recorder outcome at 259200s (keyless proxy, labeler 0.2.0); bad = rug ∪ dead, ok = flat ∪ fade ∪ runner; unobserved dropped",
+  "split_rule": "by time: the latest 30% of rows by t0 (t0 ≥ 2026-10-12T21:28:23.575Z) are the held-out TEST split, fixed before tuning"
+ },
+ "part": "link-shape flags only (what the eval set holds point-in-time)",
+ "method": [
+  "fit on the train split only (726 coins): points = clamp(round(8 × ln odds ratio of a bad outcome), 0, 12) for a flag on ≥ 20 train coins; rarer flags keep their prior points",
+  "bands fixed before scoring: low < 25 ≤ medium < 50 ≤ high (not tuned)",
+  "AUROC with ties counted half; rates with 95% Wilson intervals, printed only for n ≥ 20",
+  "meaning: how well the link-shape points rank coins that went bad (a price outcome) above the rest, NOT whether a product is real"
+ ],
+ "fit": [
+  {
+   "id": "no_website",
+   "n": 299,
+   "bad": 170,
+   "ln_or": 1.166,
+   "points": 9,
+   "source": "calibrated"
+  },
+  {
+   "id": "no_x",
+   "n": 213,
+   "bad": 130,
+   "ln_or": 1.2,
+   "points": 10,
+   "source": "calibrated"
+  },
+  {
+   "id": "x_not_account",
+   "n": 167,
+   "bad": 86,
+   "ln_or": 0.582,
+   "points": 5,
+   "source": "calibrated"
+  },
+  {
+   "id": "no_telegram",
+   "n": 566,
+   "bad": 278,
+   "ln_or": 2.135,
+   "points": 12,
+   "source": "calibrated"
+  },
+  {
+   "id": "site_is_social",
+   "n": 33,
+   "bad": 14,
+   "ln_or": 0.092,
+   "points": 1,
+   "source": "calibrated"
+  },
+  {
+   "id": "site_is_launchpad",
+   "n": 6,
+   "bad": 1,
+   "ln_or": null,
+   "points": 4,
+   "source": "prior"
+  },
+  {
+   "id": "site_linktree",
+   "n": 3,
+   "bad": 0,
+   "ln_or": null,
+   "points": 2,
+   "source": "prior"
+  },
+  {
+   "id": "site_free_host",
+   "n": 3,
+   "bad": 2,
+   "ln_or": null,
+   "points": 2,
+   "source": "prior"
+  },
+  {
+   "id": "domain_no_name_match",
+   "n": 75,
+   "bad": 25,
+   "ln_or": -0.333,
+   "points": 0,
+   "source": "calibrated"
+  },
+  {
+   "id": "cheap_tld",
+   "n": 159,
+   "bad": 55,
+   "ln_or": -0.317,
+   "points": 0,
+   "source": "calibrated"
+  }
+ ],
+ "shipped_matches_fit": true,
+ "train": {
+  "n": 726,
+  "bad": 294,
+  "auroc": 0.727,
+  "by_band": {
+   "low": {
+    "n": 466,
+    "bad": 136,
+    "rate": {
+     "value": 0.2918454935622318,
+     "lo": 0.2524047458942915,
+     "hi": 0.33469013884984344,
+     "k": 136,
+     "n": 466
+    }
+   },
+   "medium": {
+    "n": 260,
+    "bad": 158,
+    "rate": {
+     "value": 0.6076923076923076,
+     "lo": 0.5471865416031939,
+     "hi": 0.6650620196547729,
+     "k": 158,
+     "n": 260
+    }
+   },
+   "high": {
+    "n": 0,
+    "bad": 0,
+    "rate": null
+   }
+  },
+  "at_threshold": [
+   {
+    "threshold": 25,
+    "flagged": 260,
+    "precision": {
+     "value": 0.6076923076923076,
+     "lo": 0.5471865416031939,
+     "hi": 0.6650620196547729,
+     "k": 158,
+     "n": 260
+    },
+    "recall": {
+     "value": 0.5374149659863946,
+     "lo": 0.4803045643630162,
+     "hi": 0.593560201337947,
+     "k": 158,
+     "n": 294
+    }
+   },
+   {
+    "threshold": 50,
+    "flagged": 0,
+    "precision": null,
+    "recall": {
+     "value": 0,
+     "lo": 0,
+     "hi": 0.012898131087128192,
+     "k": 0,
+     "n": 294
+    }
+   }
+  ],
+  "score_quantiles": {
+   "p10": 0,
+   "p50": 17,
+   "p90": 31,
+   "max": 31
+  }
+ },
+ "test": {
+  "n": 328,
+  "bad": 61,
+  "auroc": 0.691,
+  "by_band": {
+   "low": {
+    "n": 218,
+    "bad": 27,
+    "rate": {
+     "value": 0.12385321100917432,
+     "lo": 0.08653148685637463,
+     "hi": 0.17420229797027653,
+     "k": 27,
+     "n": 218
+    }
+   },
+   "medium": {
+    "n": 110,
+    "bad": 34,
+    "rate": {
+     "value": 0.3090909090909091,
+     "lo": 0.23039855434915507,
+     "hi": 0.4006677693848754,
+     "k": 34,
+     "n": 110
+    }
+   },
+   "high": {
+    "n": 0,
+    "bad": 0,
+    "rate": null
+   }
+  },
+  "at_threshold": [
+   {
+    "threshold": 25,
+    "flagged": 110,
+    "precision": {
+     "value": 0.3090909090909091,
+     "lo": 0.23039855434915507,
+     "hi": 0.4006677693848754,
+     "k": 34,
+     "n": 110
+    },
+    "recall": {
+     "value": 0.5573770491803278,
+     "lo": 0.4330314670045551,
+     "hi": 0.6749239196607956,
+     "k": 34,
+     "n": 61
+    }
+   },
+   {
+    "threshold": 50,
+    "flagged": 0,
+    "precision": null,
+    "recall": {
+     "value": 0,
+     "lo": 0,
+     "hi": 0.05924591620194442,
+     "k": 0,
+     "n": 61
+    }
+   }
+  ],
+  "score_quantiles": {
+   "p10": 0,
+   "p50": 13,
+   "p90": 31,
+   "max": 31
+  }
+ },
+ "not_measured": [
+  "website page flags (default page, wallet connect, drainer markers, never names the token): pages were not captured at t0",
+  "domain flags (new domain, registrant privacy) and GitHub flags: not captured at t0",
+  "X-account flags (new account, tiny following, no posts, suspended, handle mismatch): not captured at t0, and a lookup today leaks the outcome (dead coins' accounts get deleted or suspended); the X sources' robots.txt also rule out bulk crawling them for a backfill",
+  "the high band: link shape alone tops out below it by design, so its precision is unmeasured"
+ ]
+}

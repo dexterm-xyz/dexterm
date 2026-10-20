@@ -73,7 +73,7 @@ export function renderWatchlistLive(c: Canvas, state: AppState, live: WatchlistL
       badge(cv, x, y, live ? 'LIVE' : 'POLL', live ? t.up : t.dim, { on: bg }); void w;
     } });
   }
-  if (rows.length) table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: promoteMcap(cols, mode), rows, selected: sel, bg: box.bg });
+  if (rows.length) table(c, box.x + 1, box.y, box.w - 2, box.h, { columns: promoteMcap(cols, mode), rows, selected: sel, bg: box.bg, rowKey: (r) => r.entry.mint });
   else c.textC(box.x, box.y + Math.min(3, Math.floor(box.h / 2)), box.w, 'watchlist is empty · press w on any token (screener, new pairs, token screen) to add it', { fg: t.muted, bg: box.bg, i: true });
 
   const y2 = top + listH;
