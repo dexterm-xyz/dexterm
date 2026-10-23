@@ -24,7 +24,7 @@ sources:
 date: 2026-10-16
 ---
 
-> **0.1.7, experimental:** dexterm never holds a key and never signs; live trading happens in the Telegram trading bot of your choice; dexterm 0.1.7 sends alerts and signals to your own bot and does not place orders in it yet; automated order forwarding is next (0.1.8). This path has not been exercised end to end on mainnet yet; testing continues.
+> **0.1.7, experimental:** dexterm never holds a key and never signs; live trading happens in the Telegram trading bot of your choice; dexterm 0.1.7 sends alerts and signals to your own bot and does not place orders in it yet; automated order forwarding is next (0.1.8).
 
 - **dexterm never holds a key and never signs a transaction.** It has no trading wallet, no signer and no place to keep a private key. It builds no transaction and sends none.
 - **Live trading happens in a Telegram trading bot of your choice.** That bot holds its own wallet and places the orders. You pick it, you fund it, and its rules and fees are its own.

@@ -4,7 +4,7 @@ All notable changes to dexterm are listed here. The format follows [Keep a Chang
 
 ## [0.1.7] - 2026-10-22
 
-A first cut of live trading through Telegram, and autotrade on paper. dexterm never holds a key and never signs; live trading happens in the Telegram trading bot of your choice; dexterm 0.1.7 sends alerts and signals to your own bot and does not place orders in it yet; automated order forwarding is next (0.1.8). The Telegram live path is experimental and has not been exercised end to end on mainnet; testing continues. Everything that trades inside dexterm is paper (simulated). Nothing in dexterm is financial advice.
+A first cut of live trading through Telegram, and autotrade on paper. dexterm never holds a key and never signs; live trading happens in the Telegram trading bot of your choice; dexterm 0.1.7 sends alerts and signals to your own bot and does not place orders in it yet; automated order forwarding is next (0.1.8). The Telegram live path is experimental. Everything that trades inside dexterm is paper (simulated). Nothing in dexterm is financial advice.
 
 ### Added
 

@@ -29,5 +29,3 @@ date: 2026-10-16
 2. Set up dexterm's own bot for your chat: `dexterm telegram setup`, then `dexterm telegram pair`. See Telegram (https://dexterm.xyz/docs/telegram). This is a separate bot that only talks to you.
 3. Run a strategy on paper (`dexterm autotrade run <id> --paper`). Its alerts arrive in your chat.
 4. When you want to act on one, do it in your trading bot.
-
-dexterm has not been tested with any particular trading bot.
