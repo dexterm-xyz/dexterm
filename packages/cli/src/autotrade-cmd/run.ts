@@ -315,10 +315,13 @@ export function larpVet(g: { maxScore: number; unknown: 'reject' | 'allow' }, ch
   return async (k) => {
     let rec: Record<string, unknown> | null = null;
     let why = '';
+    // task-1574: the timeout keeps the event loop alive until the race settles (an unref'd timer let a check that never
+    // answers leave the vet pending forever when nothing else held the loop; Node 22's test runner cancels on that).
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      rec = await Promise.race([check(k.mint), new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`no answer in ${timeoutMs / 1000} s`)), timeoutMs).unref())]);
+      rec = await Promise.race([check(k.mint), new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`no answer in ${timeoutMs / 1000} s`)), timeoutMs); })]);
       if (rec && typeof rec.error === 'string') { why = rec.error.slice(0, 120); rec = null; }
-    } catch (e) { why = (e as Error).message.slice(0, 120); }
+    } catch (e) { why = (e as Error).message.slice(0, 120); } finally { clearTimeout(timer); }
     const score = rec && typeof rec.score === 'number' && Number.isFinite(rec.score) ? rec.score : null;
     if (score === null) {
       const detail = `the LARP check could not run${why ? ` (${why})` : ''}`;

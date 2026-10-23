@@ -9,10 +9,12 @@
 // A stale lock (owner pid gone) is taken over. Children of the lock owner (npm test -> test:serial) see
 // DEXTERM_TEST_LOCK_OWNER and do not lock again. What the tests assert is unchanged.
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { getPriority, setPriority } from 'node:os';
+import { getPriority, setPriority, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export const LOCK_DIR = process.env.DEXTERM_TEST_LOCK || '/tmp/dexterm-test-suite.lock';
+// POSIX: /tmp, shared by every worktree and user session. Windows has no /tmp (`D:\tmp` does not exist on a runner),
+// so the lock lives in the OS temp dir there (task-1574).
+export const LOCK_DIR = process.env.DEXTERM_TEST_LOCK || (process.platform === 'win32' ? join(tmpdir(), 'dexterm-test-suite.lock') : '/tmp/dexterm-test-suite.lock');
 export const NICE = 15;
 
 export function lowerPriority(nice = NICE) {

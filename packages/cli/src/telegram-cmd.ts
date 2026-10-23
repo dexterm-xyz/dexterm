@@ -182,8 +182,9 @@ async function pairFlow(home: string, io: TelegramIo, deps: TelegramDeps, tiers:
   io.stdout.write(`Pairing code: ${win.code.slice(0, 3)} ${win.code.slice(3)}\n`);
   io.stdout.write(`Open a PRIVATE chat with ${cfg.telegram.bot ? `@${cfg.telegram.bot.username}` : 'your bot'} from your own account and send:\n  /pair ${win.code}\n`);
   io.stdout.write('The code is valid for 5 minutes and works once. Waiting… (Ctrl-C to stop)\n');
+  // The pairing window's own timer holds the event loop until it ends (cleared in the finally below), so the wait
+  // cannot be dropped as "nothing pending" when the connector has no open request at that moment (task-1574).
   const limit = setTimeout(() => ac.abort(), deps.pairTimeoutMs ?? Math.max(0, win.expiresAt - now()));
-  limit.unref?.();
   // 2. A 409 (another getUpdates poll) at any point in the window ends it: that poller may have read the code.
   const watch = setInterval(() => { if (conn.health().conflict) ac.abort(); }, 100);
   watch.unref?.();
