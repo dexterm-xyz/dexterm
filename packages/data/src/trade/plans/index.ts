@@ -14,8 +14,6 @@ export { RpcOutage } from './executor.ts';
 export type { Executor, Quote, QuoteRequest, SubmitRequest, SubmitOutcome, ChainLookup, Fill } from './executor.ts';
 export { PaperPlanExecutor } from './executor-paper.ts';
 export type { PaperPlanExecutorOptions } from './executor-paper.ts';
-export { LivePlanExecutor, LIVE_BUILD_TTL_MS } from './executor-live.ts';
-export type { LivePlanExecutorOptions } from './executor-live.ts';
 export { PlanEngine, PolicyRefusal, TERMINAL } from './engine.ts';
 export type { EngineDeps, PriceTick, SafetyFn, LedgerView, BatchArmResult } from './engine.ts';
 export { PlanService, parseAmount, parseTrigger, parseExit, planStatusLabel, defaultPlansJournalPath } from './service.ts';

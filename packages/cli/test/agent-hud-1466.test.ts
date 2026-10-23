@@ -49,7 +49,7 @@ function storyFor(mint: string, symbol: string, upTo: number): AgentStory {
 
 function hudFrame(screen: string, dt: number, opts: { extra?: string[]; story?: AgentStory; depth?: 'none'; h?: number; axis?: 'mcap' | 'price' } = {}) {
   const st = fixtureState(screen, opts.extra);
-  if (opts.axis) st.chartAxis = opts.axis; // task-1472
+  if (opts.axis) { st.chartAxis = opts.axis; st.priceMode = opts.axis; } // task-1472; task-1537: the HUD's text follows the price basis
   const row = screenerView(st.screener)[0];
   const story = opts.story ?? storyFor(row.mint, row.symbol, dt);
   if (opts.depth) st.colorDepth = opts.depth;
@@ -99,7 +99,7 @@ test('the execution moment: ticket assembles, FILLED with the app numbers, then 
   const holding = hudFrame('screener', 13_000).rows.join('\n');
   assert.match(holding, /PAPER POSITION/);
   assert.match(holding, /peak \+35\.0%/);
-  // task-1472: the chart axis defaults to market cap, so entry/mark read MC (compact k/M/B) when the supply is known
+  // task-1472 / task-1537: the price basis defaults to market cap, so entry/mark read MC (compact k/M/B) when the supply is known
   assert.match(holding, /entry MC \$[\d.]+[kMBT]? · mark MC \$[\d.]+[kMBT]?/);
   assert.match(hudFrame('token', 13_000, { axis: 'price' }).rows.join('\n'), /entry \$0\.0100 · mark \$0\.0135/);
   const result = hudFrame('token', 21_000).rows.join('\n');

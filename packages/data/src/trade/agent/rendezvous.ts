@@ -72,9 +72,10 @@ export function readPaperAgentRendezvous(env: NodeJS.ProcessEnv = process.env): 
   }
 }
 
-const VALID_STATES: readonly DeskControlState[] = ['running', 'paused', 'stopped', 'takeover'];
+const VALID_STATES: readonly DeskControlState[] = ['running', 'paused', 'stopped', 'takeover', 'close-only'];
 
-/** Write the live control state (0600). The app calls this on pause / take-over / stop / resume. */
+/** Write the live control state (0600). The app calls this on pause / take-over / stop / resume, and autotrade's
+ *  soft stop writes `close-only` (task-1506 P2: exits keep running, buys are refused). */
 export function writeDeskControl(control: DeskControl, env: NodeJS.ProcessEnv = process.env): void {
   const p = paperAgentControlPath(env);
   mkdirSync(dirname(p), { recursive: true, mode: 0o700 });

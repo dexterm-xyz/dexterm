@@ -1,7 +1,7 @@
 // dexterm — app state consumed by the screens. Screens are pure render(canvas, state) functions;
 // renderFrame() draws the screen, the toast, then runs the effects post-pass (VISUAL-V2 §3).
 import {
-  Canvas, THEMES, applyFx, toast, makeVfx, setSources, marketActivity, candleActivity, isCalm, breakpoint,
+  Canvas, THEMES, applyFx, toast, makeVfx, setSources, marketActivity, candleActivity, isCalm, breakpoint, fmtMcap,
   type Theme, type ScreenKey, type HeaderModel, type Vfx, type Intensity, type Activity, type ColorDepth,
 } from '@dexterm/tui';
 import { makeFixtures, type Fixtures, type FixtureToken, type TranscriptLine } from './fixtures.ts';
@@ -16,7 +16,7 @@ import type { FlowTracker } from './live/flow.ts';
 import { renderScreener } from './screens/screener.ts';
 import { renderToken } from './screens/token.ts';
 import { agentBrainActive } from './screens/brain.ts';
-import { pnlChipVM, renderPnlChip, type OwnPnlTracker, type PnlChipVM } from './screens/pnl-chip.ts';
+import { pnlChipVM, renderPnlChip, CHIP_PRICE_LEVEL, type OwnPnlTracker, type PnlChipVM } from './screens/pnl-chip.ts';
 import type { StoryView } from '@dexterm/agents';
 import { renderNewPairs } from './screens/newpairs.ts';
 import { renderWatchlist } from './screens/watchlist.ts';
@@ -32,6 +32,8 @@ import { renderNarrative } from './screens/narrative.ts';
 import { renderPlans } from './screens/plans.ts';
 import { renderFollows } from './screens/follows.ts';
 import { renderRules } from './screens/rules.ts';
+import { renderAutotrade } from './screens/autotrade-screen.ts';
+import type { AutotradeUi } from './screens/autotrade-ui.ts';
 import type { RulesUi } from './rules.ts';
 import type { PnlUi } from './pnl-app.ts';
 import { CopyLive } from './live/copy.ts';
@@ -51,7 +53,7 @@ import type { ScanConfig } from './scan/engine.ts';
 import { renderVoiceHud, type VoiceHud } from './voice-hud.ts';
 import { composeHud, DOCK_ROWS, HUD_MIN_H, type AgentHudState } from './screens/agent-hud.ts';
 import { workspaceBadge, type CustomUi } from './custom.ts';
-import { chartAxisOf, supplyRatio, type PriceMode, type ChartAxis } from './display.ts';
+import { chartAxisOf, supplyRatio, priceModeOf, supplyForMint, type PriceMode, type ChartAxis, type ChartMarkers } from './display.ts';
 
 /** The analyst's streaming state: a Claude-Code-style spinner, then the answer decrypts in. */
 export interface AiState {
@@ -187,7 +189,7 @@ export interface AppState {
    */
   pendingPopup?: 'chart' | 'bubbles' | 'narrative' | 'plans' | 'token' | 'feeds' | null;
   /** A `/wallet …` command for the loop to perform (task-1328): link opens a browser; probe opens a LIVE ticket. */
-  pendingWallet?: 'status' | 'link' | 'unlink' | 'panic' | 'probe' | null;
+  pendingWallet?: 'status' | 'link' | 'unlink' | 'panic' | null;
   /**
    * The popup-window controller for this run (task-1290); created lazily on the first popup open. Only ever
    * set in live/replay interactive mode. Closing a popup never touches the terminal; quit tears it down.
@@ -269,6 +271,9 @@ export interface AppState {
   // ---- task-1358 Tier 3 rules engine: the RULES screen (ctrl+r)
   /** The rules engine + screen state (rules, proposals, log, the rule being typed). Created when config loads or the screen opens. */
   rulesUi?: RulesUi | null;
+  // ---- task-1508 AUTOTRADE (paper): the Q screen
+  /** Strategies, editor, compare, backtest and runner views; created when the screen first opens. */
+  autotradeUi?: AutotradeUi | null;
   /** task-1358 Tier 5: last push time per open pack widget + topic (`<key>|<topic>` → ms); the sync path throttles on it. */
   widgetSync?: Map<string, number>;
   // ---- task-1340 wallet intel + trade moments
@@ -297,6 +302,11 @@ export interface AppState {
    * unset) or 'price'. From config.display.chartAxis; `A` / the popup control toggle + save it. Display only.
    */
   chartAxis?: ChartAxis;
+  /**
+   * task-1483: BUY / SELL markers (and the avg-entry line) on both charts: 'on' (default, also when unset) or 'off'.
+   * From config.display.chartMarkers; the chart popup's MARKERS control toggles + saves it. Display only.
+   */
+  chartMarkers?: ChartMarkers;
   /**
    * task-1388 GO-TO prompt: the one-line "paste a contract address to open any coin" input, opened with `g`
    * on the screener / new pairs / watchlist / token screens. `null` = closed. While open the interactive loop
@@ -420,11 +430,9 @@ export interface PlansUi {
   arming: { kind: 'plan'; id: string; mandateId: string; held: number } | { kind: 'mandate'; id: string; held: number } | null;
   /** the "less safe" hands-free opt-in modal (Tier 4): accepted by a physical keypress only, or null */
   riskModal: boolean;
-  /** task-1363: the FIRE PATH modal (paper ⇄ live devnet fast wallet): switched by a captured physical keypress only */
-  liveModal: boolean;
 }
 
-export function newPlansUi(): PlansUi { return { tab: 'plans', selected: 0, notice: null, arming: null, riskModal: false, liveModal: false }; }
+export function newPlansUi(): PlansUi { return { tab: 'plans', selected: 0, notice: null, arming: null, riskModal: false }; }
 
 /**
  * task-1363: how old a board price may be and still fire a plan. The terminal feeds the plan engine from its
@@ -534,6 +542,7 @@ export const RENDERERS: Record<ScreenKey, ScreenRenderer> = {
   plans: renderPlans,
   follows: renderFollows,
   rules: renderRules,
+  autotrade: renderAutotrade,
 };
 
 export const SCREEN_NAMES = Object.keys(RENDERERS) as ScreenKey[];
@@ -556,6 +565,8 @@ export function isDemoScreen(s: AppState): boolean {
   if (s.screen === 'bubbles') return false;
   // task-1360: the follows screen shows the user's own list + the tracker's real state (unavailable when keyless).
   if (s.screen === 'follows') return false;
+  // task-1508: the autotrade screen reads the user's own strategy files and the runner's status file (PAPER badge).
+  if (s.screen === 'autotrade') return false;
   // analyst screen: a live Claude session (even mid-run or failed) is real output, not demo data
   return !s.analyst;
 }
@@ -574,25 +585,18 @@ export function headerModel(s: AppState): HeaderModel {
   if (s.screen === 'ticket' || s.screen === 'positions') { status = '◈ PAPER · simulation'; feedLabel = 'jupiter keyless quote · paper wallet'; }
   if (s.screen === 'trending' && s.live) feedLabel = 'jupiter · gecko · boosts · coingecko · rss · keyless';
   if (s.screen === 'kol') feedLabel = 'kol lists · sqlite';
-  // task-1355: the plans screen is the signer trust domain; it is paper by default and says so.
-  // task-1363: once the fire path is LIVE (devnet fast wallet, keypress opt-in) the header says so; anything not
-  // provably paper renders LIVE (fail-safe).
+  // task-1355: the plans screen fires on PAPER only (task-1571: there is no live fire path) and says so.
   if (s.screen === 'plans') {
-    const paper = s.plansSvc ? s.plansSvc.mode() === 'paper' : true;
-    status = paper ? '◈ PAPER · plans journal' : '◉ LIVE · DEVNET · fast wallet';
-    feedLabel = paper ? 'order plans · standing mandates · hash-chained journal' : 'order plans · signer process · fast wallet · devnet';
+    status = '◈ PAPER · plans journal';
+    feedLabel = 'order plans · standing mandates · hash-chained journal';
   }
   // task-1360: the follows screen reads public history for the user's own list; it never trades.
   if (s.screen === 'follows') feedLabel = `${s.live?.rpc.provider === 'helius' ? 'helius history · ' : ''}your follow list (local) · alerts`;
   // task-1358: the rules screen evaluates the screener rows locally; rules only alert or PROPOSE.
   if (s.screen === 'rules') feedLabel = 'rules · config.json · alerts + proposals only · nothing arms';
+  // task-1508: autotrade is paper only; the screen edits strategy files and reads recorded history.
+  if (s.screen === 'autotrade') { status = '◈ PAPER · autotrade'; feedLabel = 'strategies · recorded history · paper runner status'; }
   if (s.screen === 'bubbles') feedLabel = `${s.live?.rpc.provider === 'helius' ? 'helius history · ' : ''}rpc holders · rules · sqlite`;
-  // task-1328: a LIVE ticket says so in the header, with the SIGNER's network (never a UI flag).
-  if (s.screen === 'ticket' && s.live?.ticket?.ticket.mode === 'live') {
-    const net = s.live.ticket.view().live?.signer?.network ?? null;
-    status = net === 'mainnet' ? '⚠ LIVE · MAINNET · real funds' : net === 'devnet' ? '◉ LIVE · DEVNET' : '◉ LIVE · signer unreachable';
-    feedLabel = 'signer process · jupiter · phantom';
-  }
   // task-1324: while AI scan mode is on the header ALWAYS says so (state + the scan's analyst meter +
   // any Helius credit warning), on every screen — the running indicator wins over every other status.
   let scanStatus: string | null = null;
@@ -626,6 +630,8 @@ export interface FixtureStateOpts {
   /** Hex-only rain glyphs (no katakana). */
   asciiRain?: boolean;
   colorDepth?: ColorDepth;
+  /** task-1537: the price basis (absent = the default, market cap). The prototype-parity goldens pin 'price'. */
+  priceMode?: PriceMode;
 }
 
 /** The prototype's frozen clock: 2026-10-05 23:04:11 UTC (19:04:11 in New York). */
@@ -657,6 +663,7 @@ export function makeFixtureState(opts: FixtureStateOpts = {}): AppState {
     larpByMint: new Map(),
     colorDepth: opts.colorDepth ?? 'truecolor',
   };
+  if (opts.priceMode) state.priceMode = opts.priceMode;
   refreshVfx(state);
   if (screen === 'ticket' || screen === 'positions') seedDemoTrade(state);
   return state;
@@ -798,7 +805,7 @@ export function renderFrame(state: AppState, w: number, h: number): Canvas {
   return composeHud(new Canvas(w, h, state.theme), screen, view, {
     now, reduced: !!hud.reduced || isCalm(state.vfx), depth: state.colorDepth, dataLabel: hud.dataLabel ?? null, screen: state.screen, brain,
     chip: pnlChipFor(state, now, view),
-    mcapScale: chartAxisOf(state) === 'mcap' ? (mint) => hudMcapScale(state, mint) : undefined, // task-1472
+    mcapScale: priceModeOf(state) === 'mcap' ? (mint) => hudMcapScale(state, mint) : undefined, // task-1472; task-1537: the HUD's text follows the price basis (the charts keep A)
   });
 }
 
@@ -819,11 +826,14 @@ function hudMcapScale(state: AppState, mint: string): number | null {
  */
 export function pnlChipFor(state: AppState, now: number, view?: StoryView): PnlChipVM | null {
   const hud = state.agentHud;
+  // task-1537: entry / mark / TP read as market caps by default (the coin's known supply), else prices
+  const mode = priceModeOf(state);
+  const lvl = (u: number, mint: string): string => { const sup = mode === 'mcap' ? supplyForMint(state, mint) : null; return sup !== null ? fmtMcap(u * sup) : CHIP_PRICE_LEVEL(u, mint); };
   if (hud) {
-    const m = pnlChipVM(view ?? hud.story.view(now), now);
+    const m = pnlChipVM(view ?? hud.story.view(now), now, lvl);
     if (m) return m;
   }
-  if (state.scan?.engine.on && state.ownPnl) return state.ownPnl.vm(now);
+  if (state.scan?.engine.on && state.ownPnl) return state.ownPnl.vm(now, lvl);
   return null;
 }
 

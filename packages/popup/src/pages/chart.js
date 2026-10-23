@@ -15,6 +15,8 @@
   const chipEl = $('pnlchip');
   const imgSlot = $('coin-img-slot');
   const chartEl = $('chart'), drawCv = $('draw'), dctx = drawCv.getContext('2d');
+  // task-1483: the BUY / SELL marker hover card (built with textContent only)
+  const tipEl = document.createElement('div'); tipEl.className = 'mtip'; tipEl.hidden = true; chartEl.parentNode.appendChild(tipEl);
   const STALE_MS = 20_000;
   const DEFAULT_IND = ['volume', 'tape', 'ema9', 'ema21'];
   /** Exposed for the headless harness (measure/popup-v2-1325): first paint + setData → repaint latency. */
@@ -26,6 +28,8 @@
     draw: null, tPending: null, hover: null, drawings: [], lastDataAt: 0, firstPainted: false, fitNext: true,
     banners: { fallback: null, data: null },
     display: C.displayOf(null), // task-1366: price | mcap (from the VM's priceMode + supply)
+    marks: null, // task-1483: { set, on } — the BUY / SELL markers for the bars on screen (chart-lib chartMarkers)
+    mouse: null, // task-1483: crosshair point for the marker hover card
   };
 
   const banner = () => {
@@ -88,7 +92,8 @@
   function levels() {
     const vm = S.vm || {}, pos = vm.position || null, out = [];
     const last = S.bars.length ? S.bars[S.bars.length - 1].close : null;
-    for (const v of [pos && pos.avgEntryUsd, pos && pos.stopUsd, pos && pos.targetUsd, vm.feed === 'LIVE' ? vm.livePrice : null]) {
+    const mk = S.marks && S.marks.on ? S.marks.set.markers.map((m) => m.priceUsd) : []; // task-1483: keep the fills in view
+    for (const v of [pos && pos.avgEntryUsd, pos && pos.stopUsd, pos && pos.targetUsd, vm.feed === 'LIVE' ? vm.livePrice : null, ...mk]) {
       if (typeof v === 'number' && v > 0 && last && v / last < 3 && last / v < 3) out.push(v);
     }
     return out;
@@ -160,7 +165,7 @@
   DT.onTheme(applyChartTheme);
 
   // ---------------------------------------------------------------- toolbar (buttons built with textContent only)
-  const btns = { tf: new Map(), axis: new Map(), styles: new Map(), scales: new Map(), inds: new Map(), draws: new Map() };
+  const btns = { tf: new Map(), axis: new Map(), marks: new Map(), styles: new Map(), scales: new Map(), inds: new Map(), draws: new Map() };
   function mkBtn(group, id, label, title, onClick) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'tb'; b.textContent = label; b.title = title;
     b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
@@ -170,6 +175,8 @@
   // task-1472: MCAP | PRICE asks the terminal to switch (and save) the chart axis; the next VM re-labels the page
   mkBtn('axis', 'mcap', 'MCAP', 'Y axis: market cap (A / y toggles; saved by the terminal)', () => setAxis('mcap'));
   mkBtn('axis', 'price', 'PRICE', 'Y axis: USD price (A / y toggles; saved by the terminal)', () => setAxis('price'));
+  // task-1483: MARKERS on/off asks the terminal to switch (and save) display.chartMarkers; the next VM carries it
+  mkBtn('marks', 'on', 'MARKERS', 'BUY / SELL markers of your paper + live fills (k toggles; saved by the terminal)', () => setMarkers(!(S.vm && S.vm.marks && S.vm.marks.on)));
   mkBtn('styles', 'candles', 'candles', 'candlesticks (c cycles)', () => setStyle('candles', true));
   mkBtn('styles', 'line', 'line', 'line (c cycles)', () => setStyle('line', true));
   mkBtn('styles', 'area', 'area', 'area (c cycles)', () => setStyle('area', true));
@@ -189,6 +196,8 @@
     for (const [iv, b] of btns.tf) { b.classList.toggle('on', iv === S.interval); b.classList.toggle('pending', iv === S.pendingInterval && iv !== S.interval); }
     const ax = S.vm && S.vm.priceMode === 'mcap' ? 'mcap' : 'price';
     for (const [k, b] of btns.axis) b.classList.toggle('on', k === ax);
+    const mOn = !!(S.vm && S.vm.marks && S.vm.marks.on);
+    for (const [, b] of btns.marks) { b.classList.toggle('on', mOn); b.hidden = !(S.vm && S.vm.marks); }
     for (const [k, b] of btns.styles) b.classList.toggle('on', k === S.style);
     for (const [k, b] of btns.scales) b.classList.toggle('on', k === S.scale);
     for (const [k, b] of btns.inds) b.classList.toggle('on', S.ind.has(k));
@@ -206,6 +215,11 @@
   function setAxis(axis) {
     if (axis !== 'mcap' && axis !== 'price') return;
     DT.send({ type: 'event', name: 'chart.axis', payload: { axis } });
+  }
+  /** task-1483: ask the terminal to show / hide the markers; nothing changes here until its next VM says so. */
+  function setMarkers(on) {
+    if (typeof on !== 'boolean') return;
+    DT.send({ type: 'event', name: 'chart.markers', payload: { on } });
   }
   function setStyle(st, user) {
     if (!C.STYLES.includes(st) || st === S.style) return;
@@ -271,9 +285,82 @@
     const times = new Set(S.bars.map((b) => b.time));
     const list = [];
     if (S.ind.has('tape')) list.push(...C.tapeMarkers(vm.trades, periodMs(), times, { up: DT.rgba(T.up, 0.85), down: DT.rgba(T.down, 0.85) }));
-    if (vm.position && vm.position.fills) list.push(...C.fillMarkers(vm.position.fills, periodMs(), times, { buy: T.accent, sell: T.warn }));
     list.sort((a, b) => a.time - b.time);
     markers[S.style].setMarkers(list);
+    computeMarks();
+  }
+
+  // ---------------------------------------------------------------- task-1483: BUY / SELL markers of the ledgers' fills
+  // Bucketed to THIS page's timeframe by the bars' real times (re-bucketed on every timeframe change), drawn on the
+  // overlay canvas so paper (hollow) and live (solid) read apart, re-clustered when zooming out, hover card per marker.
+  function computeMarks() {
+    const mk = S.vm && S.vm.marks;
+    if (!mk) { S.marks = null; return; }
+    S.marks = { on: !!mk.on, truncated: mk.truncated | 0, set: C.chartMarkers(mk.fills, periodMs(), S.bars.map((b) => b.t)) };
+  }
+  const MARK_PX = 6;
+  let markHits = [];
+  function drawMarks(ts, s, paneH) {
+    markHits = [];
+    const mk = S.marks;
+    if (!mk || !mk.on || !S.bars.length) return;
+    const x0 = ts.logicalToCoordinate(0), x1 = ts.logicalToCoordinate(1);
+    const spacing = x0 != null && x1 != null ? Math.abs(x1 - x0) : 7;
+    // closed round trips: a faint wash entry → exit (green when sold above the entry)
+    for (const r of mk.set.trips) {
+      const a = C.logicalOf(S.bars, C.chartTime(Math.floor(r.openT / periodMs()) * periodMs()), periodMs() / 1000);
+      const b = C.logicalOf(S.bars, C.chartTime(Math.floor(r.closeT / periodMs()) * periodMs()), periodMs() / 1000);
+      const xa = ts.logicalToCoordinate(a), xb = ts.logicalToCoordinate(b);
+      if (xa == null || xb == null) continue;
+      const win = r.entryUsd !== null && r.exitUsd !== null ? r.exitUsd >= r.entryUsd : null;
+      dctx.fillStyle = DT.rgba(win === null ? T.muted : win ? T.up : T.down, 0.07);
+      dctx.fillRect(Math.min(xa, xb) - spacing / 2, 0, Math.abs(xb - xa) + spacing, paneH);
+    }
+    const shown = C.clusterMarkers(mk.set.markers, spacing, 14);
+    const used = new Map();
+    dctx.font = 'bold 10px ui-monospace, Menlo, monospace'; dctx.textAlign = 'center'; dctx.textBaseline = 'middle';
+    for (const m of shown) {
+      const x = ts.logicalToCoordinate(m.index);
+      const bar = S.bars[m.index];
+      if (x == null || !bar) continue;
+      const buy = m.side === 'buy';
+      let y = m.priceUsd !== null ? s.priceToCoordinate(m.priceUsd) : s.priceToCoordinate(buy ? bar.low : bar.high);
+      if (y == null) continue;
+      if (m.priceUsd === null) y += buy ? 4 : -4; // no recorded price: against the bar, never at a made-up price
+      // a second marker on the same bar and side steps away from the bar, never across it
+      const k = `${m.index}|${m.side}`; const n = used.get(k) || 0; used.set(k, n + 1);
+      if (n) y += (buy ? 1 : -1) * n * (MARK_PX * 1.6 + 12);
+      if (y < -20 || y > paneH + 20) continue;
+      const g = C.markerShape(m.side, x, y, MARK_PX);
+      const col = buy ? T.up : T.down;
+      dctx.beginPath(); dctx.moveTo(g.tri[0][0], g.tri[0][1]); dctx.lineTo(g.tri[1][0], g.tri[1][1]); dctx.lineTo(g.tri[2][0], g.tri[2][1]); dctx.closePath();
+      // a dark halo first, so a green buy still reads on a green candle (and a red sell on a red one)
+      dctx.setLineDash([]); dctx.lineJoin = 'round'; dctx.lineWidth = 4; dctx.strokeStyle = DT.rgba(T.bg, 0.92); dctx.stroke();
+      if (m.source === 'live') { dctx.fillStyle = col; dctx.fill(); dctx.lineWidth = 1.2; dctx.strokeStyle = DT.rgba(T.text, 0.95); dctx.stroke(); } // solid + a light edge: never mistaken for a hollow paper mark on a same-colour candle
+      else { dctx.fillStyle = DT.rgba(T.bg, 0.85); dctx.fill(); dctx.fillStyle = DT.rgba(col, 0.22); dctx.fill(); dctx.lineWidth = 1.6; dctx.strokeStyle = col; dctx.stroke(); }
+      const txt = `${C.markerLetter(m.side)}${m.count > 1 ? '×' + m.count : ''}`;
+      dctx.lineWidth = 3; dctx.strokeStyle = DT.rgba(T.bg, 0.92); dctx.strokeText(txt, g.labelX, g.labelY);
+      dctx.fillStyle = col; dctx.fillText(txt, g.labelX, g.labelY);
+      markHits.push({ m, hit: g.hit, x, y });
+    }
+    hoverMarks();
+  }
+  /** The hover card for the marker under the crosshair (time, price, size, source). Text only. */
+  function hoverMarks() {
+    const p = S.mouse;
+    const hit = p ? markHits.find((h) => p.x >= h.hit.x0 && p.x <= h.hit.x1 && p.y >= h.hit.y0 && p.y <= h.hit.y1) : null;
+    if (!hit) { if (!tipEl.hidden) tipEl.hidden = true; return; }
+    const lines = C.markerTooltip(hit.m, S.display, (ms) => fmtTime(C.chartTime(ms)));
+    const key = lines.join('|');
+    if (tipEl.dataset.k !== key) {
+      tipEl.dataset.k = key;
+      while (tipEl.firstChild) tipEl.removeChild(tipEl.firstChild);
+      lines.forEach((t, i) => tipEl.appendChild(el('div', i === 0 ? `h ${hit.m.side}` : i === lines.length - 1 ? `src ${hit.m.source}` : null, t)));
+    }
+    tipEl.hidden = false;
+    const w = chartEl.clientWidth;
+    const left = hit.x + 14 + 190 > w ? hit.x - 14 - tipEl.offsetWidth : hit.x + 14;
+    tipEl.style.left = `${Math.max(4, left)}px`; tipEl.style.top = `${Math.max(4, hit.y - 20)}px`;
   }
 
   function renderOverlays() {
@@ -281,7 +368,8 @@
     const pos = vm.position || null;
     if (pos && typeof pos.avgEntryUsd === 'number' && pos.avgEntryUsd > 0) {
       const pct = typeof pos.unrealizedPct === 'number' ? ` ${C.fmtPct(pos.unrealizedPct, 1)}` : '';
-      setLine('entry', { price: pos.avgEntryUsd, color: T.warn, lineWidth: 1, lineStyle: L.LineStyle.Solid, axisLabelVisible: true, axisLabelColor: T.warn, axisLabelTextColor: T.bg, title: `ENTRY ${pos.sizeLabel}${pct}` });
+      // task-1483: the average entry of the open position is a DASHED line (fills are the triangles)
+      setLine('entry', { price: pos.avgEntryUsd, color: pos.kind === 'paper' ? T.warn : T.text, lineWidth: 1, lineStyle: L.LineStyle.LargeDashed, axisLabelVisible: true, axisLabelColor: pos.kind === 'paper' ? T.warn : T.text, axisLabelTextColor: T.bg, title: `AVG ENTRY ${pos.sizeLabel}${pct}` });
     } else setLine('entry', null);
     setLine('stop', pos && typeof pos.stopUsd === 'number' && pos.stopUsd > 0 ? { price: pos.stopUsd, color: T.down, lineWidth: 1, lineStyle: L.LineStyle.Dashed, axisLabelVisible: true, title: 'STOP' } : null);
     setLine('target', pos && typeof pos.targetUsd === 'number' && pos.targetUsd > 0 ? { price: pos.targetUsd, color: T.up, lineWidth: 1, lineStyle: L.LineStyle.Dashed, axisLabelVisible: true, title: 'TARGET' } : null);
@@ -342,8 +430,14 @@
       r2.appendChild(s);
     }
     if (r2.firstChild) legendEl.appendChild(r2);
+    // task-1483: which markers are on screen, and what the window left off (never moved onto another bar)
+    if (S.marks && S.marks.on) {
+      const lg = C.markerLegend(S.marks.set.markers);
+      const om = C.omittedNote({ ...S.marks.set, before: S.marks.set.before + S.marks.truncated });
+      if (lg || om) { const r3 = el('div', 'row3'); if (lg) r3.appendChild(el('span', S.marks.set.markers.some((m) => m.source === 'paper') ? 'paper' : null, lg)); if (om) r3.appendChild(el('span', null, `${lg ? '  · ' : ''}${om}`)); legendEl.appendChild(r3); }
+    }
   }
-  chart.subscribeCrosshairMove((p) => { S.hover = p && p.time != null ? p.time : null; renderLegend(S.hover); });
+  chart.subscribeCrosshairMove((p) => { S.hover = p && p.time != null ? p.time : null; S.mouse = p && p.point ? { x: p.point.x, y: p.point.y } : null; renderLegend(S.hover); });
 
   // ---------------------------------------------------------------- header, LIVE badge, banner, position row
   function renderHeader() {
@@ -437,7 +531,7 @@
     // task-1366: a mode / supply change re-labels the axis in place (the bars are prices either way)
     const disp = C.displayOf(vm);
     if (disp.key !== S.display.key) { S.display = disp; applyPriceFormat(); }
-    if (tail && (!vm.seriesKey || vm.seriesKey !== S.key)) { S.vm = { ...vm, candles: [] }; renderHeader(); renderPosition(); renderChip(); renderOverlays(); return; }
+    if (tail && (!vm.seriesKey || vm.seriesKey !== S.key)) { S.vm = { ...vm, candles: [] }; renderHeader(); renderPosition(); renderChip(); renderOverlays(); computeMarks(); syncToolbar(); return; }
     const intervalChanged = vm.interval !== S.interval;
     S.interval = vm.interval;
     const answered = S.pendingInterval === vm.interval ? S.reqAt : null;
@@ -520,10 +614,12 @@
     dctx.clearRect(0, 0, w, h);
     const segs = S.drawings.filter((d) => d.kind === 't').map((d) => [d.a, d.b]);
     if (S.tPending && mouse) segs.push([S.tPending, mouse]);
-    if (!segs.length || !S.bars.length) return;
+    if (!S.bars.length) return;
     const ts = chart.timeScale(), s = active(), pS = periodMs() / 1000;
     const paneH = chart.panes()[0] ? chart.panes()[0].getHeight() : h;
     dctx.save(); dctx.beginPath(); dctx.rect(0, 0, ts.width(), paneH); dctx.clip();
+    drawMarks(ts, s, paneH); // task-1483
+    if (!segs.length) { dctx.restore(); return; }
     dctx.strokeStyle = T.accent; dctx.fillStyle = T.accent; dctx.lineWidth = 1.5;
     for (const [a, b] of segs) {
       const xa = ts.logicalToCoordinate(C.logicalOf(S.bars, a.time, pS)), xb = ts.logicalToCoordinate(C.logicalOf(S.bars, b.time, pS));
@@ -552,6 +648,7 @@
       case 'm': toggleInd('volma'); break;
       case 'v': toggleInd('volume'); break;
       case 'b': toggleInd('tape'); break;
+      case 'k': setMarkers(!(S.vm && S.vm.marks && S.vm.marks.on)); break; // task-1483
       case 'h': armDraw('h'); break;
       case 't': armDraw('t'); break;
       case 'x': clearDrawings(); break;

@@ -72,6 +72,7 @@ keys:
   - ctrl+w o
   - ctrl+w d
   - ctrl+r
+  - Q
 actions:
   - quit
   - screen.screener
@@ -123,6 +124,7 @@ actions:
   - workspace.popups
   - workspace.default
   - screen.rules
+  - screen.autotrade
 confidence: high
 owner: maintainers
 origin: app-help-generated
@@ -186,5 +188,6 @@ Keys on this screen:
   `^W o` — open workspace popups
   `^W d` — default workspace
   `^R` — rules
+  `Q` — autotrade (paper)
   `c` — calm mode (effects off)
   `?` — this help

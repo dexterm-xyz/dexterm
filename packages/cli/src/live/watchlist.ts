@@ -82,7 +82,7 @@ export class WatchlistLive {
       this.store.propose({ mint: c.mint, kind: 'mcap', op: '<', value: c.mcap * 0.5, note: 'half mcap vs add' });
       proposed = 2;
     }
-    this.store.log({ mint: c.mint, kind: 'watch', level: 'info', text: `${c.symbol} added to watchlist${c.price !== null ? ` at ${fmtPrice(c.price)}` : c.mcap ? ` at ${fmtAny('mcap', c.mcap)} mcap` : ''}` });
+    this.store.log({ mint: c.mint, kind: 'watch', level: 'info', text: `${c.symbol} added to watchlist${c.mcap ? ` at ${fmtAny('mcap', c.mcap)} mcap${c.price !== null ? ` (${fmtPrice(c.price)})` : ''}` : c.price !== null ? ` at ${fmtPrice(c.price)}` : ''}` }); // task-1537: the cap first, both kept
     this.notice = `watching $${c.symbol}${proposed ? ` · ${proposed} alert proposals (y to arm, x to dismiss)` : ' · no price or mcap yet, so no alert proposals'}`;
     this.onChange?.();
     return 'added';

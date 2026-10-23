@@ -6,7 +6,7 @@
 // section at all (additional:false makes an attempt to add one a precise refusal), and the v1 migration
 // demonstrates moving a key OUT of the config file into `~/.dexterm/<name>.key`.
 
-export const CONFIG_VERSION = 4;
+export const CONFIG_VERSION = 5;
 
 export interface SchemaError { path: string; msg: string }
 
@@ -117,12 +117,14 @@ export const WIDGET_REF = '^[a-z][a-z0-9-]{0,39}/[a-z][a-z0-9-]{0,39}(/[a-z][a-z
 export const WORKSPACE_SCREENS = ['screener', 'token', 'newpairs', 'watchlist', 'analyst', 'positions', 'narrative', 'plans', 'trending'] as const;
 export const LAYOUT_SCREENS = ['screener', 'token', 'newpairs', 'watchlist', 'analyst', 'positions'] as const;
 /**
- * task-1366: how token prices are DISPLAYED. `price` (default) = USD per token; `mcap` = market cap (price × supply,
- * supply from the data layer). A display mode only: the same data underneath, nothing that trades reads it.
+ * task-1366: how token prices are DISPLAYED. `mcap` = market cap (price × a known supply); `price` = USD per token.
+ * task-1537: `display.priceMode` is THE price-basis key for the UI, the CLI text AND the agents' language, default
+ * `mcap` (the v4 → v5 migration moves a `price` that was only the old default). A display / wording mode only: the
+ * same data underneath, nothing that trades reads it. @dexterm/data/basis holds the resolver and formatters.
  */
 export const PRICE_MODES = ['price', 'mcap'] as const;
 export type PriceMode = (typeof PRICE_MODES)[number];
-export const DEFAULT_PRICE_MODE: PriceMode = 'price';
+export const DEFAULT_PRICE_MODE: PriceMode = 'mcap';
 /**
  * task-1472: what the CHART Y axis shows (the terminal token chart and the chart popup), separate from the table/header
  * price mode: `mcap` (default; absent = mcap, so existing configs get it too) or `price`. `A` / the popup control toggle it.
@@ -130,6 +132,13 @@ export const DEFAULT_PRICE_MODE: PriceMode = 'price';
 export const CHART_AXES = ['mcap', 'price'] as const;
 export type ChartAxis = (typeof CHART_AXES)[number];
 export const DEFAULT_CHART_AXIS: ChartAxis = 'mcap';
+/**
+ * task-1483: whether both charts draw the BUY / SELL markers of the ledgers' fills (and the avg-entry line): `on`
+ * (default; absent = on) or `off`. The chart popup's MARKERS control and `dexterm display markers` set it. Display only.
+ */
+export const CHART_MARKERS = ['on', 'off'] as const;
+export type ChartMarkers = (typeof CHART_MARKERS)[number];
+export const DEFAULT_CHART_MARKERS: ChartMarkers = 'on';
 
 const tokenProps = (): Record<string, SchemaNode> => Object.fromEntries([...THEME_TOKENS.map((t) => [t, 'hex'] as const), ...THEME_RAMPS.map((t) => [t, 'ramp'] as const)]);
 
@@ -228,8 +237,8 @@ export const SCHEMAS: Record<string, SchemaNode> = {
       user: { type: 'object', values: 'userTheme' },
     } },
     fx: { type: 'object', additional: false, props: { intensity: { type: 'string', enum: ['off', 'normal', 'fever'] }, sound: { type: 'boolean' } } },
-    /** task-1366: display options. `priceMode` price | mcap (the `$` key toggles and persists it). task-1472: `chartAxis` mcap | price (`A`; absent = mcap). */
-    display: { type: 'object', additional: false, props: { priceMode: { type: 'string', enum: PRICE_MODES }, chartAxis: { type: 'string', enum: CHART_AXES } } },
+    /** task-1366: display options. `priceMode` price | mcap (the `$` key toggles and persists it). task-1472: `chartAxis` mcap | price (`A`; absent = mcap). task-1483: `chartMarkers` on | off (absent = on). */
+    display: { type: 'object', additional: false, props: { priceMode: { type: 'string', enum: PRICE_MODES }, chartAxis: { type: 'string', enum: CHART_AXES }, chartMarkers: { type: 'string', enum: CHART_MARKERS } } },
     layout: { type: 'object', additional: false, props: {
       workspace: { type: 'string', pattern: WS_NAME },
       workspaces: { type: 'object', values: 'workspace' },
@@ -255,7 +264,7 @@ export const SCHEMAS: Record<string, SchemaNode> = {
     } },
     /** 0.1.5: which of the user's own CLIs runs the analyst. `/analyst` is user-only (DENIED_FOR_MODELS): a model never picks its own engine. */
     analyst: { type: 'object', additional: false, props: {
-      engine: { type: 'string', enum: ['auto', 'claude', 'codex'] },
+      engine: { type: 'string', enum: ['auto', 'claude', 'codex', 'ollama'] },
     } },
     /** task-1393: voice-out preferences. `/voice` is user-only (DENIED_FOR_MODELS), so only the keyboard sets it. */
     voice: { type: 'object', additional: false, props: {
@@ -339,7 +348,7 @@ export interface DextermConfig {
   version: number;
   theme?: { name?: string; overrides?: Record<string, Hex | Hex[]>; user?: Record<string, UserTheme> };
   fx?: { intensity?: Intensity; sound?: boolean };
-  display?: { priceMode?: PriceMode; chartAxis?: ChartAxis };
+  display?: { priceMode?: PriceMode; chartAxis?: ChartAxis; chartMarkers?: ChartMarkers };
   layout?: { workspace?: string; workspaces?: Record<string, unknown> };
   keymap?: KeymapConfig;
   rules?: RuleJson[];
@@ -349,7 +358,7 @@ export interface DextermConfig {
   /** JARVIS voice-out preferences (task-1393). `name` is a `say` voice; the resolver falls back safely if it is missing. */
   voice?: { name?: string; rate?: number; pitch?: number };
   /** The analyst engine (0.1.5): the user's own `claude` or `codex` CLI, or `auto` (claude if installed, else codex). */
-  analyst?: { engine?: 'auto' | 'claude' | 'codex' };
+  analyst?: { engine?: 'auto' | 'claude' | 'codex' | 'ollama' };
   /** Alert delivery routing (task-1398). Enable flags + per-channel `levels` filter only; credentials live in ~/.dexterm/*.json. */
   alerts?: AlertsConfig;
   scan?: Record<string, unknown>;
@@ -483,7 +492,11 @@ export function policyCheck(ops: unknown, actor: Actor): SchemaError[] {
 }
 
 // ------------------------------------------------------------------ migrations
-export interface MigrationOut { notes: string[]; extractedKeys: Record<string, string>; from: number; to: number }
+export interface MigrationOut {
+  notes: string[]; extractedKeys: Record<string, string>; from: number; to: number;
+  /** task-1537: the price mode the config journal last recorded (the user's own `$` / `dexterm display` choice), if any. */
+  journaledPriceMode?: PriceMode | null;
+}
 type Step = (c: Record<string, unknown>, out: MigrationOut) => Record<string, unknown>;
 
 /**
@@ -521,13 +534,27 @@ export const MIGRATIONS: Record<number, Step> = {
   3: (c, out) => {
     const prior = (c.display && typeof c.display === 'object' ? (c.display as Record<string, unknown>).priceMode : undefined);
     const priceMode = (PRICE_MODES as readonly unknown[]).includes(prior) ? (prior as PriceMode) : DEFAULT_PRICE_MODE;
-    out.notes.push(`added display.priceMode = ${priceMode} (press $ in the app to show market cap instead of price)`);
+    out.notes.push(`added display.priceMode = ${priceMode} (press $ in the app to switch market cap / USD price)`);
     return { ...c, version: 4, display: { priceMode } };
+  },
+  // v4 → v5 (task-1537): market cap is the default price basis. Every saved config carried `priceMode: "price"`
+  // because that was the default written with the first save, so a `price` moves to `mcap` UNLESS the config
+  // journal shows the user chose price themselves (`$`, `dexterm display price`, an approved proposal): that stays.
+  4: (c, out) => {
+    const d = c.display && typeof c.display === 'object' ? { ...(c.display as Record<string, unknown>) } : {};
+    const kept = out.journaledPriceMode === 'price';
+    if (d.priceMode === 'price' && !kept) {
+      d.priceMode = 'mcap';
+      out.notes.push('display.priceMode: market cap is now the default basis (screens, CLI text and the assistant); press $ or run `dexterm display price` to go back to USD price');
+    } else if (d.priceMode === 'price') {
+      out.notes.push('display.priceMode = price kept (you chose it); market cap is the new default, `dexterm display mcap` switches');
+    } else if (!(PRICE_MODES as readonly unknown[]).includes(d.priceMode)) d.priceMode = DEFAULT_PRICE_MODE;
+    return { ...c, version: 5, display: d };
   },
 };
 
-export function migrate(raw: unknown): { config: DextermConfig; errors: SchemaError[] } & MigrationOut {
-  const out: MigrationOut = { notes: [], extractedKeys: {}, from: Number((raw as { version?: unknown })?.version ?? 1), to: CONFIG_VERSION };
+export function migrate(raw: unknown, hints: { journaledPriceMode?: PriceMode | null } = {}): { config: DextermConfig; errors: SchemaError[] } & MigrationOut {
+  const out: MigrationOut = { notes: [], extractedKeys: {}, from: Number((raw as { version?: unknown })?.version ?? 1), to: CONFIG_VERSION, journaledPriceMode: hints.journaledPriceMode ?? null };
   let cur: Record<string, unknown> = raw && typeof raw === 'object' ? structuredClone(raw as Record<string, unknown>) : {};
   let v = out.from;
   if (!Number.isInteger(v) || v < 1) v = 1;

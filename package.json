@@ -9,7 +9,7 @@
   "engines": { "node": ">=22.18" },
   "workspaces": ["packages/*"],
   "scripts": {
-    "test": "npm run typecheck && node --test \"packages/*/test/*.test.ts\" && npm run test:serial && npm run test:perf",
+    "test": "node scripts/test-run.mjs",
     "test:serial": "node scripts/test-lane.mjs serial",
     "test:perf": "node scripts/test-lane.mjs perf",
     "typecheck": "tsc -p tsconfig.json",

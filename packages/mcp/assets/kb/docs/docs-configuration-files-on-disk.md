@@ -35,6 +35,7 @@ date: 2026-10-16
 | `~/.dexterm/piper/` · `~/.dexterm/models/` | the neural voice: a private Python environment with Piper (macOS, written by `dexterm voice setup`), and the downloaded voice models (`en_GB-alan-medium`, whisper `base.en`) | optional; `dexterm voice uninstall` removes the runtime, `--purge-model` the Piper voice too. See voice (https://dexterm.xyz/docs/voice#the-voice-neural-by-default) |
 | `~/.dexterm/exports/` | PNG and text files from `E` (export a view) and `H` (PnL cards (https://dexterm.xyz/docs/paper-trading#pnl-cards)) | directory 700, files 600; local only, nothing is uploaded |
 | `~/.dexterm/spectator.json` | the spectator stream (https://dexterm.xyz/docs/spectator#2-the-read-only-stream-spectate)'s loopback port and per-session token, while `dexterm agent serve --spectate` runs | mode 600; never printed or passed as an argument |
+| `~/.dexterm/wallet-link.json` · `~/.dexterm/trading.panic` | a linked wallet's **public key** (from `dexterm wallet link`; never a private key), and the kill switch while `dexterm wallet panic` is engaged | optional; dexterm holds no key and has no trading wallet |
 | `~/.local/bin/dexterm` | the launcher `install.sh` writes | user-level |
 | `packages/popup/shell/wry/target/release/dexterm-shell-wry` | the native chart window, if built | `DEXTERM_POPUP_SHELL` points elsewhere |
 

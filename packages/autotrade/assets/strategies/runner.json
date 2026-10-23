@@ -1,0 +1,101 @@
+{
+  "kind": "strategy",
+  "schema": "dexterm-strategy/1",
+  "id": "runner",
+  "name": "Runner (conviction hold)",
+  "version": "1.0.0",
+  "description": "A conviction hold on an established coin with a heating narrative: size scaled by the agent's confidence (5% to 20%), quarters at +100% and +200%, then a 40% trail on the rest.",
+  "mode": "paper",
+  "bankroll": {
+    "startUsd": 1000
+  },
+  "entry": {
+    "screen": "liq >= 50K vol1h > 25K top10 <= 25 !flag:mint !flag:freeze",
+    "ageHours": {
+      "min": 6,
+      "max": null
+    },
+    "safety": {
+      "maxTop10Pct": 25,
+      "maxDevPct": 5,
+      "requireNoMintAuthority": true,
+      "requireNoFreezeAuthority": true,
+      "maxMcapSplitX": 5,
+      "youngVertical": null,
+      "unknownHolders": "reject"
+    },
+    "triggers": [
+      {
+        "kind": "screen"
+      },
+      {
+        "kind": "narrative",
+        "minHeat": 60
+      }
+    ],
+    "triggerMode": "any",
+    "decide": "agent",
+    "candidateTtlSec": 300
+  },
+  "exits": {
+    "default": "runner",
+    "profiles": [
+      "builtin:runner",
+      "builtin:swing"
+    ]
+  },
+  "sizing": {
+    "mode": "confidence",
+    "confidence": {
+      "minPct": 5,
+      "maxPct": 20,
+      "default": 0.5
+    },
+    "maxPctOfBankroll": 20,
+    "maxUsd": 500,
+    "minUsd": 5
+  },
+  "risk": {
+    "perTrade": {
+      "maxLossPctOfBankroll": 20,
+      "assumedLossPctNoStop": 100
+    },
+    "dailyLossHaltPct": 15,
+    "drawdown": {
+      "sizeDownAtPct": 25,
+      "sizeDownMult": 0.5,
+      "recoverBelowPct": 15,
+      "haltAtPct": 40
+    },
+    "maxConcurrent": 1,
+    "maxExposurePct": 25,
+    "lossStreak": {
+      "losses": 2,
+      "cooldownMin": 240
+    },
+    "maxEntriesPerDay": 3,
+    "perCoin": {
+      "maxEntries": 1,
+      "cooldownMin": 1440
+    }
+  },
+  "agent": {
+    "model": "sonnet",
+    "maxSessions": 2,
+    "budgetUsdPerSession": 0.5,
+    "budgetUsdPerDay": 10,
+    "maxTurns": 60,
+    "deltaEverySec": 15,
+    "decideWithinSec": 90,
+    "sessionMaxMin": 240,
+    "onTimeout": "skip"
+  },
+  "execution": {
+    "slippageBps": 100,
+    "feeBps": 30,
+    "networkFeeUsd": 0.02,
+    "latencyMs": 3000,
+    "maxPriceImpactPct": 8,
+    "minExitLiquidityUsd": 2000
+  }
+}

@@ -350,15 +350,17 @@ test('token detail: holders reuse the cached mint info and cache for 60 s', asyn
   const { dl, clock, calls } = d06Layer(t);
   const a = await drive(clock, dl.detail.holders(PUMP));
   assert.equal(a.value.holders.length, 20);
-  assert.equal(calls.length, 3);
+  // task-1518: the 4th call is the owner-meta lookup (no data) behind the ex-pool rule.
+  assert.deepEqual(calls.map(rpcMethod), ['getAccountInfo', 'getTokenLargestAccounts', 'getMultipleAccounts', 'getMultipleAccounts']);
   await clock.advance(30_000);
   await dl.detail.holders(PUMP);
   await dl.detail.mintInfo(PUMP);
-  assert.equal(calls.length, 3, 'holders (60 s) and mint (10 min) served from cache');
+  assert.equal(calls.length, 4, 'holders (60 s) and mint (10 min) served from cache');
   await clock.advance(31_000);
   const c = await dl.detail.holders(PUMP);
   await drive(clock, c.refreshing!);
-  assert.deepEqual(calls.slice(3).map(rpcMethod), ['getTokenLargestAccounts', 'getMultipleAccounts'], 'refresh skips getAccountInfo');
+  // owner meta is cached per owner (a week; an hour for an address with no account, as here), so the refresh skips it too
+  assert.deepEqual(calls.slice(4).map(rpcMethod), ['getTokenLargestAccounts', 'getMultipleAccounts'], 'refresh skips getAccountInfo and the owner meta');
 });
 
 test('rpc: the recorded public-RPC 429 on getTokenLargestAccounts surfaces as HttpError 429', async () => {

@@ -36,9 +36,11 @@ $ dexterm record status                   # db size, snapshots, outcomes, today'
 $ dexterm record install --dry-run        # print the macOS LaunchAgent it would write; writes nothing
 $ dexterm record install --load           # write it to ~/Library/LaunchAgents (no sudo) and load it
 $ dexterm record uninstall --unload       # stop and remove it
+$ dexterm record run --focus-ticks --retention-mb 3000   # also sample focus coins every 5-10 s; evict old history at 3 GB
 ```
 
 - **Nothing turns itself on.** The collector runs only when you start it. `install` writes a user-level LaunchAgent and loads it only with `--load`. A LaunchAgent does not start before you log in.
 - **Same budgets as the app.** Every request goes through the data layer's rate limiter and health gate, and the outcome sweeps keep their own per-sweep and per-day caps. It never builds a signer, never trades and never prints an RPC key.
-- **A disk cap.** Above `--max-db-mb` (1024 by default) it pauses new observations, while labels and retention keep running, so the database cannot grow without bound.
+- **A disk cap.** Above `--max-db-mb` (1024 by default) it pauses new observations, while labels and retention keep running, so the database cannot grow without bound. With `--retention-mb N` it never pauses: once the used space reaches N MB the oldest history goes first (the newest hour is always kept). `--retention-days D` expires snapshot rows, outcome re-checks included, after D days instead of 90.
+- **Focus ticks for autotrade backtests** (`--focus-ticks`): a sample every 5 seconds for coins you hold on paper or have open and every 10 seconds for your watchlist and autotrade candidates, plus 1-minute candles built from those samples, in DexScreener batches of 30 with a daily call ceiling. What is kept and for how long is in recorded history (https://dexterm.xyz/docs/data-sources#recorded-history-and-retention). `install` writes these flags into the LaunchAgent only when you pass them.
 - **Recurring backtests.** 0.1.3 also ships the logic behind recurring skill backtests: a rolling held-out window, a frozen comparison set, and a gate that only *proposes* a tuning when it beats the noise. Nothing changes a skill on your machine. A tuning reaches you only through a normal release, with its measured numbers, including weak ones (see LARP detector (https://dexterm.xyz/docs/larp)).

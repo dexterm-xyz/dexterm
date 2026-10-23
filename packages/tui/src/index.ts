@@ -7,6 +7,7 @@ export * from './flush.ts';
 export * from './layout.ts';
 export * from './keymap.ts';
 export * from './widgets.ts';
+export * from './markers.ts';
 export * from './fx.ts';
 export * from './fx-trade.ts';
 export * from './sound.ts';

@@ -15,7 +15,7 @@ import { renderAnalystSession } from './analyst-session.ts';
 import { renderSocialPanel } from './social-panel.ts';
 import { brainFor, factsFromFixture, renderBrainPanel } from './brain.ts';
 import { layoutFor } from '../custom.ts';
-import { chartMode, chartTitle, chartAxisOf, priceModeOf } from '../display.ts';
+import { chartMode, chartTitle, chartAxisOf, priceModeOf, levelCell, supplyRatio } from '../display.ts';
 
 type Level = 'ok' | 'warn' | 'bad';
 
@@ -55,7 +55,7 @@ export function renderToken(c: Canvas, state: AppState): void {
   const pm = chartMode(priceModeOf(state), tk.price, tk.mcap);
   if (pm.kind === 'mcap') {
     x = c.text(1, y, fmtMcap(tk.mcap), { fg: pumping ? t.rainPump[3] : t.text, bg: priceBg, b: true });
-    x = c.text(x, y, ` (${fmtPrice(tk.price)})`, { fg: t.dim, bg: priceBg });
+    x = c.text(x, y, ` (${fmtPrice(tk.price)})`, { fg: priceBg === t.bg ? t.dim : t.text, bg: priceBg }); // task-1537: readable on the pump / dump band
   } else x = c.text(1, y, fmtPrice(tk.price), { fg: pm.label ? t.warn : pumping ? t.rainPump[3] : t.text, bg: priceBg, b: true });
   const deltas: Array<[string, number]> = [['5m', tk.chg.m5], ['1h', tk.chg.h1], ['6h', tk.chg.h6], ['24h', tk.chg.h24]];
   x = c.text(x, y, '  ', { bg: t.bg });
@@ -157,7 +157,7 @@ export function renderToken(c: Canvas, state: AppState): void {
         let cx = c.text(hb.x + 1, hy, fmtAgeSec(tr.ago).padStart(4), { fg: t.dim, bg: hb.bg });
         cx = c.text(cx + 1, hy, tr.side === 'buy' ? '▲BUY ' : '▼SELL', { fg: color, bg: hb.bg, b: true });
         cx = c.textR(cx + 1, hy, 8, fmtUsd(tr.usd), { fg: t.text, bg: hb.bg });
-        cx = c.text(cx + 2, hy, fmtPrice(tr.price), { fg: t.muted, bg: hb.bg });
+        cx = c.text(cx + 2, hy, levelCell(priceModeOf(state), supplyRatio(tk.price, tk.mcap), tr.price), { fg: t.muted, bg: hb.bg }); // task-1537
         cx = c.text(cx + 2, hy, shortAddr(tr.addr, 3), { fg: t.dim, bg: hb.bg });
         if (tr.tag) badge(c, cx + 1, hy, tr.tag, tr.tag === 'smart' ? t.accent : t.warn, { on: hb.bg });
         hy += 1;

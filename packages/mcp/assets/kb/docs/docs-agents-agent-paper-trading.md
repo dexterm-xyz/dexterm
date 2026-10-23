@@ -32,13 +32,16 @@ Two steps, both yours:
 1. Draft and arm a mandate (`dexterm mandate draft` / `arm`, or the plans screen). Its caps are per-trade, per-coin and total size, a loss limit, open positions, price impact, allowed sides and an optional mint allow-list, and arming needs a physical keypress. For bigger simulated sizes, draft a **paper-only** mandate with `dexterm mandate draft --paper` (see paper-only mandates (https://dexterm.xyz/docs/paper-trading#paper-only-mandates)): only the agent paper desk can use it.
 2. Start the terminal with the agent activity view and name that mandate: `dexterm --spectate-mcp --agent-paper <mandate-id>`. Quitting turns it off again.
 
-While it is on, the agent can use six tools:
+While it is on, the agent can use seven tools:
 
 - `paper_open_ticket` opens a simulated ticket for a mint and side. It stays inert until confirmed.
 - `paper_size_ticket` sets the simulated size. A buy over any cap is **refused**, never clamped up.
 - `paper_confirm` re-checks the caps and your controls, fetches a fresh keyless quote and books the simulated fill.
 - `paper_close` closes a fraction of a held simulated position. If the keyless quote for that close is rate-limited, the desk waits briefly and asks for a fresh quote by itself (up to 4 tries in about 25 seconds, each retry shown in the agent activity) and books the fill on that later quote, never on an old one.
 - `paper_positions` and `paper_pnl` read the simulated positions and PnL. They are read-only.
+- `paper_tag` records a declaration apart from a fill: a REPROFILE while it holds a coin, or a PROFILE / EXIT it did not pass with the fill (marked as declared late). It books nothing.
+
+`paper_confirm` takes the exit profile and the entry reason (`profile`, `reason`) and `paper_close` the exit reason (`exit_reason`, `reason`) as typed fields, or the verbatim PROFILE / EXIT line in `tag_line`. They go to the trade ledger (https://dexterm.xyz/docs/paper-trading#the-trade-ledger) with the fill, so your results can be read by profile and by exit reason.
 
 The guarantees, each covered by tests:
 

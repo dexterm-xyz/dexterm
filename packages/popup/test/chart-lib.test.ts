@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
-import { fmtPrice as tuiFmtPrice, fmtCompact as tuiFmtCompact, fmtCompactUsd as tuiFmtCompactUsd } from '@dexterm/tui';
+import { fmtPrice as tuiFmtPrice, fmtCompact as tuiFmtCompact, fmtCompactUsd as tuiFmtCompactUsd, chartMarkers as tuiMarkers, markerGlyph as tuiGlyph } from '@dexterm/tui';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(path.join(here, '..', 'src', 'pages', 'chart-lib.js'), 'utf8');
@@ -74,28 +74,83 @@ test('tapeMarkers: one arrow per side per EXISTING bar, sized by USD, sorted', (
   assert.ok(m[0].size > m[1].size, 'more USD → bigger marker');
 });
 
-test('fillMarkers: exact fill price when known, bar position otherwise; outside the series skipped', () => {
-  const bars: Bar[] = C.toBars([candle(0, 1, 1, 1, 1), candle(M, 1, 1, 1, 1)]);
-  const times = new Set(bars.map((b) => b.time));
-  const m = C.fillMarkers([
-    { t: 1_000, side: 'buy', priceUsd: 0.5, sol: 0.5, tokens: 1 },
-    { t: 61_000, side: 'sell', priceUsd: null, sol: 0.25, tokens: 1 },
-    { t: 99 * M, side: 'buy', priceUsd: 1, sol: 1, tokens: 1 },
-  ], M, times, { buy: 'c', sell: 'y' });
-  assert.equal(m.length, 2);
-  assert.equal(m[0].position, 'atPriceBottom'); assert.equal(m[0].price, 0.5); assert.match(m[0].text, /^BUY 0\.50 SOL$/);
-  assert.equal(m[1].position, 'aboveBar'); assert.equal(m[1].shape, 'arrowDown');
+// task-1483: the position-only `fillMarkers` (which snapped a fill newer than the last candle onto it) is replaced by
+// the markers model below; those two tests moved here, with the snapping now a counted omission.
+const T0 = Date.UTC(2026, 9, 20, 13);
+const mf = (o: Record<string, unknown>) => ({ source: 'paper', priceUsd: 0.001, tokens: 1000, sol: 0.01, ...o });
+
+test('task-1483 chartMarkers: each fill on its own bar at its own price; re-bucketed by the timeframe; buy/sell never merged', () => {
+  const times = Array.from({ length: 30 }, (_, i) => T0 + i * M);
+  const fills = [mf({ t: T0 + 2 * M + 5_000, side: 'buy' }), mf({ t: T0 + 7 * M, side: 'sell', priceUsd: 0.0015 })];
+  const s = C.chartMarkers(fills, M, times);
+  assert.deepEqual(plain(s.markers.map((m: { side: string; index: number; priceUsd: number }) => [m.side, m.index, m.priceUsd])), [['buy', 2, 0.001], ['sell', 7, 0.0015]]);
+  const s5 = C.chartMarkers(fills, 5 * M, Array.from({ length: 6 }, (_, i) => T0 + i * 5 * M));
+  assert.deepEqual(plain(s5.markers.map((m: { index: number }) => m.index)), [0, 1]);
+  const sh = C.chartMarkers(fills, H, [T0]);
+  assert.deepEqual(plain(sh.markers.map((m: { side: string; index: number }) => [m.side, m.index])), [['buy', 0], ['sell', 0]]);
 });
 
-test('fillMarkers: a fill newer than the last candle (feed lag) snaps to the last bar, up to 3 periods', () => {
-  const bars: Bar[] = C.toBars([candle(0, 1, 1, 1, 1), candle(M, 1, 1, 1, 1)]);
-  const times = new Set(bars.map((b) => b.time));
-  const m = C.fillMarkers([
-    { t: 2 * M + 5_000, side: 'buy', priceUsd: 1, sol: 0.05, tokens: 1 },   // 1 period past the last bar → last bar
-    { t: 9 * M, side: 'sell', priceUsd: 1, sol: 0.05, tokens: 1 },          // 8 periods past → skipped
-  ], M, times, { buy: 'c', sell: 'y' });
-  assert.equal(m.length, 1);
-  assert.equal(m[0].time, 60);
+test('task-1483 chartMarkers: a fill newer than the last candle is NOT snapped onto it (was fillMarkers); before / gap counted too', () => {
+  const times = [T0, T0 + M, T0 + 3 * M]; // minute 2 had no trades
+  const s = C.chartMarkers([mf({ t: T0 - M, side: 'buy' }), mf({ t: T0 + 2 * M + 1, side: 'buy' }), mf({ t: T0 + 4 * M + 5_000, side: 'sell' })], M, times);
+  assert.equal(s.markers.length, 0);
+  assert.deepEqual([s.before, s.gap, s.after], [1, 1, 1]);
+  assert.equal(C.omittedNote(s), '+3 fills off-chart (1 earlier, 1 newer than the last candle, 1 in a period with no candle)');
+});
+
+test('task-1483 partial sells: one marker each on 1m; one ×2 marker on 5m with the token-weighted price; closes flagged', () => {
+  const fills = [mf({ t: T0, side: 'buy', tokens: 3000 }), mf({ t: T0 + 3 * M, side: 'sell', priceUsd: 0.002 }), mf({ t: T0 + 4 * M, side: 'sell', priceUsd: 0.003 }), mf({ t: T0 + 9 * M, side: 'sell', priceUsd: 0.004 })];
+  const s1 = C.chartMarkers(fills, M, Array.from({ length: 10 }, (_, i) => T0 + i * M));
+  assert.deepEqual(plain(s1.markers.filter((m: { side: string }) => m.side === 'sell').map((m: { partial: boolean; closes: boolean }) => [m.partial, m.closes])), [[true, false], [true, false], [false, true]]);
+  const s5 = C.chartMarkers(fills, 5 * M, [T0, T0 + 5 * M]);
+  const sells = s5.markers.filter((m: { side: string }) => m.side === 'sell');
+  assert.deepEqual(plain(sells.map((m: { count: number; tokens: number }) => [m.count, m.tokens])), [[2, 2000], [1, 1000]]);
+  assert.ok(Math.abs(sells[0].priceUsd - 0.0025) < 1e-12);
+});
+
+test('task-1483 parity: chart-lib chartMarkers === @dexterm/tui chartMarkers on mixed paper + live fills, three timeframes', () => {
+  const fills = [
+    mf({ t: T0 - 30 * M, side: 'buy', tokens: 4000, priceUsd: 0.0009 }),
+    mf({ t: T0 + 1 * M + 7, side: 'buy', source: 'live', tokens: 500, priceUsd: 0.001 }),
+    mf({ t: T0 + 2 * M, side: 'sell', tokens: 1000, priceUsd: 0.0012 }),
+    mf({ t: T0 + 2 * M + 9, side: 'sell', tokens: 500, source: 'live', priceUsd: null }),
+    mf({ t: T0 + 11 * M, side: 'buy', tokens: 250, sol: null }),
+    mf({ t: T0 + 23 * M, side: 'sell', tokens: 3250, priceUsd: 0.0021 }),
+    mf({ t: T0 + 90 * M, side: 'buy' }),
+  ];
+  for (const [p, n] of [[M, 40], [5 * M, 10], [15 * M, 4]] as const) {
+    const times = Array.from({ length: n }, (_, i) => T0 + i * p).filter((t) => t !== T0 + 5 * p);
+    assert.deepEqual(plain(C.chartMarkers(fills, p, times)), plain(tuiMarkers(fills as never, { periodMs: p, barTimes: times })), `period ${p}`);
+  }
+  assert.equal(C.markerGlyph('buy', 'paper'), tuiGlyph('buy', 'paper'));
+  assert.equal(C.markerGlyph('sell', 'live'), tuiGlyph('sell', 'live'));
+});
+
+test('task-1483 clusterMarkers: re-bucket on zoom — narrow bars merge runs of k bars per side + source; wide bars untouched', () => {
+  const ms = [0, 1, 2, 5].map((i) => ({ side: 'buy', source: 'paper', bucket: T0 + i * M, index: i, t: T0 + i * M, tLast: T0 + i * M, priceUsd: 1 + i, tokens: 1, sol: 1, count: 1, partial: false, closes: false }));
+  assert.equal(C.clusterMarkers(ms, 20).length, 4, '20 px bars: no merge');
+  const c = C.clusterMarkers(ms, 4, 14); // k = 4 bars per group
+  assert.deepEqual(plain(c.map((m: { index: number; count: number; span: number }) => [m.index, m.count, m.span])), [[2, 3, 4], [5, 1, 4]]);
+  assert.equal(c[0].priceUsd, 2, 'token-weighted price of 1, 2, 3');
+  const mixed = C.clusterMarkers([...ms.slice(0, 2), { ...ms[1], side: 'sell' }, { ...ms[0], source: 'live' }], 2, 14);
+  assert.equal(mixed.length, 3, 'sides and sources never merge');
+});
+
+test('task-1483 markerShape: the triangle tip is ON the price (buy points up from below, sell down from above); hit box covers glyph + letter', () => {
+  const b = C.markerShape('buy', 100, 50, 6);
+  assert.deepEqual(plain(b.tri[0]), [100, 50]);
+  assert.ok(b.tri[1][1] > 50 && b.labelY > b.tri[1][1], 'below the price');
+  const s = C.markerShape('sell', 100, 50, 6);
+  assert.ok(s.tri[1][1] < 50 && s.labelY < s.tri[1][1], 'above the price');
+  assert.ok(b.hit.x0 < 94 && b.hit.x1 > 106 && b.hit.y0 <= 50 && b.hit.y1 >= b.labelY);
+});
+
+test('task-1483 markerTooltip: time, price (mcap + price on an mcap axis), size + SOL, and the ledger', () => {
+  const m = { side: 'sell', source: 'paper', t: T0, tLast: T0, priceUsd: 0.0000412, tokens: 2_500_000, sol: 0.5, count: 1, partial: true, closes: false };
+  const fmt = (ms: number) => `@${(ms - T0) / M}`;
+  assert.deepEqual(plain(C.markerTooltip(m, C.displayOf({ priceMode: 'mcap', supply: 1e9 }), fmt)), ['▽S SELL (partial)', '@0', 'MC 41k ($0.0₄412)', '2.50M tokens · 0.50 SOL', 'PAPER · simulated ledger']);
+  const live = { ...m, source: 'live', side: 'buy', partial: false, count: 3, tLast: T0 + 2 * M, priceUsd: null, sol: null };
+  assert.deepEqual(plain(C.markerTooltip(live, C.displayOf(null), fmt)), ['▲B BUY ×3', '@0 – @2', 'price not recorded', '2.50M tokens', 'LIVE · confirmed on-chain fill']);
 });
 
 test('mergeTail: replaces the forming bar, appends a new one, ignores older-than-window', () => {

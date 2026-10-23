@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER
+╭─ STRATEGIES · 6 (6 presets, 0 yours) ────────────────────────────────────────────────────────────────────────────────╮
+│    STRATEGY              SOURCE  MODE   VERSION  HASH              PROFILES      LAST BACKTEST · net · dd · n        │
+│▎   moonbag               preset  paper  v1.0.0   67fc4c95f08620eb  moonbag       not backtested                      │
+│    runner                preset  paper  v1.0.0   82b98b1cd31f6699  runner swing  not backtested                      │
+│    sample-dip-ladder     preset  paper  v1.0.0   607ba6bf86cf82a9  dip-trail sw… not backtested                      │
+│    scalp                 preset  paper  v1.0.0   70d65ef11ab72be0  scalp swing   not backtested                      │
+│    swing                 preset  paper  v1.0.0   be171962d0568f46  swing runner… not backtested                      │
+│    yolo ⚠                preset  paper  v1.0.0   f7857ca3bacffb77  yolo          not backtested                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ moonbag · Moonbag (early entry, free bag) ───────────────────────╮╭─ PROPOSALS FROM CHAT · 0 ───────────────────────╮
+│ screen    liq >= 20K vol5m >= 3K !flag:mint !flag:freeze          ││ none yet · ask the analyst to change a strategy │
+│ age       0–2 h · momentum · decide agent                         ││ and its diff card shows up here                 │
+│ sizing    pct 2% · cap 3% / $50 · book $1000                      ││                                                 │
+│ risk      3 open · 10% exposure · day halt −10% · dd ½ at 25%,    ││ a model only ever proposes: it cannot switch a  │
+│           halt 40% · 8/day                                        ││ strategy to live, raise its own spend or apply  │
+│ exits ●   moonbag: no stop ┤ ── entry ── +100% cost back (≤60%)   ││ anything                                        │
+│           · bag trail 55% · hold ≤ 7d                             ││                                                 │
+│                                                                   ││                                                 │
+│                                                                   ││                                                 │
+│                                                                   ││                                                 │
+│                                                                   ││                                                 │
+│                                                                   ││                                                 │
+│                                                                   ││                                                 │
+│                                                                   ││                                                 │
+╰───────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯
+  tab  view   ⏎/e  edit   n  new   d  copy   c  compare   b  backtest   w  sweep

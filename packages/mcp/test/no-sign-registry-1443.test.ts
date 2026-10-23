@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, isMoneyToolName } from '../src/index.ts';
+import { TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, PAPER_NOTE_TOOLS, isMoneyToolName, STRATEGY_READ_TOOLS, STRATEGY_PROPOSE_TOOLS, LEDGER_READ_TOOLS, LEDGER_PROPOSE_TOOLS } from '../src/index.ts';
 import { ANALYST_ACTION_TYPES } from '@dexterm/data';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -22,13 +22,23 @@ const READ_DATA_TOOLS = [
   'case_lookup', 'get_links', 'fetch_page', 'check_domain', 'check_github', 'check_x', 'larp_check', 'app_help', 'app_state',
 ];
 const UI_NAV_TOOLS = [...ANALYST_ACTION_TYPES]; // task-1313/1413 non-financial navigation + display config
-const PAPER_TOOLS = [...PAPER_WRITE_TOOLS, ...PAPER_READ_TOOLS];
-const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS]);
+const PAPER_TOOLS = [...PAPER_WRITE_TOOLS, ...PAPER_READ_TOOLS, ...PAPER_NOTE_TOOLS];
+// task-1507: AUTOTRADE strategy reads + PROPOSALS (a proposal file; the user's keypress applies it, never a tool)
+const STRATEGY_TOOLS = ['strategy_list', 'strategy_get', 'strategy_validate', 'strategy_backtest', 'autotrade_status', 'strategy_propose_edit', 'strategy_propose_new'];
+// task-1529: parallel strategies: two reads + start / stop of ONE strategy the user listed (a paper control file)
+const PARALLEL_TOOLS = ['autotrade_parallel_list', 'autotrade_parallel_compare', 'autotrade_parallel_start', 'autotrade_parallel_stop'];
+// task-1530: TRADE LEDGER reads, a run's candidate record, outcomes, the Telegram / live-signer STATE (`trading_status`:
+// the FORBIDDEN rule below and trade-t2-1328's LOCKOUT keep 'signer' and 'live' out of tool names) and one PROPOSE tool (a backtest request file)
+const LEDGER_TOOLS = ['ledger_trades', 'ledger_positions', 'ledger_equity', 'ledger_summary', 'ledger_compare', 'candidate_dossier', 'outcomes_lookup', 'telegram_status', 'trading_status', 'backtest_requests', 'backtest_request'];
+const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS]);
 
 const servedNames = TOOLS.map((t) => String(t.name));
 
 test('every served tool is on the allowlist, and the allowlist has no stale names', () => {
-  for (const n of servedNames) assert.ok(ALLOWLIST.has(n), `UNCLASSIFIED tool "${n}" — add it to the allowlist in no-sign-registry-1443.test.ts and classify it (read / nav / paper)`);
+  for (const n of servedNames) assert.ok(ALLOWLIST.has(n), `UNCLASSIFIED tool "${n}" — add it to the allowlist in no-sign-registry-1443.test.ts and classify it (read / nav / paper / strategy)`);
+  assert.deepEqual([...STRATEGY_READ_TOOLS, ...STRATEGY_PROPOSE_TOOLS].sort(), [...STRATEGY_TOOLS].sort());
+  assert.deepEqual([...LEDGER_READ_TOOLS, ...LEDGER_PROPOSE_TOOLS].sort(), [...LEDGER_TOOLS].sort());
+  for (const n of [...LEDGER_PROPOSE_TOOLS, ...PAPER_NOTE_TOOLS]) assert.ok(!READ_ONLY_TOOLS.includes(n), `${n} writes a file: not read-only`);
   for (const n of ALLOWLIST) assert.ok(servedNames.includes(n), `allowlist names a tool "${n}" the server no longer serves`);
   assert.equal(servedNames.length, ALLOWLIST.size, 'no duplicate or missing tool names');
 });
@@ -50,7 +60,7 @@ test('the paper WRITE tools are money-shaped (a skill can never name them) and a
 
 test('every paper tool advertises PAPER / simulated and claims no profit', () => {
   const paper = TOOLS.filter((t) => String(t.name).startsWith('paper_'));
-  assert.equal(paper.length, 6);
+  assert.equal(paper.length, 7); // task-1530: + paper_tag (journal-only)
   for (const t of paper) {
     const d = String(t.description);
     assert.match(d, /PAPER|SIMULATED|simulated|paper/);
@@ -80,6 +90,19 @@ function assertNoForbiddenImports(file: string): void {
 test('the MCP server + paper-agent resolver import no signer/live/send module', () => {
   assertNoForbiddenImports(join(MCP_SRC, 'server.ts'));
   assertNoForbiddenImports(join(MCP_SRC, 'paper-agent.ts'));
+  assertNoForbiddenImports(join(MCP_SRC, 'autotrade-tools.ts'));
+  assertNoForbiddenImports(join(MCP_SRC, 'ledger-tools.ts'));
+  assertNoForbiddenImports(join(MCP_SRC, 'backtest-requests.ts'));
+});
+
+test('task-1507: the strategy tools never write a strategy: no store write call on the tool path', () => {
+  const src = readFileSync(join(MCP_SRC, 'autotrade-tools.ts'), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  // StrategyStore writes are create/update/patch/remove/recordBacktest; the tools may only read the store
+  assert.doesNotMatch(src, /\.(create|createFrom|update|patch|remove|recordBacktest)\(/, 'autotrade-tools.ts calls a strategy-store write');
+  // the only proposal-file status change (applied/dismissed) is ProposalFiles.resolve, which the tools never call
+  const body = src.slice(src.indexOf('export class AutotradeTools'));
+  assert.doesNotMatch(body, /\.resolve\(/);
+  assert.doesNotMatch(src, /\b(mode\s*:\s*'live'|SignerClient|armMandate|signTransaction|sendTransaction)\b/);
 });
 
 test('the paper agent desk + paper ledger import no signer/live/send/crypto-signing module', () => {
@@ -101,7 +124,7 @@ test('the paper executor behind the desk is the paper executor (its one op books
 // ── tighter than a deny-list: the paper path may import ONLY these modules (a new import must be reviewed here) ──
 const IMPORT_ALLOW: Record<string, string[]> = {
   'mcp/paper-agent.ts': ['@dexterm/data', '@dexterm/data/plans'],
-  'data/paper-desk.ts': ['../../clock.ts', '../plans/mandate.ts', '../kill-switch.ts', '../plans/journal.ts', '../../paper.ts', '../../sources/jupiter-swap.ts', '../plans/types.ts'],
+  'data/paper-desk.ts': ['../../clock.ts', '../plans/mandate.ts', '../kill-switch.ts', '../plans/journal.ts', '../../paper.ts', '../../sources/jupiter-swap.ts', '../plans/types.ts', '../ledger/tags.ts', '../ledger/schema.ts'],
   'data/rendezvous.ts': ['node:fs', 'node:os', 'node:path', '../../clock.ts', '../plans/journal.ts', '../plans/mandate.ts', './paper-desk.ts'],
 };
 const PAPER_PATH: Record<string, string> = {
@@ -135,9 +158,10 @@ test('the paper tools dispatch only to the desk verbs, and the desk exposes noth
   const server = readFileSync(join(MCP_SRC, 'server.ts'), 'utf8');
   const body = server.slice(server.indexOf('private async paperTool('), server.indexOf('private async paperTool(') + 4000);
   const called = new Set([...body.matchAll(/\bdesk\.(\w+)\(/g)].map((m) => m[1]));
-  assert.deepEqual([...called].sort(), ['close', 'confirm', 'open', 'pnl', 'positions', 'size']);
+  assert.deepEqual([...called].sort(), ['close', 'confirm', 'open', 'pnl', 'positions', 'size', 'tag']);
   const { PaperAgentDesk } = await import('@dexterm/data');
   const methods = Object.getOwnPropertyNames(PaperAgentDesk.prototype).filter((n) => n !== 'constructor');
-  const isPublic = (n: string) => !/^(perTradeCapUsd|note|refuse|gate|requireAction|requireMintAllowed|price|costUsd|openCostUsd|realizedLossUsd|admitBuy|buildOrder|freshQuote|book|positionView)$/.test(n);
-  assert.deepEqual(methods.filter(isPublic).sort(), ['close', 'confirm', 'open', 'pnl', 'positions', 'size'], 'a new desk method must be reviewed here');
+  const isPublic = (n: string) => !/^(perTradeCapUsd|note|refuse|gate|requireAction|requireMintAllowed|price|costUsd|openCostUsd|realizedLossUsd|admitBuy|buildOrder|freshQuote|book|positionView|sessionId|bookLamports)$/.test(n);
+  // task-1530: tag() appends a journal line only (agent.paper.tag); it books nothing
+  assert.deepEqual(methods.filter(isPublic).sort(), ['close', 'confirm', 'open', 'pnl', 'positions', 'size', 'tag'], 'a new desk method must be reviewed here');
 });

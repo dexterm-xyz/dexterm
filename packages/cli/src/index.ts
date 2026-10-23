@@ -23,7 +23,7 @@ export { renderAnalyst, renderContextRail, renderCoinList } from './screens/anal
 export { renderTicket } from './screens/ticket.ts';
 export { renderPositions } from './screens/positions.ts';
 export * from './trade.ts';
-export { TradeTicketLive, PositionsLive, LivePositions, CombinedPositions, POSITIONS_REFRESH_MS, type TradeTicketOptions, type LiveTradeDeps } from './live/trade.ts';
+export { TradeTicketLive, PositionsLive, POSITIONS_REFRESH_MS, type TradeTicketOptions } from './live/trade.ts';
 export { parseWalletCommand, WALLET_HELP, type WalletCommand } from './wallet-command.ts';
 export * from './screener/filter.ts';
 export * from './screener/sort.ts';

@@ -1,0 +1,101 @@
+{
+  "kind": "strategy",
+  "schema": "dexterm-strategy/1",
+  "id": "moonbag",
+  "name": "Moonbag (early entry, free bag)",
+  "version": "1.0.0",
+  "description": "Small early entries on young pairs that pass the holder-safety gates: take the cost back at about 2x, then hold a free bag with a loose trail and thesis-break exits only. Many small tickets, most of which lose; the point is the rare runner.",
+  "mode": "paper",
+  "bankroll": {
+    "startUsd": 1000
+  },
+  "entry": {
+    "screen": "liq >= 20K vol5m >= 3K !flag:mint !flag:freeze",
+    "ageHours": {
+      "min": 0,
+      "max": 2
+    },
+    "safety": {
+      "maxTop10Pct": 30,
+      "maxDevPct": 5,
+      "requireNoMintAuthority": true,
+      "requireNoFreezeAuthority": true,
+      "maxMcapSplitX": 3,
+      "youngVertical": {
+        "maxAgeHours": 2,
+        "maxH1Pct": 150
+      },
+      "unknownHolders": "reject"
+    },
+    "triggers": [
+      {
+        "kind": "momentum",
+        "m5MinPct": 2,
+        "buySellMin": 1.3
+      }
+    ],
+    "triggerMode": "any",
+    "decide": "agent",
+    "candidateTtlSec": 240
+  },
+  "exits": {
+    "default": "moonbag",
+    "profiles": [
+      "builtin:moonbag"
+    ]
+  },
+  "sizing": {
+    "mode": "pct",
+    "pct": 2,
+    "maxPctOfBankroll": 3,
+    "maxUsd": 50,
+    "minUsd": 2
+  },
+  "risk": {
+    "perTrade": {
+      "maxLossPctOfBankroll": 3,
+      "assumedLossPctNoStop": 100
+    },
+    "dailyLossHaltPct": 10,
+    "drawdown": {
+      "sizeDownAtPct": 25,
+      "sizeDownMult": 0.5,
+      "recoverBelowPct": 15,
+      "haltAtPct": 40
+    },
+    "maxConcurrent": 3,
+    "maxExposurePct": 10,
+    "lossStreak": {
+      "losses": 5,
+      "cooldownMin": 120
+    },
+    "maxEntriesPerDay": 8,
+    "perCoin": {
+      "maxEntries": 1,
+      "cooldownMin": 10080
+    },
+    "recoveredBags": {
+      "countAsOpen": false,
+      "maxBags": 6
+    }
+  },
+  "agent": {
+    "model": "sonnet",
+    "maxSessions": 2,
+    "budgetUsdPerSession": 0.5,
+    "budgetUsdPerDay": 10,
+    "maxTurns": 60,
+    "deltaEverySec": 15,
+    "decideWithinSec": 60,
+    "sessionMaxMin": 240,
+    "onTimeout": "skip"
+  },
+  "execution": {
+    "slippageBps": 200,
+    "feeBps": 30,
+    "networkFeeUsd": 0.02,
+    "latencyMs": 3000,
+    "maxPriceImpactPct": 5,
+    "minExitLiquidityUsd": 2000
+  }
+}

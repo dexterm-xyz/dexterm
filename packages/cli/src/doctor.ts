@@ -19,6 +19,7 @@ import type { MergedSet } from '@dexterm/mcp';
 import { loadConfig, dextermHome } from '@dexterm/custom';
 import { kbStore, skillStore } from './kb-skill-cmd.ts';
 import { analystCliOnPath, CODEX_MIN_VERSION, parseEngineChoice, resolveEngine, versionAtLeast } from './analyst/codex.ts';
+import { OllamaClient, SUGGESTED_MODELS, SURFACES, belowBar, effectiveRestriction, engineChoiceFor, loadAiConfig, ollamaSettings, pickModel, probeModel, remoteHostWarning, type ModelProbe, type Restriction } from '@dexterm/mcp/engine';
 
 /** The minimum Node that runs dexterm (type-stripping of the .ts entry needs 22.18). */
 export const MIN_NODE = [22, 18, 0] as const;
@@ -62,6 +63,8 @@ export interface DoctorDeps {
   codex?: () => Promise<CodexProbe>;
   /** 0.1.5: the user's analyst-engine choice (env / config), for the engine line. Absent = auto. */
   analystEngine?: string | null;
+  /** task-1543: the local Ollama engine (probe + the user's ai.json choices). Absent = the check is skipped. */
+  ollama?: () => Promise<OllamaFacts>;
   /** Probe one URL; must resolve (never reject) within its own timeout. */
   probe: (url: string) => Promise<ProbeResult>;
   /** Check a directory is writable by creating and deleting a temp file; returns null or an error message. */
@@ -182,6 +185,30 @@ export async function claudeProbe(timeoutMs = 4000, platform: NodeJS.Platform = 
   });
 }
 
+/** What doctor learned about the local Ollama engine (task-1543). */
+export interface OllamaFacts {
+  probe: ModelProbe;
+  /** A model is chosen in ai.json / DEXTERM_OLLAMA_MODEL, or some surface runs on ollama. */
+  setUp: boolean;
+  /** Surfaces whose engine choice is ollama. */
+  surfaces: string[];
+  level: Restriction;
+  note: string | null;
+  hostWarning: string | null;
+}
+
+/** Default Ollama facts: ai.json + a short probe of the configured host (127.0.0.1 by default). Never throws. */
+export async function ollamaFacts(env: NodeJS.ProcessEnv = process.env): Promise<OllamaFacts> {
+  const c = loadAiConfig(env).config;
+  const set = ollamaSettings(c, env);
+  const client = new OllamaClient({ host: set.host, metaTimeoutMs: 2500 });
+  const probe = await probeModel(client, set.model, { numCtx: set.numCtx });
+  if (!probe.model && probe.models.length) probe.model = null;
+  const surfaces = SURFACES.filter((sf) => engineChoiceFor(sf, c, env) === 'ollama');
+  const eff = effectiveRestriction(c, set.model ?? pickModel(probe.models), env);
+  return { probe, setUp: !!set.model || surfaces.length > 0, surfaces, level: eff.level, note: eff.note, hostWarning: remoteHostWarning(set.host) };
+}
+
 /** What doctor learned about the codex CLI. `loggedIn` null = the status probe could not tell. */
 export type CodexProbe = { state: 'missing' } | { state: 'present'; version: string | null; loggedIn: boolean | null };
 
@@ -230,6 +257,7 @@ export function defaultDeps(env: NodeJS.ProcessEnv = process.env, isTTY = proces
     platform: process.platform,
     claude: () => claudeProbe(),
     codex: () => codexProbe(4000, env),
+    ollama: () => ollamaFacts(env),
     analystEngine: env.DEXTERM_ANALYST_ENGINE ?? loadConfig(dextermHome(env)).config.analyst?.engine ?? null,
     probe: (url) => livingProbe(url),
     checkWritable: writableProbe,
@@ -302,7 +330,15 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
   // 0.1.5: codex is the optional second engine; a missing claude is fine when codex can run the analyst.
   const codex = deps.codex ? await deps.codex() : null;
   const codexUsable = codex?.state === 'present';
-  if (claude === 'missing' && codexUsable) {
+  // task-1543: a reachable Ollama with a pulled model can run the analyst too (a free local engine).
+  const ol = deps.ollama ? await deps.ollama().catch(() => null) : null;
+  const ollamaUsable = !!ol && ol.probe.reachable && (ol.probe.model ? ol.probe.present : ol.probe.models.length > 0);
+  if (claude === 'missing' && !codexUsable && ollamaUsable) {
+    checks.push({
+      name: 'Claude CLI', status: 'pass',
+      detail: 'not found on PATH (optional now): the analyst runs on your local Ollama model instead',
+    });
+  } else if (claude === 'missing' && codexUsable) {
     checks.push({
       name: 'Claude CLI', status: 'pass',
       detail: 'not found on PATH (optional now): the analyst runs on your codex CLI instead',
@@ -311,7 +347,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
     checks.push({
       name: 'Claude CLI', status: 'warn',
       detail: 'not found on PATH; the analyst (a) is disabled, the rest of dexterm works',
-      fix: 'Install Claude Code (https://claude.com/claude-code) and run `claude` once to log in, or use Codex: `npm i -g @openai/codex && codex login`.',
+      fix: 'Set up an AI backend: install Claude Code (https://claude.com/claude-code) and run `claude` once to log in, or Codex (`npm i -g @openai/codex && codex login`), or a free local model (install Ollama from https://ollama.com/download, `ollama pull qwen3:8b`, `dexterm ai engine ollama`).',
     });
   } else {
     checks.push({
@@ -323,7 +359,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
   // 3b. Codex CLI (0.1.5): optional second analyst engine, the user's own codex login. Read-only lock needs >= CODEX_MIN_VERSION.
   if (codex) {
     const choice = parseEngineChoice(deps.analystEngine) ?? 'auto';
-    const engine = resolveEngine(choice, (b) => b === 'claude' ? claude !== 'missing' : codexUsable);
+    const engine = resolveEngine(choice, (b) => b === 'claude' ? claude !== 'missing' : b === 'codex' ? codexUsable : ollamaUsable && !!ol?.setUp);
     const eng = `analyst engine: ${engine}${choice === 'auto' ? ' (auto)' : ''}`;
     if (codex.state === 'missing') {
       checks.push({ name: 'Codex CLI', status: engine === 'codex' ? 'warn' : 'pass', detail: `not installed (optional second analyst engine) · ${eng}`, ...(engine === 'codex' ? { fix: 'npm i -g @openai/codex && codex login, or set analyst.engine to claude' } : {}) });
@@ -335,6 +371,9 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
       checks.push({ name: 'Codex CLI', status: 'pass', detail: `found${codex.version ? ` (codex-cli ${codex.version})` : ''}${codex.loggedIn ? ', logged in' : ''}; runs the analyst read-only on your own codex login (/engine codex) · ${eng}` });
     }
   }
+
+  // 3c. Local engine (task-1543): the user's own Ollama on this machine, the model, tool calling, context, profile.
+  if (ol) checks.push(ollamaCheck(ol, claude !== 'missing' || codexUsable));
 
   // 4b. Login with X (optional, task-1357): the user's own X app + login unlock X posts in the SOCIAL panel / TRENDING.
   {
@@ -473,4 +512,34 @@ export function renderDoctor(result: DoctorResult, opts: { color?: boolean } = {
   else if (result.ok) lines.push(paint(`Ready to run (${warns} warning${warns === 1 ? '' : 's'} above are optional).`, color ? ANSI.warn : ''));
   else lines.push(paint(`${fails} check${fails === 1 ? '' : 's'} failed — fix the ✗ lines above, then re-run \`dexterm doctor\`.`, color ? ANSI.fail : ''));
   return lines.join('\n');
+}
+
+/**
+ * The Ollama line (task-1543). Optional while claude/codex can run the analyst; a warning with the 2-minute
+ * setup when nothing can, or when the user chose ollama and it is not ready.
+ */
+export function ollamaCheck(o: OllamaFacts, otherEngine: boolean): DoctorCheck {
+  const p = o.probe;
+  const pull = `ollama pull ${SUGGESTED_MODELS[0].name}`;
+  const setup = `Install Ollama (https://ollama.com/download) and open it, then \`${pull}\` and \`dexterm ai engine ollama\` (\`dexterm ai model ${SUGGESTED_MODELS[0].name}\`).`;
+  const used = o.surfaces.length ? ` · runs: ${o.surfaces.join(', ')}` : '';
+  const prof = ` · profile ${o.level}${o.note ? ` (${o.note})` : ''}`;
+  const remote = o.hostWarning ? ` · WARNING ${o.hostWarning}` : '';
+  if (!p.reachable) {
+    // task-1551: a redirect is refused before anything is sent on; say so, whatever the setup state.
+    if (p.redirect) return { name: 'Ollama (local AI)', status: 'warn', detail: `${p.host} answered with a redirect: refused, nothing was sent on${used}${remote}`, fix: 'dexterm never follows a redirect for the local engine (it would send your prompt to another host). Point it at the Ollama server itself with `dexterm ai host <host:port>` (or DEXTERM_OLLAMA_HOST), then re-run `dexterm doctor`.' };
+    if (!o.setUp) return otherEngine
+      ? { name: 'Ollama (local AI)', status: 'pass', detail: 'not set up (optional free local engine; no login, no key, nothing leaves this machine)' }
+      : { name: 'Ollama (local AI)', status: 'warn', detail: 'no AI engine on this machine yet: a free local model works without any login or key', fix: setup };
+    return { name: 'Ollama (local AI)', status: 'warn', detail: `not reachable at ${p.host}${used}${remote}`, fix: `Start Ollama (open the app, or run \`ollama serve\`), then re-run \`dexterm doctor\`. Not installed? ${setup}` };
+  }
+  if (!p.model) {
+    const pick = pickModel(p.models);
+    return { name: 'Ollama (local AI)', status: o.setUp || !otherEngine ? 'warn' : 'pass', detail: `Ollama ${p.version ?? ''} running · pulled: ${p.models.slice(0, 5).join(', ') || 'none'} · no model chosen${used}${remote}`, ...(o.setUp || !otherEngine ? { fix: pick ? `dexterm ai model ${pick}` : `${pull} && dexterm ai model ${SUGGESTED_MODELS[0].name}` } : {}) };
+  }
+  if (!p.present) return { name: 'Ollama (local AI)', status: 'warn', detail: `${p.model} is not pulled on ${p.host}${used}${remote}`, fix: `ollama pull ${p.model}` };
+  const warns = belowBar(o.level, p);
+  const facts = `${p.model} · tools ${p.tools === null ? '?' : p.tools ? 'yes' : 'no'} · context ${p.contextLength ?? '?'}`;
+  if (warns.length || o.hostWarning) return { name: 'Ollama (local AI)', status: 'warn', detail: `${facts}${used}${prof}${remote}${warns.length ? ` · ${warns[0]}` : ''}`, fix: warns.length ? `\`dexterm ai probe --json\` checks it in detail; pull a stronger tool-capable model (e.g. ${pull}) or lower the profile (\`dexterm ai restrictions observe\`).` : 'Point dexterm at this machine: dexterm ai host 127.0.0.1' };
+  return { name: 'Ollama (local AI)', status: 'pass', detail: `${facts} · ${p.local ? 'local' : 'remote'} · $0${used}${prof}` };
 }

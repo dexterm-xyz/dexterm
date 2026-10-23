@@ -4,6 +4,8 @@
 // When dexterm/prototype-v2 sits next to the repo, the four fixture screens are compared byte for
 // byte against `prototype-v2 --calm --theme midnight` (plain and 24-bit ANSI) and the screener's
 // column set against both prototypes; from a `git archive` copy those parts are skipped.
+// task-1537: market cap is the default basis. The prototype-parity goldens (`<screen>-<w>x<h>`) pin the USD PRICE
+// basis (the prototypes show price); `<screen>-<w>x<h>-mcap` are the default (market cap) render of the same frames.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
@@ -25,12 +27,15 @@ const samplePath = resolve(here, '..', '..', 'data', 'fixtures', 'live-sample.js
 // recording's clock, so a layout regression on real-shaped rows shows up like a prototype one.
 const replayFeed = createReplayFeed(samplePath);
 await replayFeed.refresh();
-const LIVE_CASES = ([[176, 48], [120, 40], [90, 40]] as const).map(([width, height]) => ({ width, height, selected: 3, name: `screener-live-${width}x${height}` }));
+const LIVE_CASES = ([[176, 48], [120, 40], [90, 40]] as const).flatMap(([width, height]) => [
+  { width, height, selected: 3, name: `screener-live-${width}x${height}`, priceMode: 'price' as const },
+  ...(width !== 120 ? [{ width, height, selected: 3, name: `screener-live-${width}x${height}-mcap`, priceMode: undefined }] : []),
+]);
 
 for (const c of LIVE_CASES) {
   test(`snapshot ${c.name} (data store replay) matches the committed golden`, () => {
     const want = readFileSync(resolve(snapDir, `${c.name}.txt`), 'utf8').replace(/\n$/, '');
-    const got = renderFrame(makeFeedState(replayFeed, 'replay', { selected: c.selected, theme: THEMES.midnight, calm: true }), c.width, c.height).toPlain();
+    const got = renderFrame(makeFeedState(replayFeed, 'replay', { selected: c.selected, theme: THEMES.midnight, calm: true, priceMode: c.priceMode }), c.width, c.height).toPlain();
     assert.equal(got, want);
     for (const row of got.split('\n')) assert.ok([...row].length <= c.width, `row wider than ${c.width}`);
     assert.equal(got.split('\n').length, c.height);
@@ -39,18 +44,20 @@ for (const c of LIVE_CASES) {
 test.after(() => replayFeed.close());
 
 type Screen = 'screener' | 'token' | 'newpairs' | 'watchlist' | 'analyst';
-interface Case { screen: Screen; width: number; height: number; selected: number; name: string }
+interface Case { screen: Screen; width: number; height: number; selected: number; name: string; priceMode?: 'price' }
 
 const CASES: Case[] = [];
+const MCAP_CASES: Case[] = [];
 for (const screen of ['screener', 'token', 'newpairs', 'watchlist', 'analyst'] as const) {
   const selected = screen === 'screener' || screen === 'token' ? 3 : screen === 'analyst' ? 0 : 1;
   for (const [width, height] of [[176, 48], [120, 40], [90, 40]] as const) {
-    CASES.push({ screen, width, height, selected, name: `${screen}-${width}x${height}` });
+    CASES.push({ screen, width, height, selected, name: `${screen}-${width}x${height}`, priceMode: 'price' });
+    if (width !== 120) MCAP_CASES.push({ screen, width, height, selected, name: `${screen}-${width}x${height}-mcap` });
   }
 }
 
 function renderOurs(c: Case, ansi = false): string {
-  const state = makeFixtureState({ screen: c.screen, selected: c.selected, theme: THEMES.midnight, calm: true });
+  const state = makeFixtureState({ screen: c.screen, selected: c.selected, theme: THEMES.midnight, calm: true, priceMode: c.priceMode });
   const canvas = renderFrame(state, c.width, c.height);
   return ansi ? canvas.toAnsi({ depth: 'truecolor' }) : canvas.toPlain();
 }
@@ -62,7 +69,7 @@ function renderPrototype(entry: string, c: Case, ansi = false, extra: string[] =
   return execFileSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, TZ: 'America/New_York' } }).replace(/\n$/, '');
 }
 
-for (const c of CASES) {
+for (const c of [...CASES, ...MCAP_CASES]) {
   test(`snapshot ${c.name} matches the committed golden`, () => {
     const want = readFileSync(resolve(snapDir, `${c.name}.txt`), 'utf8').replace(/\n$/, '');
     const got = renderOurs(c);
@@ -73,8 +80,8 @@ for (const c of CASES) {
   });
 }
 
-test('goldens exist for all 15 cases', () => {
-  for (const c of CASES) assert.ok(existsSync(resolve(snapDir, `${c.name}.txt`)), c.name);
+test('goldens exist for all 15 price cases and the 10 market-cap (default) cases', () => {
+  for (const c of [...CASES, ...MCAP_CASES]) assert.ok(existsSync(resolve(snapDir, `${c.name}.txt`)), c.name);
 });
 
 // midnight's `ai` colour (#a78bfa) as the prototype emits it in 24-bit SGR
@@ -131,7 +138,7 @@ test('themes render the same text in every theme (color-only difference)', () =>
   const c = CASES[0];
   const plain = renderOurs(c);
   for (const theme of [THEMES.cyberspace, THEMES.ember, THEMES.paper]) {
-    const state = makeFixtureState({ screen: c.screen, selected: c.selected, theme, calm: true });
+    const state = makeFixtureState({ screen: c.screen, selected: c.selected, theme, calm: true, priceMode: c.priceMode });
     const got = renderFrame(state, c.width, c.height).toPlain();
     // the footer prints the theme name, so compare everything above it
     assert.equal(got.split('\n').slice(0, -1).join('\n'), plain.split('\n').slice(0, -1).join('\n'));

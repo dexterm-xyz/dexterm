@@ -384,9 +384,9 @@ test('doctor: codex row (missing / old / logged out / ready) and claude is optio
 });
 
 test('config: analyst.engine validates, and a model can never change /analyst (only the user)', async () => {
-  const { validateConfig, policyCheck } = await import('@dexterm/custom');
-  assert.deepEqual(validateConfig({ version: 4, analyst: { engine: 'codex' } }), []);
-  assert.ok(validateConfig({ version: 4, analyst: { engine: 'gpt' } }).length > 0);
+  const { validateConfig, policyCheck, CONFIG_VERSION } = await import('@dexterm/custom'); // task-1537: the current version (5)
+  assert.deepEqual(validateConfig({ version: CONFIG_VERSION, analyst: { engine: 'codex' } }), []);
+  assert.ok(validateConfig({ version: CONFIG_VERSION, analyst: { engine: 'gpt' } }).length > 0);
   for (const actor of ['claude', 'jarvis', 'agent:x'] as const) {
     assert.ok(policyCheck([{ op: 'replace', path: '/analyst/engine', value: 'codex' }], actor).some((e) => /only the user/.test(e.msg)), `${actor} refused`);
   }

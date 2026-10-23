@@ -4,13 +4,14 @@
 //   positions  → every coin with fills (newest activity first; ← → cycle), LIVE or PAPER as above
 //   follows    → the selected followed wallet's coins (TRACKED), newest first
 // In the preview: x share to X · t copy as text · s save only · a show/hide wallet · z exact size/band ·
-// f 16:9 ⇄ 1:1 · ← → other coin · esc close. Share = save + clipboard image + X compose intent in the user's own
+// m market cap ⇄ SOL price (task-1518; mcap is the default when the coin's supply is known) · f 16:9 ⇄ 1:1 ·
+// ← → other coin · esc close. Share = save + clipboard image + X compose intent in the user's own
 // browser (pnl-card.ts shareCard); dexterm posts nothing. Nothing here trades, signs or edits a number.
 import { type Canvas, mix } from '@dexterm/tui';
 import type { AppState } from './state.ts';
 import {
-  computeCard, renderCard, previewCanvas, cardText, paperCardInput, liveCardInput, trackedCardInput, CardError,
-  type CardInput, type CardOptions, type CardStats,
+  computeCard, renderCard, previewCanvas, cardText, paperCardInput, trackedCardInput, cardSupply, mcapView, CardError,
+  type CardInput, type CardOptions, type CardStats, type CardBasis,
 } from './pnl-card.ts';
 
 export type PnlOrigin = 'token' | 'positions' | 'follows';
@@ -22,7 +23,8 @@ export interface PnlUi {
   idx: number;
   /** follows: the followed wallet whose history is carded. */
   wallet: string | null;
-  opts: Required<CardOptions>;
+  /** basis unset = the card's default (market cap when the supply is known). */
+  opts: Required<Omit<CardOptions, 'basis'>> & { basis?: CardBasis };
   stats: CardStats | null;
   error: string | null;
   /** A share/save is running (keys other than esc are ignored meanwhile). */
@@ -32,11 +34,22 @@ export interface PnlUi {
 
 const MARK_VIA = 'dexscreener';
 
-function coinMeta(state: AppState, mint: string): { symbol: string | null; name: string | null; image: string | null } {
+interface CoinMeta { symbol: string | null; name: string | null; image: string | null; launchpad: string | null; fdv: number | null; price: number | null }
+
+function coinMeta(state: AppState, mint: string): CoinMeta {
   const tv = state.live?.token?.view;
-  if (tv && tv.mint === mint) return { symbol: tv.symbol, name: tv.name, image: tv.image };
+  if (tv && tv.mint === mint) return { symbol: tv.symbol, name: tv.name, image: tv.image, launchpad: tv.launchpad ?? null, fdv: tv.fdv ?? null, price: tv.price ?? null };
   const row = state.screener.rows.find((r) => r.mint === mint);
-  return { symbol: row?.symbol ?? null, name: row?.name ?? null, image: row?.image ?? null };
+  return { symbol: row?.symbol ?? null, name: row?.name ?? null, image: row?.image ?? null, launchpad: row?.launchpad ?? null, fdv: row?.fdv ?? null, price: row?.price ?? null };
+}
+
+/** The market-cap inputs for a coin: its recorded supply (FDV ÷ price, else pump.fun's 1B) and today's SOL/USD. */
+function mcapInputs(state: AppState, mint: string, meta: CoinMeta): Pick<CardInput, 'supply' | 'usdPerSol'> {
+  const solUsd = state.live?.positions.solUsd() ?? null;
+  return {
+    supply: cardSupply({ mint, launchpad: meta.launchpad, fdv: meta.fdv, price: meta.price, via: 'market data' }),
+    usdPerSol: solUsd && solUsd > 0 ? { usd: solUsd, source: `$${solUsd.toFixed(2)}/SOL now (display conversion)` } : null,
+  };
 }
 
 function imageOf(state: AppState, url: string | null): CardInput['image'] {
@@ -57,14 +70,13 @@ export function markFor(state: AppState, mint: string): CardInput['mark'] {
   return null;
 }
 
-/** Coins with paper or live fills, newest activity first. */
+/** Coins with paper fills, newest activity first. */
 function tradedCoins(state: AppState): { mint: string; symbol: string }[] {
   const live = state.live;
   if (!live) return [];
   const last = new Map<string, { t: number; symbol: string }>();
   const see = (mint: string, t: number, symbol: string) => { const e = last.get(mint); if (!e || t > e.t) last.set(mint, { t, symbol }); };
   for (const r of live.wallet.trades(1000)) see(r.mint, r.t, r.symbol);
-  for (const r of live.livePositions?.records(1000) ?? []) see(r.mint, r.t, r.symbol);
   return [...last.entries()].sort((a, b) => b[1].t - a[1].t).map(([mint, v]) => ({ mint, symbol: v.symbol }));
 }
 
@@ -88,12 +100,12 @@ export function openPnl(state: AppState): string | null {
   } else if (state.screen === 'token') {
     const mint = state.live.token?.view?.mint ?? state.token?.mint ?? null;
     if (!mint) return 'open a coin first';
-    const has = (state.live.livePositions?.records(1, mint).length ?? 0) > 0 || state.live.wallet.trades(1000).some((r) => r.mint === mint);
-    if (!has) return 'no paper or live fills for this coin yet: PnL cards come from your own recorded trades';
+    const has = state.live.wallet.trades(1000).some((r) => r.mint === mint);
+    if (!has) return 'no paper fills for this coin yet: PnL cards come from your own recorded trades';
     state.pnl = { origin: 'token', choices: [{ mint, symbol: coinMeta(state, mint).symbol ?? mint.slice(0, 4) }], wallet: null, ...base };
   } else if (state.screen === 'positions') {
     const choices = tradedCoins(state);
-    if (!choices.length) return 'no paper or live fills yet: B / S on a token to trade, then H here';
+    if (!choices.length) return 'no paper fills yet: B / S on a token to paper-trade, then H here';
     state.pnl = { origin: 'positions', choices, wallet: null, ...base };
   } else return 'PnL cards open from the token, positions (P) or followed wallets (U) screens';
   state.overlay = 'pnl';
@@ -118,16 +130,12 @@ export async function pnlInput(state: AppState, ui: PnlUi): Promise<CardInput> {
     decimals = m.decimals;
     const solUsd = live.positions.solUsd();
     if (!mark && m.priceUsd && m.priceAt && solUsd) mark = { priceSol: m.priceUsd / solUsd, at: m.priceAt, via: `${MARK_VIA} ÷ SOL/USD` };
-    return trackedCardInput(copy.trades(ui.wallet), {
+    return { ...trackedCardInput(copy.trades(ui.wallet), {
       wallet: ui.wallet, mint: ch.mint, symbol: meta.symbol ?? m.symbol ?? ch.symbol, name: meta.name, decimals, mark,
       historyAt: st.lastPollAt, complete: stats.sample.complete, image,
-    });
+    }), ...mcapInputs(state, ch.mint, meta) };
   }
-  const liveRows = live.livePositions?.fills(ch.mint) ?? [];
-  if (liveRows.length) {
-    return liveCardInput(liveRows, { mint: ch.mint, symbol: meta.symbol ?? undefined, name: meta.name, wallet: live.linkedWallet?.publicKey ?? null, mark: markFor(state, ch.mint), image });
-  }
-  return paperCardInput(live.wallet.trades(1000), { mint: ch.mint, symbol: meta.symbol ?? undefined, name: meta.name, mark: markFor(state, ch.mint), image });
+  return { ...paperCardInput(live.wallet.trades(1000), { mint: ch.mint, symbol: meta.symbol ?? undefined, name: meta.name, mark: markFor(state, ch.mint), image }), ...mcapInputs(state, ch.mint, meta) };
 }
 
 /** (Re)build the card for the current choice; on refusal the preview shows the reason instead of a card. */
@@ -154,6 +162,13 @@ export function pnlKey(ui: PnlUi, key: { name: string; ch?: string; ctrl?: boole
   if (key.name === 'left' || ch === '[' || ch === 'h') { if (ui.choices.length > 1) { ui.idx = (ui.idx - 1 + ui.choices.length) % ui.choices.length; return { kind: 'reload' }; } return { kind: 'none' }; }
   if (ch === 'a') { ui.opts.showWallet = !ui.opts.showWallet; ui.notice = ui.opts.showWallet ? 'wallet + tx signatures SHOWN on the card' : 'wallet hidden'; return { kind: 'none' }; }
   if (ch === 'z') { ui.opts.exactSize = !ui.opts.exactSize; ui.notice = ui.opts.exactSize ? 'exact SOL size SHOWN on the card' : 'size shown as a band'; return { kind: 'none' }; }
+  if (ch === 'm') {
+    const now = ui.stats ? mcapView(ui.stats, ui.opts).basis : (ui.opts.basis ?? 'mcap');
+    ui.opts.basis = now === 'mcap' ? 'price' : 'mcap';
+    const v = ui.stats ? mcapView(ui.stats, ui.opts) : null;
+    ui.notice = ui.opts.basis === 'price' ? 'entry / exit as SOL price' : v?.fallback ?? 'entry / exit as market cap';
+    return { kind: 'none' };
+  }
   if (ch === 'f') { ui.opts.aspect = ui.opts.aspect === 'wide' ? 'square' : 'wide'; return { kind: 'none' }; }
   if (!ui.stats) return { kind: 'none' };
   if (ch === 'x') return { kind: 'share', action: 'x' };
@@ -162,7 +177,7 @@ export function pnlKey(ui: PnlUi, key: { name: string; ch?: string; ctrl?: boole
   return { kind: 'none' };
 }
 
-const HINTS = 'x share to X · t copy text · s save · a wallet · z size · f 16:9/1:1 · ←→ coin · esc';
+const HINTS = 'x share to X · t copy text · s save · a wallet · z size · m mcap/price · f 16:9/1:1 · ←→ coin · esc';
 
 /** The preview overlay: the card itself at cell size when the terminal fits it, else its text; then the keys. */
 export function renderPnlOverlay(c: Canvas, state: AppState): void {
@@ -172,7 +187,7 @@ export function renderPnlOverlay(c: Canvas, state: AppState): void {
   c.noRain(0, 0, c.w, c.h);
   c.fill(0, 0, c.w, c.h, ' ', { bg: mix(t.bg, '#000000', 0.5) });
   const ch = ui.choices[ui.idx];
-  const head = `PnL CARD · $${ch?.symbol ?? '?'}${ui.choices.length > 1 ? ` (${ui.idx + 1}/${ui.choices.length})` : ''} · ${ui.opts.aspect === 'wide' ? '16:9' : '1:1'} · wallet ${ui.opts.showWallet ? 'SHOWN' : 'hidden'} · size ${ui.opts.exactSize ? 'EXACT' : 'band'}`;
+  const head = `PnL CARD · $${ch?.symbol ?? '?'}${ui.choices.length > 1 ? ` (${ui.idx + 1}/${ui.choices.length})` : ''} · ${ui.opts.aspect === 'wide' ? '16:9' : '1:1'} · wallet ${ui.opts.showWallet ? 'SHOWN' : 'hidden'} · size ${ui.opts.exactSize ? 'EXACT' : 'band'}${ui.stats ? ` · ${mcapView(ui.stats, ui.opts).basis === 'mcap' ? 'mcap' : 'SOL price'}` : ''}`;
   c.text(1, 0, head, { fg: t.text, bg: t.headBg, b: true }, c.w - 2);
   c.fill(0, c.h - 1, c.w, 1, ' ', { bg: t.headBg });
   c.text(1, c.h - 1, ui.busy ? 'working… (esc closes)' : (ui.notice ?? HINTS), { fg: ui.notice ? t.warn : t.muted, bg: t.headBg }, c.w - 2);

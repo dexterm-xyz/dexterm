@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Canvas, rasterizeCanvas, fmtUsd, fmtPrice, fmtPct, type RasterOpts } from '@dexterm/tui';
 import { encodePng } from '@dexterm/data';
+import { priceModeOf } from './display.ts';
 import { dextermHome } from './boot-state.ts';
 import { cleanText } from './screener/rows.ts';
 import { rugP, fmtRugP, RUG_MODEL_LABEL } from './screener/rug.ts';
@@ -175,8 +176,14 @@ const yesNo = (b: boolean | null): string => (b === null ? 'unknown' : b ? 'ENAB
 export function tokenReport(state: AppState, v: TokenView, now: number): string[] {
   const L: string[] = [];
   L.push(`coin        $${cleanText(v.symbol, 16)}${v.name ? ` · ${cleanText(v.name, 40)}` : ''} · ${v.launchpad}`);
-  L.push(`price       ${fmtPrice(v.price)}   5m ${fmtPct(v.chg.m5)}   1h ${fmtPct(v.chg.h1)}   6h ${fmtPct(v.chg.h6)}   24h ${fmtPct(v.chg.h24)}`);
-  L.push(`market cap  ${fmtUsd(v.mcap)}${v.mcapFlagged ? ' (flagged)' : ''}   liquidity ${fmtUsd(v.liq)}   vol 24h ${fmtUsd(v.vol24)}`);
+  const moves = `5m ${fmtPct(v.chg.m5)}   1h ${fmtPct(v.chg.h1)}   6h ${fmtPct(v.chg.h6)}   24h ${fmtPct(v.chg.h24)}`;
+  if (priceModeOf(state) === 'mcap' && v.mcap !== null) { // task-1537: the market cap leads by default; both numbers stay
+    L.push(`market cap  ${fmtUsd(v.mcap)}${v.mcapFlagged ? ' (flagged)' : ''}   price ${fmtPrice(v.price)}   ${moves}`);
+    L.push(`liquidity   ${fmtUsd(v.liq)}   vol 24h ${fmtUsd(v.vol24)}`);
+  } else {
+    L.push(`price       ${fmtPrice(v.price)}   ${moves}`);
+    L.push(`market cap  ${fmtUsd(v.mcap)}${v.mcapFlagged ? ' (flagged)' : ''}   liquidity ${fmtUsd(v.liq)}   vol 24h ${fmtUsd(v.vol24)}`);
+  }
   L.push(`holders     ${v.holders ?? '—'}   top-10 ${v.top10 === null ? '—' : `${v.top10.toFixed(1)}%`}   dev ${v.dev === null ? '—' : `${v.dev.toFixed(1)}%`}${v.holdersSample ? `   (${v.holdersSample})` : ''}`);
   L.push(`age         ${v.ageMin === null ? '—' : fmtAge(v.ageMin * 60)}`);
   L.push(`authorities mint ${yesNo(v.mintAuth)} · freeze ${yesNo(v.freezeAuth)}${v.riskyExtensions.length ? ` · risky extensions: ${v.riskyExtensions.join(', ')}` : ''}`);

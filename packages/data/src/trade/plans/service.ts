@@ -119,35 +119,16 @@ export class PlanService {
     this.gate = new ConfirmGate({ clock: this.clock, journal: this.journal, settings: this.settings, rng: opts.rng });
     this.paper = opts.executor ?? new PaperPlanExecutor({ clock: this.clock, solUsd: opts.solUsd });
     const deps = { clock: this.clock, journal: this.journal, executor: this.paper, gate: this.gate, safety: opts.safety, priceMaxAgeMs: opts.priceMaxAgeMs, debounceTicks: opts.debounceTicks };
-    // Recover from an existing journal (replay + settle in-flight) or start fresh. The fire path always starts
-    // PAPER (task-1363): live is a per-run keypress opt-in, never recovered from the journal.
+    // Recover from an existing journal (replay + settle in-flight) or start fresh. The fire path is PAPER
+    // (task-1571: there is no live executor in the build; dexterm holds no key).
     this.engine = path && existsSync(path) ? PlanEngine.recover(deps) : new PlanEngine(deps);
   }
 
-  /** The executor the engine fires through right now (paper by default; the live adapter after useLive). */
+  /** The executor the engine fires through (the paper executor unless a test injects one). */
   get executor(): Executor { return this.engine.executor; }
   /** 'paper' unless a live executor is installed. Surfaces that cannot prove 'paper' must render LIVE. */
   mode(): 'paper' | 'live' { return this.engine.executor.kind === 'live' ? 'live' : 'paper'; }
 
-  // ── the fire path (task-1363). Switching to LIVE is a physical keypress on the plans screen (never voice,
-  // an agent, a pipe or the popup): the gesture is required here AND the signer only fills from a fast wallet
-  // that was itself created by a TTY keypress. A switch while plans are armed/filled would strand their legs on
-  // the other executor's ledger, so both directions refuse until those plans are cancelled or finished. ──
-  useLive(executor: Executor, gesture: { gesture?: string } | null | undefined): void {
-    if (gesture?.gesture !== 'keypress') throw new ConfirmError('live-needs-keypress', 'switching plan fills to LIVE needs a physical keypress');
-    if (executor.kind !== 'live') throw new PlanError('bad-request', 'useLive needs a live executor');
-    const open = this.engine.openPlans();
-    if (open.length) throw new PolicyRefusal('open-plans', `cancel or finish ${open.length} open plan(s) before switching the fire path`);
-    this.engine.replaceExecutor(executor);
-    this.journal.append('settings.executor', { data: { kind: 'live', network: 'devnet', by: 'keypress', label: (executor as { describe?: () => string }).describe?.() ?? 'live' } });
-  }
-  usePaper(): void {
-    if (this.engine.executor === this.paper) return;
-    const open = this.engine.openPlans();
-    if (open.length) throw new PolicyRefusal('open-plans', `cancel or finish ${open.length} open plan(s) before switching the fire path`);
-    this.engine.replaceExecutor(this.paper);
-    this.journal.append('settings.executor', { data: { kind: 'paper' } });
-  }
 
   // ── proposals (voice/claude/user/batch all land here; a proposal is inert until armed) ──
   propose(input: PlanInput, ctx: { supply: number; by?: OrderPlan['source']['by']; ref?: string | null }): OrderPlan {

@@ -28,6 +28,15 @@
 .ohlc .row1 b:first-child { margin-left: 0; }
 .ohlc .up { color: var(--up); } .ohlc .down { color: var(--down); }
 .ohlc .ind { margin-right: 10px; }
+.ohlc .row3 { color: var(--dim); }
+.ohlc .row3 .paper { color: var(--warn); }
+/* task-1483: the BUY / SELL marker hover card (textContent only; positioned by chart.js) */
+.mtip { position: absolute; z-index: 6; pointer-events: none; font-size: 11px; line-height: 1.45; padding: 5px 8px; border-radius: 4px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text); white-space: nowrap; box-shadow: 0 2px 10px rgba(0,0,0,.45); }
+.mtip .h { font-weight: 700; }
+.mtip .h.buy { color: var(--up); } .mtip .h.sell { color: var(--down); }
+.mtip .src { color: var(--dim); }
+.mtip .src.paper { color: var(--warn); }
 .hint { position: absolute; right: 70px; top: 6px; z-index: 5; font-size: 11px; color: var(--warn); pointer-events: none; }
 .pos { border-top: 1px solid var(--border); padding: 3px 10px 4px; font-size: 11px; background: rgba(245,255,45,.025); }
 .pos-head { display: flex; gap: 10px; }

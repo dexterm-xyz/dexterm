@@ -1,0 +1,88 @@
+{
+  "kind": "exit-profile",
+  "id": "scalp",
+  "name": "Scalp (quick play)",
+  "version": "1.1.0",
+  "description": "A quick momentum play on a young or freshly pushing coin: small size, fast partial profits, a tight trail, a 20-minute clock and a hard stop. Never carried between agent sessions.",
+  "fit": {
+    "summary": "Under ~6 h old, or a fresh 5m push on any coin; tape live with buyers; the move is minutes old. Pick scalp when in doubt.",
+    "minLiquidityUsd": 30000,
+    "ageHours": {
+      "min": 0,
+      "max": 6
+    },
+    "maxTop10Pct": 35,
+    "signals": [
+      "5m change clearly positive",
+      "buys beat sells across >= 25 wallets",
+      "price at or above the 1m VWAP"
+    ]
+  },
+  "sizing": {
+    "maxSizePctOfBankroll": 10
+  },
+  "tpLadder": [
+    {
+      "atPct": 30,
+      "sellFrac": 0.5
+    },
+    {
+      "atPct": 60,
+      "sellFrac": 0.25
+    }
+  ],
+  "trailingStop": {
+    "armAtPct": 20,
+    "trailPct": 15
+  },
+  "timeStop": {
+    "minutes": 20,
+    "ifBelowPct": 10,
+    "action": "exit"
+  },
+  "hardStop": {
+    "enabled": true,
+    "atPct": -25,
+    "why": "A scalp has no thesis beyond the next minutes of momentum: -25% means the read was wrong. It is the smallest size, so the slippage a stop pays costs least here. A rug can still gap through it."
+  },
+  "thesisBreak": {
+    "liquidityDropPct": 20,
+    "liquidityWindowMin": 5,
+    "mcapDivergenceX": 3,
+    "devSell": {
+      "exitOnAnyDevSell": true,
+      "topHolderSellPctOfBag": 25
+    },
+    "volumeDeath": {
+      "m5TradesBelow": 10,
+      "forMinutes": 5
+    }
+  },
+  "reentry": {
+    "allowed": true,
+    "cooldownMinutes": 10,
+    "maxEntriesPerCoinPerSession": 2,
+    "requires": "a new full vet that passes and a new 5m high after the exit"
+  },
+  "carry": {
+    "allowed": false,
+    "requiresTpFilled": 0,
+    "maxRemainderPctOfBankroll": 0
+  },
+  "reprofileTo": [
+    "swing",
+    "runner"
+  ],
+  "notes": [
+    "Upgrade to swing or runner only after TP1 filled, the price is above the TP1 level and every thesis check is clean.",
+    "1.1.0 adds wake (the judgement calls that wake the position's agent session; noAnswer is what happens when no session answers in time) and maxHoldMinutes (a hard holding cap). Mechanical exits never wait for the session."
+  ],
+  "wake": {
+    "onTpFilled": false,
+    "onTimeReview": true,
+    "drawdownPct": null,
+    "thesisWarnFrac": null,
+    "noAnswer": "exit"
+  },
+  "maxHoldMinutes": 60
+}

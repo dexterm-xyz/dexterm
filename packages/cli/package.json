@@ -1,6 +1,6 @@
 {
   "name": "dexterm-cli",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "mcpName": "io.github.dexterm-xyz/dexterm",
   "description": "dexterm: terminal DEX screener with a local Claude CLI analyst",
   "author": "The dexterm authors",
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@dexterm/agents": "0.0.1",
+    "@dexterm/autotrade": "0.0.1",
     "@dexterm/custom": "0.0.1",
     "@dexterm/data": "0.0.1",
     "@dexterm/mcp": "0.0.1",

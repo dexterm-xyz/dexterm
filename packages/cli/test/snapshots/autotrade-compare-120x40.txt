@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER   backtesting scalp and swing on one tape (last…
+╭─ BACKTESTS · same tape ────────────────────────────────────────────── b runs both on one window of recorded history ─╮
+│ scalp                                                     swing                                                      │
+│ 17 trades · win rate 41.2% (95% 21.6–64.0%) · net -$3.09… 10 trades · win rate 70.0% (95% 39.7–89.2%) · net +$229.…  │
+│ max drawdown 5.2% · profit factor 0.97 · best +58.7% · w… max drawdown 10.9% · profit factor 5.35 · best +82.1% · …  │
+│ tape: 12 coins · 2026-10-16T00:19:24.087Z → 2026-10-18T09:57:42.697Z (both) end 0 · candidates 10 · rugs 0 · cost …  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ FIELDS · 23 differ of 63 ───────────────────────────── changed fields lit · builtin profiles compare as references ─╮
+│ FIELD                                   scalp                                 swing                                  │
+│ /id                                     scalp                                 swing                                  │
+│ /name                                   Scalp (quick play)                    Swing (intraday trend)                 │
+│ /description                            Fresh momentum on a young coin: a 5…  An intraday trend on a coin that ha…   │
+│ /entry/screen                           liq >= 30K vol5m >= 5K !flag:mint !…  liq >= 30K vol1h > 15K !flag:mint !…   │
+│ /entry/ageHours/min                     0                                     1                                      │
+│ /entry/ageHours/max                     6                                     168                                    │
+│ /entry/triggers/0/kind                  momentum                              screen                                 │
+│ /entry/triggers/0/m5MinPct              3                                     —                                      │
+│ /entry/triggers/0/buySellMin            1.2                                   —                                      │
+│ /exits/default                          scalp                                 swing                                  │
+│ /exits/profiles/0                       builtin:scalp                         builtin:swing                          │
+│ /exits/profiles/1                       builtin:swing                         builtin:runner                         │
+│ /sizing/pct                             5                                     10                                     │
+│ /sizing/maxPctOfBankroll                10                                    15                                     │
+│ /risk/dailyLossHaltPct                  10                                    15                                     │
+│ /risk/drawdown/sizeDownAtPct            15                                    25                                     │
+│ /risk/drawdown/recoverBelowPct          8                                     15                                     │
+│ /risk/drawdown/haltAtPct                25                                    40                                     │
+│ /risk/maxExposurePct                    25                                    35                                     │
+│ /risk/maxEntriesPerDay                  12                                    8                                      │
+│ /risk/perCoin/maxEntries                2                                     1                                      │
+│ /risk/perCoin/cooldownMin               10                                    30                                     │
+│ /exits/profiles/2                       —                                     builtin:scalp                          │
+│ /kind                                   strategy                              strategy                               │
+│ /schema                                 dexterm-strategy/1                    dexterm-strategy/1                     │
+│ /version                                1.0.0                                 1.0.0                                  │
+│ /mode                                   paper                                 paper                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  tab  view   ↑↓  scroll   b  backtest both, one tape   esc  back   q  quit

@@ -37,7 +37,12 @@ export interface PnlChipVM {
 export const PEAK_FLASH_MS = 1200;
 
 /** The chip for the followed agent's open PAPER position, or null when nothing is held. */
-export function pnlChipVM(v: StoryView, now: number): PnlChipVM | null {
+/** task-1537: how a chip level reads: the caller's basis (a market cap at the coin's supply by default), else `$price`. */
+export type ChipLevel = (usd: number, mint: string) => string;
+export const CHIP_PRICE_LEVEL: ChipLevel = (u) => `$${fmtPx(u)}`;
+const PRICE_LEVEL = CHIP_PRICE_LEVEL;
+
+export function pnlChipVM(v: StoryView, now: number, lvl: ChipLevel = PRICE_LEVEL): PnlChipVM | null {
   const a = v.arc;
   if (!a || a.stage !== 'open') return null;
   const dd = a.pnlPct !== null && a.peakPct !== null ? (1 + a.pnlPct) / (1 + a.peakPct) - 1 : null;
@@ -46,8 +51,8 @@ export function pnlChipVM(v: StoryView, now: number): PnlChipVM | null {
     symbol: a.symbol,
     pnlPct: a.pnlPct,
     pnlUsd: a.pnlPct !== null && a.sizeUsd !== null ? a.sizeUsd * a.pnlPct : null,
-    entry: a.entryUsd !== null ? `$${fmtPx(a.entryUsd)}` : '—',
-    mark: a.mark ? `$${fmtPx(a.mark.priceUsd)}` : '—',
+    entry: a.entryUsd !== null ? lvl(a.entryUsd, a.mint) : '—',
+    mark: a.mark ? lvl(a.mark.priceUsd, a.mint) : '—',
     peakPct: a.peakPct,
     ddPct: dd,
     heldMs: a.filledAt !== null ? now - a.filledAt : null,
@@ -92,7 +97,7 @@ export class OwnPnlTracker {
 
   get mint(): string | null { return this.cur?.s.mint ?? null; }
 
-  vm(now: number): PnlChipVM | null {
+  vm(now: number, lvl: ChipLevel = PRICE_LEVEL): PnlChipVM | null {
     const c = this.cur;
     if (!c) return null;
     const s = c.s;
@@ -102,12 +107,12 @@ export class OwnPnlTracker {
       symbol: s.symbol,
       pnlPct: s.pnlPct,
       pnlUsd: s.pnlUsd,
-      entry: s.entryUsd !== null ? `$${fmtPx(s.entryUsd)}` : '—',
-      mark: s.markUsd !== null ? `$${fmtPx(s.markUsd)}` : '—',
+      entry: s.entryUsd !== null ? lvl(s.entryUsd, s.mint) : '—',
+      mark: s.markUsd !== null ? lvl(s.markUsd, s.mint) : '—',
       peakPct: c.peakPct,
       ddPct: dd,
       heldMs: s.openedAt !== null ? Math.max(0, now - s.openedAt) : null,
-      tp: s.targetUsd !== null ? `$${fmtPx(s.targetUsd)}` : null,
+      tp: s.targetUsd !== null ? lvl(s.targetUsd, s.mint) : null,
       tpNone: 'not set',
       newPeak: c.peakAt !== null && now - c.peakAt < PEAK_FLASH_MS && c.peakPct !== null && c.peakPct > 0,
     };

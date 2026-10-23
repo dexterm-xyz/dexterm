@@ -2,9 +2,9 @@
 // rows, a tracked wallet's decoded WalletTrades). Made-up tickers and addresses (marketing GUARDRAILS §4: no real
 // tokens). The three visual-review fixtures are PROFIT (paper, closed), LOSS (live mainnet, closed) and LONG HOLD
 // (tracked wallet, 11 days, still open, marked). Clock: NOW below; every time is relative to it.
-import type { TradeRecord, LiveFillRow } from '@dexterm/data';
+import type { TradeRecord } from '@dexterm/data';
 import type { WalletTrade } from '@dexterm/data/copy';
-import { paperCardInput, liveCardInput, trackedCardInput, type CardInput } from '../../src/pnl-card.ts';
+import { paperCardInput, trackedCardInput, type CardInput } from '../../src/pnl-card.ts';
 
 export const NOW = Date.UTC(2026, 9, 16, 5, 0, 0);
 export const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
@@ -42,7 +42,22 @@ export function profitInput(): CardInput {
   return paperCardInput(records, { mint: MINT_NEON, name: 'Neon Sample' });
 }
 
-function liveRow(id: number, t: number, side: 'buy' | 'sell', sol: number, tokens: number, sig: string, network: 'mainnet' | 'devnet' = 'mainnet'): LiveFillRow {
+/** task-1571: the LIVE card style is still rendered (a ledger row with walletMode live); the 0.1.7 build has no live
+ *  ledger of its own, so the LOSS fixture is a literal card input of the same shape. */
+interface LiveRowShape { id: number; t: number; network: 'mainnet' | 'devnet'; signature: string; mint: string; symbol: string; side: 'buy' | 'sell'; solDelta: string; tokenDelta: string; priceSol: number; usd: number | null; decimals: number; feeLamports: string; realizedLamports: string; kind: 'swap' }
+function liveInput(rows: LiveRowShape[], o: { mint: string; name: string; wallet: string }): CardInput {
+  const rs = rows.filter((r) => r.mint === o.mint);
+  const nets = new Set(rs.map((r) => r.network));
+  const network = nets.size > 1 ? 'mixed' : rs[0]?.network === 'devnet' ? 'devnet' : 'mainnet';
+  return {
+    source: 'live', network, mint: o.mint, symbol: rs[0]?.symbol ?? '?', name: o.name, decimals: rs[0]?.decimals ?? null,
+    fills: rs.map((r) => ({ t: r.t, side: r.side, solDelta: Number(BigInt(r.solDelta)) / 1e9, tokenDelta: BigInt(r.tokenDelta), feeSol: Number(BigInt(r.feeLamports)) / 1e9, sig: r.signature })),
+    ledger: 'signer live ledger', wallet: o.wallet, mark: null,
+    excluded: [], fees: 'network + priority fees included', image: null,
+  };
+}
+
+function liveRow(id: number, t: number, side: 'buy' | 'sell', sol: number, tokens: number, sig: string, network: 'mainnet' | 'devnet' = 'mainnet'): LiveRowShape {
   const fee = 15_000n;
   const solDelta = side === 'buy' ? -(lam(sol) + fee) : lam(sol) - fee;
   return {
@@ -55,7 +70,7 @@ function liveRow(id: number, t: number, side: 'buy' | 'sell', sol: number, token
 export function lossInput(network: 'mainnet' | 'devnet' = 'mainnet'): CardInput {
   const t0 = NOW - 3 * HOUR;
   const rows = [liveRow(2, t0 + 40 * MIN, 'sell', 1.54, 820_000, SIG2, network), liveRow(1, t0, 'buy', 2.5, 820_000, SIG1, network)];
-  return liveCardInput(rows, { mint: MINT_GLYPH, name: 'Glyph Sample', wallet: WALLET });
+  return liveInput(rows, { mint: MINT_GLYPH, name: 'Glyph Sample', wallet: WALLET });
 }
 
 function walletTrade(t: number, side: 'buy' | 'sell' | 'transfer', sol: number | null, tokens: number, sig: string, note: WalletTrade['note'] = null): WalletTrade {

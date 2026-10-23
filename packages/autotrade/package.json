@@ -1,0 +1,26 @@
+{
+  "name": "@dexterm/autotrade",
+  "version": "0.0.1",
+  "private": true,
+  "description": "dexterm autotrade engine (AUTOTRADE-SPEC, paper only): the dexterm-strategy/1 document + validator, exit profiles 1.0.0..1.2.0, presets, the clamp, the constant-product fill model, the position monitor, the replay tape, the run loop + hash-chained ledger, backtests + held-out sweeps, and the ~/.dexterm/strategies store. No keys, no wallet, no signer: mode live validates with a warning and the runner refuses it.",
+  "author": "The dexterm authors",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ollama": "./src/ollama-sessions.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 \"test/*.test.ts\"",
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@dexterm/custom": "0.0.1",
+    "@dexterm/data": "0.0.1",
+    "@dexterm/mcp": "0.0.1",
+    "@dexterm/packs": "0.0.1"
+  }
+}

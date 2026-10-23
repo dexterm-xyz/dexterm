@@ -8,11 +8,14 @@
 // processes. Files run one at a time (--test-concurrency=1). Tests use serialLane() (packages/cli/test/serial/
 // lane.ts): one automatic retry, logged. This script collects that log and prints every test that needed the
 // retry, so a retry is reported and never hidden. Exit code is node --test's: a test that fails twice fails.
+// task-1480: runs at nice 15 under the machine-wide test lock (scripts/test-lock.mjs); inside `npm test` the
+// parent already holds the lock.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { acquireTestLock, lowerPriority } from './test-lock.mjs';
 
 const LANES = { serial: 'packages/*/test/serial/*.test.ts', perf: 'packages/*/test/perf/*.test.ts' };
 const lane = process.argv[2];
@@ -20,6 +23,9 @@ if (!(lane in LANES)) {
   console.error(`usage: node scripts/test-lane.mjs <${Object.keys(LANES).join('|')}>`);
   process.exit(2);
 }
+
+lowerPriority();
+await acquireTestLock(`test:${lane}`);
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = mkdtempSync(join(tmpdir(), `dexterm-${lane}-lane-`));

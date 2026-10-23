@@ -14,9 +14,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTION_FILE_ENV, ACTION_TOKEN_ENV, ANALYST_ACTION_TYPES, parseActionLine } from '@dexterm/data';
-import { firewall, userSkillPreamble, type ContentEntry } from '@dexterm/mcp';
+import { basisLanguage, DEFAULT_PRICE_BASIS, fmtCap, isPriceBasis, knownSupply, NO_SUPPLY_REASON, pickBasis, type PriceBasis } from '@dexterm/data/basis';
+import { firewall, userSkillPreamble, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
 import { skillStore } from '../kb-skill-cmd.ts';
 import { applyCodexEvent, buildCodexArgv, codexAllowedTools, codexDeveloperInstructions, codexFailure, expandSkillPrompt, newCodexTurn, strictSchema, type AnalystEngine } from './codex.ts';
+import { runOllamaTurn, type OllamaDeps } from './ollama.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** assets/claude ships the plugin dir, the analyst system prompt and the output schemas. */
@@ -69,7 +71,10 @@ export interface AnalystRequest {
 /** The excluded action tools for a restricted session, as CLI tool names (task-1324). */
 export function deniedActionTools(actionTypes: readonly string[] | undefined): string[] {
   if (!actionTypes) return [];
-  return ANALYST_ACTION_TYPES.filter((t) => !actionTypes.includes(t)).map((t) => `mcp__dexterm__${t}`);
+  // task-1507: an observe-only session (AI scan) cannot propose a strategy edit either
+  // task-1529: nor start or stop a parallel strategy
+  const propose = actionTypes.length === 0 ? [...STRATEGY_PROPOSE_TOOLS, ...PARALLEL_CONTROL_TOOLS] : [];
+  return [...ANALYST_ACTION_TYPES.filter((t) => !actionTypes.includes(t)), ...propose].map((t) => `mcp__dexterm__${t}`);
 }
 
 /**
@@ -138,7 +143,7 @@ const fmtNum = (n: number | null | undefined): string => {
 };
 const fmtPct = (n: number | null | undefined): string => (n === null || n === undefined || !Number.isFinite(n)) ? '—' : `${n >= 0 ? '+' : ''}${(n).toFixed(1)}%`;
 
-interface VisRow { mint: string; symbol: string; priceUsd: number | null; chg1h: number | null; chg24h: number | null; liq: number | null; vol24: number | null }
+interface VisRow { mint: string; symbol: string; priceUsd: number | null; mcap?: number | null; chg1h: number | null; chg24h: number | null; liq: number | null; vol24: number | null }
 
 interface SelectedDetail {
   source: string; mint: string; symbol: string; priceUsd: number | null; chg: Record<string, number | null> | null;
@@ -154,27 +159,56 @@ const clock = (ms: number | null): string => ms ? new Date(ms).toISOString().sli
  * current price, the move ladder, the real holder count and recent history in front of it, and never
  * has to answer from numbers remembered from an earlier turn of the same session.
  */
-export function selectedSnapshotLines(d: SelectedDetail | null | undefined): string[] {
+export function selectedSnapshotLines(d: SelectedDetail | null | undefined, basis: PriceBasis = DEFAULT_PRICE_BASIS): string[] {
   if (!d || typeof d !== 'object' || !d.mint) return [];
   const L: string[] = [];
   const c = d.chg ?? {};
-  L.push(`LIVE SNAPSHOT of the selected coin (as of ${clock(d.asOf)}, from the ${d.source}; AUTHORITATIVE and newer than any number earlier in this chat; never quote an older price):`);
-  L.push(`  price $${fmtPx(d.priceUsd)}  move 5m ${fmtPct(c.m5)} · 1h ${fmtPct(c.h1)} · 6h ${fmtPct(c.h6)} · 24h ${fmtPct(c.h24)}`);
+  // task-1537: in the market-cap basis (the default) the snapshot leads with the cap and the history reads as caps at
+  // the current supply (the source's mcap ÷ price, FDV ÷ price, or pump.fun's fixed 1B); no supply → prices, said so.
+  const sup = basis === 'mcap' ? knownSupply({ mint: d.mint, mcap: d.mcap, price: d.priceUsd, fdv: d.fdv }) : null;
+  const lvl = (p: number | null | undefined): string => (sup && p !== null && p !== undefined && Number.isFinite(p) ? fmtCap(p * sup.tokens) : `$${fmtPx(p)}`);
+  L.push(`LIVE SNAPSHOT of the selected coin (as of ${clock(d.asOf)}, from the ${d.source}; AUTHORITATIVE and newer than any number earlier in this chat; never quote an older ${basis === 'mcap' ? 'market cap or price' : 'price'}):`);
+  const move = `move 5m ${fmtPct(c.m5)} · 1h ${fmtPct(c.h1)} · 6h ${fmtPct(c.h6)} · 24h ${fmtPct(c.h24)}`;
+  if (basis === 'mcap') L.push(sup ? `  mcap ${lvl(d.priceUsd)} (price $${fmtPx(d.priceUsd)})  ${move}` : `  price $${fmtPx(d.priceUsd)} (${NO_SUPPLY_REASON})  ${move}`);
+  else L.push(`  price $${fmtPx(d.priceUsd)}  ${move}`);
   L.push(`  mcap $${fmtNum(d.mcap)}  fdv $${fmtNum(d.fdv)}  liq $${fmtNum(d.liq)}  vol24 $${fmtNum(d.vol24)}  age ${fmtAge(d.ageMin)}`);
   L.push(`  holders ${d.holders === null ? 'unknown' : `${Math.round(d.holders).toLocaleString('en-US')} TOTAL (Jupiter, checked vs on-chain)`}${d.holdersChgPct24h !== null && d.holdersChgPct24h !== undefined ? ` · ${fmtPct(d.holdersChgPct24h)} 24h` : ''}  top-10 ${d.top10Pct === null ? 'unknown' : d.top10Pct.toFixed(1) + '%'}  (the ranked holder list from get_holders is only the top-20 SAMPLE; its length is not the holder count)`);
   const k = d.candles;
+  const unit = sup ? `market caps at the current supply (${sup.source})` : null;
+  const pts = (xs: number[]): string => xs.map((x) => (sup ? fmtCap(x * sup.tokens) : fmtPx(x))).join(' ');
   if (k && k.length >= 2) {
     const hi = Math.max(...k.map((x) => x[2])), lo = Math.min(...k.map((x) => x[3]));
     const first = k[0][1], last = k[k.length - 1][4];
-    L.push(`  HISTORY (${d.interval} candles, ${k.length} bars, ${clock(k[0][0])} → ${clock(k[k.length - 1][0])}): open $${fmtPx(first)} → last $${fmtPx(last)} (${fmtPct(first ? (last / first - 1) * 100 : null)}), high $${fmtPx(hi)}, low $${fmtPx(lo)}`);
-    L.push(`  last ${Math.min(12, k.length)} closes: ${k.slice(-12).map((x) => fmtPx(x[4])).join(' ')}`);
+    L.push(`  HISTORY (${d.interval} candles, ${k.length} bars, ${clock(k[0][0])} → ${clock(k[k.length - 1][0])}${unit ? `; ${unit}` : ''}): open ${lvl(first)} → last ${lvl(last)} (${fmtPct(first ? (last / first - 1) * 100 : null)}), high ${lvl(hi)}, low ${lvl(lo)}`);
+    L.push(`  last ${Math.min(12, k.length)} closes: ${pts(k.slice(-12).map((x) => x[4]))}`);
   } else if (d.spark && d.spark.length >= 2) {
-    L.push(`  HISTORY (sparkline, ${d.spark.length} pts oldest→newest): ${d.spark.slice(-16).map((x) => fmtPx(x)).join(' ')}`);
+    L.push(`  HISTORY (sparkline, ${d.spark.length} pts oldest→newest${unit ? `; ${unit}` : ''}): ${pts(d.spark.slice(-16))}`);
     L.push('  full candles are NOT loaded for this coin: call get_dossier (or get_candles) before you comment on price action, levels or entries.');
   } else {
     L.push('  HISTORY: none loaded. Call get_dossier (or get_candles) before commenting on price action, levels or entries.');
   }
   return L;
+}
+
+/**
+ * task-1537: the price basis an analyst turn speaks: the app's live mode (screen state `app.priceMode`, which follows
+ * `$`, `/display` and the config), else the one-run override (DEXTERM_PRICE_BASIS), else market cap.
+ */
+export function analystBasis(ss: Record<string, unknown> | null | undefined, env: Record<string, string | undefined> = process.env): PriceBasis {
+  const app = ss?.app as { priceMode?: unknown } | undefined;
+  return isPriceBasis(app?.priceMode) ? app.priceMode : pickBasis(undefined, env);
+}
+
+/** task-1537: the analyst's system prompt for one turn: the bundled analyst-system.md plus the basis paragraph. */
+export function analystSystemPrompt(basis: PriceBasis): string {
+  return `${fs.readFileSync(path.join(ASSETS, 'analyst-system.md'), 'utf8').replace(/\s+$/, '')}\n\n## Price basis\n${basisLanguage(basis)}\n`;
+}
+
+/** Write the turn's system prompt into its private temp dir (0600) and return the path the CLI flags take. */
+export function writeAnalystSystemPrompt(tmp: string, basis: PriceBasis): string {
+  const p = path.join(tmp, 'analyst-system.md');
+  fs.writeFileSync(p, analystSystemPrompt(basis), { mode: 0o600 });
+  return p;
 }
 
 /**
@@ -196,12 +230,15 @@ export function analystContextBlock(ss: Record<string, unknown>): string {
   } else {
     lines.push('SELECTED/HOVERED COIN: none (ask which coin only if the question needs one and none is implied).');
   }
-  lines.push(...selectedSnapshotLines(ss.selectedDetail as SelectedDetail | null | undefined));
+  const basis = analystBasis(ss);
+  lines.push(`price basis: ${basis === 'mcap' ? 'MARKET CAP (talk in caps: entry cap, cap now, cap targets/stops, x-multiples)' : 'USD PRICE (the user set display.priceMode = price)'}`);
+  lines.push(...selectedSnapshotLines(ss.selectedDetail as SelectedDetail | null | undefined, basis));
   const vis = (ss.visible as VisRow[] | undefined) ?? [];
   if (vis.length) {
     lines.push(`visible pool (top ${Math.min(vis.length, 8)} rows):`);
     vis.slice(0, 8).forEach((r, i) => {
-      lines.push(`  ${String(i + 1).padStart(2)} ${untrusted(r.symbol || '?')}  px $${fmtNum(r.priceUsd)}  1h ${fmtPct(r.chg1h)}  24h ${fmtPct(r.chg24h)}  liq $${fmtNum(r.liq)}  vol24 $${fmtNum(r.vol24)}  mint ${r.mint}`);
+      const head = basis === 'mcap' && r.mcap != null && Number.isFinite(r.mcap) && r.mcap > 0 ? `mcap $${fmtNum(r.mcap)} (px $${fmtNum(r.priceUsd)})` : `px $${fmtNum(r.priceUsd)}${basis === 'mcap' ? ' (mcap unknown)' : ''}`;
+      lines.push(`  ${String(i + 1).padStart(2)} ${untrusted(r.symbol || '?')}  ${head}  1h ${fmtPct(r.chg1h)}  24h ${fmtPct(r.chg24h)}  liq $${fmtNum(r.liq)}  vol24 $${fmtNum(r.vol24)}  mint ${r.mint}`);
     });
   }
   const wl = (ss.watchlist as Array<{ mint?: string; symbol?: string }> | undefined) ?? [];
@@ -255,8 +292,8 @@ export interface AnalystHandlers {
 
 export interface AnalystHandle { cancel(): void }
 
-/** Injectable deps for tests; production uses the real `child_process.spawn`. */
-export interface AnalystDeps { spawn?: typeof spawn }
+/** Injectable deps for tests; production uses the real `child_process.spawn` (and, task-1543, fetch + process.env). */
+export interface AnalystDeps { spawn?: typeof spawn; ollama?: OllamaDeps }
 
 /**
  * The prompt for a turn: the ambient CONTEXT block (task-1313) then the user's slash-prompt / question.
@@ -319,7 +356,7 @@ export function analystPluginDir(tmp: string, env: NodeJS.ProcessEnv = process.e
 }
 
 /** Build the claude argv (SPEC §5.1 / task-1293 run-skill.mjs), given a written mcp-config path. */
-export function buildArgv(req: AnalystRequest, mcpConfigPath: string, pluginDir: string = PLUGIN_DIR): string[] {
+export function buildArgv(req: AnalystRequest, mcpConfigPath: string, pluginDir: string = PLUGIN_DIR, systemPromptPath: string = path.join(ASSETS, 'analyst-system.md')): string[] {
   const argv = [
     '-p', turnPrompt(req),
     '--output-format', 'stream-json', '--verbose',
@@ -331,7 +368,7 @@ export function buildArgv(req: AnalystRequest, mcpConfigPath: string, pluginDir:
     // Session persistence stays ON so a follow-up can --resume this id and keep the conversation warm.
     '--setting-sources', '',
     '--plugin-dir', pluginDir,
-    '--append-system-prompt-file', path.join(ASSETS, 'analyst-system.md'),
+    '--append-system-prompt-file', systemPromptPath, // task-1537: runAnalyst passes the per-turn copy with the price basis
   ];
   // The structured skills force an output schema; a free-text follow-up answers in prose (no schema).
   if (req.schema) {
@@ -403,13 +440,14 @@ export function runAnalyst(req0: AnalystRequest, handlers: AnalystHandlers, deps
   const stopActions = (): void => { drainActions(); if (actionPoll) { clearInterval(actionPoll); actionPoll = null; } };
 
   if (req.engine === 'codex') return runCodexTurn(req, handlers, deps, { tmp, env, cleanup });
+  if (req.engine === 'ollama') return runOllamaAnalyst(req, handlers, deps, { tmp, env, cleanup });
 
   let argv: string[];
   // A broken overlay never blocks a turn: fall back to the bundled skills (the loader already skipped bad files).
   let pluginDir = PLUGIN_DIR;
   try { pluginDir = analystPluginDir(tmp); } catch { pluginDir = PLUGIN_DIR; }
   try {
-    argv = buildArgv(req, mcpConfigPath, pluginDir);
+    argv = buildArgv(req, mcpConfigPath, pluginDir, writeAnalystSystemPrompt(tmp, analystBasis(req.screenState))); // task-1537
   } catch (e) {
     cleanup();
     handlers.onError?.('analyst assets missing', (e as Error).message);
@@ -439,7 +477,8 @@ export function runAnalyst(req0: AnalystRequest, handlers: AnalystHandlers, deps
     if (settled) return;
     settled = true;
     cleanup();
-    if (e.code === 'ENOENT') handlers.onError?.('claude not installed', 'npm i -g @anthropic-ai/claude-code && claude login');
+    // task-1543: no CLI at all is the 'set up an AI backend' case: name both ways (Claude Code, or a free local model).
+    if (e.code === 'ENOENT') handlers.onError?.('claude not installed: set up an AI backend', 'npm i -g @anthropic-ai/claude-code && claude login, or a free local model: install Ollama, `ollama pull qwen3:8b`, `dexterm ai engine ollama` (dexterm doctor shows both)');
     else handlers.onError?.('could not start claude', e.message);
   });
 
@@ -583,7 +622,7 @@ function runCodexTurn(req: AnalystRequest, handlers: AnalystHandlers, deps: Anal
     prompt = expanded;
     argv = buildCodexArgv(req, {
       nodePath: process.execPath, mcpBin: MCP_BIN, schemaPath,
-      developerInstructions: codexDeveloperInstructions(path.join(ASSETS, 'analyst-system.md')),
+      developerInstructions: codexDeveloperInstructions(writeAnalystSystemPrompt(s.tmp, analystBasis(req.screenState))), // task-1537
     });
   } catch (e) {
     s.cleanup();
@@ -696,4 +735,26 @@ function runCodexTurn(req: AnalystRequest, handlers: AnalystHandlers, deps: Anal
       settle();
     },
   };
+}
+
+/**
+ * One analyst turn on a LOCAL model through the user's Ollama (task-1543). The prompt, the skill playbook and the
+ * schema are prepared exactly as for codex (no plugin dir); the loop, the tools and the profile are in ollama.ts.
+ */
+function runOllamaAnalyst(req: AnalystRequest, handlers: AnalystHandlers, deps: AnalystDeps, s: TurnSetup): AnalystHandle {
+  let prompt: string;
+  let schema: Record<string, unknown> | null = null;
+  let systemPrompt: string;
+  try {
+    if (req.schema) schema = strictSchema(JSON.parse(fs.readFileSync(path.join(ASSETS, 'schemas', path.basename(req.schema)), 'utf8'))) as Record<string, unknown>;
+    let pluginDir = PLUGIN_DIR;
+    try { pluginDir = analystPluginDir(s.tmp); } catch { pluginDir = PLUGIN_DIR; }
+    prompt = expandSkillPrompt(turnPrompt(req), pluginDir, materializeUserSkill);
+    systemPrompt = fs.readFileSync(path.join(ASSETS, 'analyst-system.md'), 'utf8');
+  } catch (e) {
+    s.cleanup();
+    handlers.onError?.('analyst assets missing', (e as Error).message);
+    return { cancel() {} };
+  }
+  return runOllamaTurn(req, handlers, deps.ollama ?? {}, { ...s, prompt, systemPrompt, schema, mcpCommand: process.execPath, mcpArgs: [MCP_BIN] });
 }

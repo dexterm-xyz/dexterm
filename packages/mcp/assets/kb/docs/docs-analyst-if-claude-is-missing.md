@@ -22,4 +22,4 @@ sources:
 date: 2026-10-16
 ---
 
-The panel shows a one-line fix (`npm i -g @anthropic-ai/claude-code && claude login`) and the rest of dexterm keeps working. `dexterm doctor` reports the Claude CLI line as a warning, not a failure. With Codex installed, `auto` runs the analyst on Codex instead.
+The panel says to set up an AI backend, with both ways in one line (`npm i -g @anthropic-ai/claude-code && claude login`, or a free local model with Ollama), and the rest of dexterm keeps working. `dexterm doctor` reports the Claude CLI line as a warning, not a failure. With Codex installed, `auto` runs the analyst on Codex instead; with neither but a local model (https://dexterm.xyz/docs/ollama) set up, on the local model.

@@ -6,7 +6,8 @@
 //      mode: the scan's own log plus the scan analyst's answer.
 //   2. VETTING $SYM: the checklist for the coin in focus, each box with the number the app computed and pass / warn /
 //      fail / pending (pending = the number is not in yet). A ◆ marks the checks the agent itself ran.
-//   3. DATA: mcap, price, liquidity, 5m / 1h, buy/sell flow, holders, and a candle trace.
+//   3. DATA: mcap, price, liquidity, 5m / 1h, buy/sell flow, holders, and a candle trace (task-1483: with a B / S cell
+//      on the candle of every paper / live fill of the coin, from the ledgers; the rest is said, never moved).
 //   4. PLAN · POSITION (only while a PAPER ticket / position exists): entry, size, TP / stop, mark PnL, peak, time held,
 //      what it is waiting for.
 //   5. DECISIONS: the session log (passed X because…, rejected Y, entered Z) and the scoreboard (PAPER, simulated).
@@ -16,7 +17,7 @@
 // Smaller panels drop blocks in priority order (decisions, then data, then the vetting list folds to two columns);
 // calm mode shows the same information with no typing; NO_COLOR keeps meaning in glyphs (✓ ! ✗ · ◆ ❯ ›).
 
-import { mix, clock, decryptText, fmtUsd, fmtPrice, fmtNum, wrap, type Canvas, type Hex, type Style, type ColorDepth } from '@dexterm/tui';
+import { mix, clock, decryptText, fmtUsd, fmtPrice, fmtMcap, fmtNum, wrap, chartMarkers, markerLetter, MARKER_PERIOD_MS, type Canvas, type Hex, type Style, type ColorDepth, type ChartTradeFill } from '@dexterm/tui';
 import type { FixtureToken } from '../fixtures.ts';
 import type { TokenView } from '../live/token.ts';
 import { ribbonText, ribbonLines, fmtPx, type StoryView, type StoryPhase, type Thought, type TradeArc, type Decision, type SessionScore } from '@dexterm/agents';
@@ -51,6 +52,10 @@ export interface CoinFacts {
   larpVerdict: string | null;
   /** Candle closes, oldest first (the trace). */
   closes: number[];
+  /** task-1483: the candles' open times (ms) and period, and the coin's paper + live fills, for B / S on the trace. */
+  closeTimes?: number[];
+  periodMs?: number;
+  fills?: readonly ChartTradeFill[];
 }
 
 export interface StreamLine {
@@ -98,6 +103,8 @@ export interface BrainModel {
   vet: VetRow[];
   data: DataCell[];
   closes: number[];
+  /** task-1483: B / S cells on the candle trace (index into `closes`); `off` = fills not on the trace's candles. */
+  marks?: { cells: Array<{ index: number; side: 'buy' | 'sell'; source: 'paper' | 'live'; count: number }>; off: number } | null;
   plan: PlanVM | null;
   log: LogLine[];
   score: string | null;
@@ -156,7 +163,7 @@ export function factsFromFixture(tk: FixtureToken, larpVerdict: string | null = 
 }
 
 /** From the live token view. `extra` carries what the screen derived this frame (top-10 ex-pool, the dev row). */
-export function factsFromView(v: TokenView, extra: { top10?: number | null; dev?: [string, Level] | null; larpVerdict?: string | null; price?: number | null } = {}): CoinFacts {
+export function factsFromView(v: TokenView, extra: { top10?: number | null; dev?: [string, Level] | null; larpVerdict?: string | null; price?: number | null; fills?: readonly ChartTradeFill[] | null } = {}): CoinFacts {
   const tr = v.trades;
   const buys = tr.filter((x) => x.side === 'buy').length;
   return {
@@ -165,7 +172,17 @@ export function factsFromView(v: TokenView, extra: { top10?: number | null; dev?
     holders: v.holders, top10: extra.top10 ?? v.top10, mintAuth: v.mintAuth, freezeAuth: v.freezeAuth, lpLocked: v.lpLocked,
     dev: extra.dev ?? (v.devMints === null ? null : [`${v.devMints} mints by dev (jup)`, v.devMints > 3 ? 'warn' : 'ok']),
     rugScore: v.rug?.score ?? null, larpVerdict: extra.larpVerdict ?? null, closes: v.candles.map((k) => k.c),
+    closeTimes: v.candles.map((k) => k.t), periodMs: MARKER_PERIOD_MS[v.interval], fills: extra.fills ?? undefined,
   };
+}
+
+/** task-1483: the trace's B / S cells for the last `width` closes (the same model as the charts; display only). */
+export function traceMarks(f: CoinFacts | null, width = 240): BrainModel['marks'] {
+  if (!f || !f.fills?.length || !f.closeTimes || f.closeTimes.length !== f.closes.length || !f.periodMs) return null;
+  const times = f.closeTimes.slice(-width);
+  const set = chartMarkers(f.fills, { periodMs: f.periodMs, barTimes: times });
+  const off0 = f.closes.length - times.length;
+  return { cells: set.markers.map((m) => ({ index: off0 + m.index, side: m.side, source: m.source, count: m.count })), off: set.before + set.after + set.gap };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -309,11 +326,18 @@ export function planFromThoughts(thoughts: readonly Thought[], since: number): {
 }
 
 /** The PLAN / POSITION block for the agent's PAPER arc (null when there is no ticket or position). */
-export function planVM(v: StoryView, now: number): PlanVM | null {
+/** task-1537: the coin's supply from its facts (mcap ÷ price at the same tick), null when either is missing. */
+function capScale(f: CoinFacts): { mint: string; supply: number } | null {
+  return f.mcap !== null && f.price !== null && f.price > 0 && f.mcap > 0 ? { mint: f.mint, supply: f.mcap / f.price } : null;
+}
+
+export function planVM(v: StoryView, now: number, cap: { mint: string; supply: number } | null = null): PlanVM | null {
   const a = v.arc;
   if (!a || a.stage === 'closed' || a.stage === 'refused') return null;
   const said = planFromThoughts(v.thoughts, a.openedAt);
   const open = a.stage === 'open';
+  // task-1537: entry / mark as market caps when the card's coin has a known supply, else prices
+  const lvl = (u: number): string => (cap && cap.mint === a.mint ? fmtMcap(u * cap.supply) : `$${fmtPx(u)}`);
   const pnlUsd = open && a.pnlPct !== null && a.sizeUsd !== null ? a.sizeUsd * a.pnlPct : null;
   const dd = open && a.pnlPct !== null && a.peakPct !== null ? (1 + a.pnlPct) / (1 + a.peakPct) - 1 : null;
   const tp = said.tp ? `TP ${said.tp} (agent's plan)` : 'TP agent-managed';
@@ -323,12 +347,12 @@ export function planVM(v: StoryView, now: number): PlanVM | null {
     : said.tp ? `TP ${said.tp} · agent-managed exit, no resting order on PAPER` : 'the agent\'s exit call · no resting orders on PAPER';
   return {
     symbol: a.symbol, stage: a.stage,
-    entry: a.entryUsd !== null ? `$${fmtPx(a.entryUsd)}` : '—',
+    entry: a.entryUsd !== null ? lvl(a.entryUsd) : '—',
     size: a.sizeUsd !== null ? `$${a.sizeUsd.toFixed(2)}${a.spentSol > 0 ? ` (${a.spentSol.toFixed(4)} SOL)` : ''}` : a.spentSol > 0 ? `${a.spentSol.toFixed(4)} SOL` : 'sizing…',
     tp, stop,
     pnlPct: open ? a.pnlPct : null, pnlUsd, peakPct: open ? a.peakPct : null, ddPct: dd,
     heldMs: open && a.filledAt !== null ? now - a.filledAt : null,
-    mark: a.mark ? `$${fmtPx(a.mark.priceUsd)}` : '—',
+    mark: a.mark ? lvl(a.mark.priceUsd) : '—',
     waiting, trace: a.trace.map((s) => s.pct),
     refused: open && a.refusal && v.beats.refusedAt !== null && now - v.beats.refusedAt < 3500 ? a.refusal : null,
   };
@@ -360,15 +384,15 @@ export function scanLogLines(log: readonly ScanLogEntry[], tz: string | undefine
 // ---------------------------------------------------------------------------------------------------------------
 // the whole model
 
-export function agentBrainModel(v: StoryView, facts: CoinFacts | null, now: number, tz?: string): BrainModel {
+export function agentBrainModel(v: StoryView, facts: CoinFacts | null, now: number, tz?: string, mcap = false): BrainModel {
   const s = agentStream(v, tz);
   const status = v.control === 'paused' ? '❚❚ paused by you · its next call is held' : v.control === 'takeover' ? 'you are driving · the agent is frozen' : null;
   return {
     mode: 'agent', title: `✦ BRAIN · ${v.agent}`, streamLabel: s.label, demo: s.demo, stream: s.lines, status,
     coin: facts ? { symbol: facts.symbol, mint: facts.mint } : v.focus ? { symbol: v.focus.symbol, mint: v.focus.mint } : null,
     vet: facts ? vetRows(facts, v.focus) : [],
-    data: facts ? dataCells(facts) : [], closes: facts?.closes ?? [],
-    plan: planVM(v, now), log: decisionLog(v, tz), score: scoreLine(v.score),
+    data: facts ? dataCells(facts) : [], closes: facts?.closes ?? [], marks: traceMarks(facts),
+    plan: planVM(v, now, mcap && facts ? capScale(facts) : null), log: decisionLog(v, tz), score: scoreLine(v.score),
   };
 }
 
@@ -390,7 +414,7 @@ export function scanBrainModel(s: ScanBrainInput, facts: CoinFacts | null, tz?: 
     mode: 'scan', title: '✦ BRAIN · AI scan', streamLabel: 'scan log + the scan analyst (observe-only)', demo: false,
     stream: scanStream(s.log, s.answer, tz), status: `◉ ${s.mode}${s.lock ? ` $${s.lock.symbol} · score ${s.lock.score} · read ${s.lock.reads}` : ''} · ${s.scanned} coins${s.note ? ` · ${s.note}` : ''}`,
     coin: facts ? { symbol: facts.symbol, mint: facts.mint } : null,
-    vet: facts ? vetRows(facts, null, s.floorUsd) : [], data: facts ? dataCells(facts) : [], closes: facts?.closes ?? [],
+    vet: facts ? vetRows(facts, null, s.floorUsd) : [], data: facts ? dataCells(facts) : [], closes: facts?.closes ?? [], marks: traceMarks(facts),
     plan: null, log: scanLogLines(s.log, tz), score: `locks ${locks} · reads ${reads} · ${s.usage || 'ai cap'} · observe-only · never trades`,
   };
 }
@@ -585,7 +609,7 @@ function drawVet(c: Canvas, x: number, y: number, w: number, rows: number, m: Br
 
 function drawData(c: Canvas, x: number, y: number, w: number, m: BrainModel, bg: Hex): void {
   const t = c.theme;
-  section(c, x, y, w, 'DATA', 'app numbers · no extra fetch', bg, t.accent);
+  section(c, x, y, w, 'DATA', m.marks?.cells.length ? 'app numbers · B/S = your fills' : 'app numbers · no extra fetch', bg, t.accent);
   let cx = x + 1;
   for (const d of m.data) {
     const need = d.k.length + 1 + d.v.length + 2;
@@ -603,6 +627,14 @@ function drawData(c: Canvas, x: number, y: number, w: number, m: BrainModel, bg:
     const up = cl[cl.length - 1] >= cl[0];
     c.text(x + 1, y + 2, up ? '▲' : '▼', { fg: up ? t.up : t.down, bg, b: true });
     cl.forEach((v, i) => c.put(x + 3 + i, y + 2, LV[Math.round(((v - lo) / span) * 7)], { fg: mix(bg, up ? t.up : t.down, 0.45 + 0.55 * (i / Math.max(1, cl.length - 1))), bg, soft: true }));
+    // task-1483: a B / S cell on the candle of each fill (live = solid, paper = tinted); a buy wins a shared cell's colour
+    const first = m.closes.length - cl.length;
+    for (const mk of m.marks?.cells ?? []) {
+      const i = mk.index - first;
+      if (i < 0 || i >= cl.length) continue;
+      const col = mk.side === 'buy' ? t.up : t.down;
+      c.put(x + 3 + i, y + 2, markerLetter(mk.side), mk.source === 'live' ? { fg: '#000000', bg: col, b: true, hard: true } : { fg: col, bg: mix(bg, col, 0.25), b: true, hard: true });
+    }
   } else c.text(x + 1, y + 2, '· no candles yet', { fg: t.dim, bg, i: true });
 }
 
@@ -668,6 +700,8 @@ export interface BrainHost {
   timeZone?: string;
   colorDepth: ColorDepth;
   vfx: { frame: number };
+  /** task-1537: the price basis (absent = market cap): the position card's entry / mark read as caps. */
+  priceMode?: 'price' | 'mcap';
 }
 
 /**
@@ -680,7 +714,7 @@ export function brainFor(h: BrainHost, facts: CoinFacts | null, calm: boolean, s
   if (hud) {
     const now = hud.clock();
     const v = hud.story.view(now);
-    if (agentBrainActive(v, now)) return { model: agentBrainModel(v, facts, now, h.timeZone), opts: { now, calm: calm || !!hud.reduced, depth: h.colorDepth, frame: h.vfx.frame } };
+    if (agentBrainActive(v, now)) return { model: agentBrainModel(v, facts, now, h.timeZone, h.priceMode !== 'price'), opts: { now, calm: calm || !!hud.reduced, depth: h.colorDepth, frame: h.vfx.frame } };
   }
   const scan = h.scan;
   if (scan?.engine.on) {

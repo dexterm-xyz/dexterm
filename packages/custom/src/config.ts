@@ -1,5 +1,5 @@
 // @dexterm/custom — the config loader (task-1358 Tier 1). ~/.dexterm/config.json is the canonical,
-// machine-written config (0600, `version: 4`); workspaces are one JSON file each in ~/.dexterm/workspaces/,
+// machine-written config (0600, `version: 5`); workspaces are one JSON file each in ~/.dexterm/workspaces/,
 // user themes in ~/.dexterm/themes/. THIS MODULE NEVER READS A KEY FILE: `<name>.key` files are the data
 // layer's business, and the only thing the loader does with a key is move one OUT of an old config.
 //
@@ -63,7 +63,7 @@ export function loadConfig(home: string): LoadedConfig {
   }
   // older (or newer) config: migrate, back up, write the new one, write extracted keys to <name>.key (0600)
   let m: ReturnType<typeof migrate>;
-  try { m = migrate(raw); } catch (e) { return { ...base, ok: false, errors: [`${path}: ${(e as Error).message}`] }; }
+  try { m = migrate(raw, { journaledPriceMode: journaledPriceMode(home) }); } catch (e) { return { ...base, ok: false, errors: [`${path}: ${(e as Error).message}`] }; }
   if (m.errors.length) return { ...base, ok: false, errors: m.errors.slice(0, 5).map((e) => `${path}: after migration ${e.path || '/'} ${e.msg}`) };
   const out: LoadedConfig = { ...base, config: m.config, notes: [...m.notes] };
   try {
@@ -96,6 +96,23 @@ export function saveConfig(home: string, config: DextermConfig): void {
 
 // ------------------------------------------------------------------ journal (applied changes with inverses → undo)
 export interface JournalEntry { seq: number; at: number; kind: 'apply' | 'undo' | 'redo'; actor: string; why: string; ops: PatchOp[]; inverse: PatchOp[]; hashBefore: string; hashAfter: string }
+
+/**
+ * task-1537: the `display.priceMode` value the journal last recorded (every applied / undone / redone op that set it,
+ * in order), or null when the journal never touched it. Lets the v4 → v5 migration tell a user's own `price` choice
+ * from the old default.
+ */
+export function journaledPriceMode(home: string): 'price' | 'mcap' | null {
+  let v: 'price' | 'mcap' | null = null;
+  for (const e of readJournal(home)) {
+    for (const op of e.ops ?? []) {
+      const val = op.path === '/display/priceMode' ? op.value : op.path === '/display' && op.value && typeof op.value === 'object' ? (op.value as Record<string, unknown>).priceMode : undefined;
+      if (op.op === 'remove' && (op.path === '/display/priceMode' || op.path === '/display')) v = null;
+      else if (val === 'price' || val === 'mcap') v = val;
+    }
+  }
+  return v;
+}
 
 export function readJournal(home: string): JournalEntry[] {
   try {

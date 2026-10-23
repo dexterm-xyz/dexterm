@@ -6,7 +6,7 @@
 // MCP tool list / CLI by `packages/cli/src/app-help-gen.ts` (committed, run in tests), so they cannot drift
 // from the real app. This module only LOADS and SEARCHES them — it is read-only and dependency-free.
 //
-// It is kept out of the main KB store on purpose: the memecoin KB's "exactly 17 bundled entries" invariant
+// It is kept out of the main KB store on purpose: the memecoin KB's "exactly 18 bundled entries" invariant
 // stays true, and a "how do I …" search hits app-help first without the two sets diluting each other.
 
 import path from 'node:path';

@@ -55,6 +55,8 @@ export const POPUP_EVENTS = new Set<string>([
   'event:chart.interval', 'event:chart.indicator', 'event:chart.style', 'event:chart.scale', 'event:chart.painted',
   // task-1472: the chart's Y axis (market cap ⇄ price): a display preference the terminal saves, nothing else
   'event:chart.axis',
+  // task-1483: show / hide the chart's BUY / SELL markers (display.chartMarkers): a display preference, nothing else
+  'event:chart.markers',
   // task-1345 agent roster: per-agent pause / kick, by agent name (the only writes this popup can send)
   'event:roster.pause', 'event:roster.resume', 'event:roster.kick',
   // task-1355 order plans: cancel a plan by id (the ONLY write the plans popup can send — never arm/cap/sign)
@@ -103,6 +105,8 @@ export function validateEventPayload(name: string, payload: unknown): Record<str
       return oneOf(CHART_SCALES, p.scale) ? { scale: p.scale } : null;
     case 'chart.axis':
       return oneOf(CHART_AXES, p.axis) ? { axis: p.axis } : null;
+    case 'chart.markers': // task-1483: show / hide the BUY / SELL markers (a display setting; nothing else)
+      return typeof p.on === 'boolean' ? { on: p.on } : null;
     case 'chart.painted':
       return (p.kind === 'first' || p.kind === 'data') && finiteIn(p.ms, 0, 600_000) && finiteIn(p.sentAt, 0, 1e15)
         ? { kind: p.kind, ms: p.ms, sentAt: p.sentAt } : null;

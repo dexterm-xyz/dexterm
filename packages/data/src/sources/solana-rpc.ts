@@ -103,14 +103,22 @@ export interface RpcHolder extends Holder {
   tokenAccount: string;
   /** Wallet / program that owns the token account; null if not resolved. */
   owner: string | null;
+  /**
+   * Set by TokenDetail.holders when the owner is a pool, bonding curve, launch vault, lock or the burn address
+   * (the task-1367 holder classes): not a person's position, so it is left out of `top10Pct`.
+   */
+  poolSide?: { tag: string; program: string | null; reason: string };
 }
 
 export interface TopHolders {
   mint: string;
   /** Largest first, at most 20 (the RPC's cap). `address` is the owner when resolved. Empty for an aggregate fallback. */
   holders: RpcHolder[];
-  /** Share of supply held by the top 10, excluding labelled LP/CEX/bridge accounts (SPEC §3.6). */
+  /** Share of supply held by the top 10, excluding labelled LP/CEX/bridge accounts (SPEC §3.6) and, from
+   *  TokenDetail.holders, every pool-side owner (`poolSide`). */
   top10Pct: number | null;
+  /** The top 10 with nothing left out (what an explorer shows); set by TokenDetail.holders. */
+  top10PctRaw?: number | null;
   supply: string;
   decimals: number;
   source: SourceId;

@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER   starting and stopping a paper run ships with …
+╭─ RUNNER · PAPER ────────────────────────────────────────────── status file: /tmp/dexterm-home/autotrade/runner.json ─╮
+│ RUNNING · moonbag v1.0.0 (0123456789abcdef) · pid 4242 · heartbeat 4s ago                                            │
+│ book $1012.40 of $1000.00 · cash $961.90 · realized today +$8.10 · model spend $0.42 of $10.00 today                 │
+│ no halt                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ CANDIDATES · 2 ─────────────────────╮╭─ SESSIONS · 1 ───────────────────────╮╭─ POSITIONS · 2 ──────────────────────╮
+│ ALPHA       2m  screen · momentum  … ││ ALPHA       3 turns  $0.11 of $0.50  ││ CHARLIE   +22.0%   +$4.40            │
+│ BRAVO      30s  screen               ││   last: wait · liquidity still thin  ││   moonbag · next: cost back at +100% │
+│                                      ││                                      ││ DELTA    +156.0%  +$31.20 free bag   │
+│                                      ││                                      ││   moonbag · next: bag trail 55% fro… │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+╰──────────────────────────────────────╯╰──────────────────────────────────────╯╰──────────────────────────────────────╯
+╭─ RUN LEDGER · newest last ────────────────────────────────────────── hash-chained; every step with its exact inputs ─╮
+│ #118      1m  candidate        ALPHA matched screen · momentum                                                       │
+│ #119     40s  decision         ALPHA wait (liquidity still thin)                                                     │
+│ #120     20s  refusal          BRAVO refused: maxConcurrent                                                          │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  tab  view   !  kill   p  pause entries   f  flatten (confirm)   esc  back   q  quit

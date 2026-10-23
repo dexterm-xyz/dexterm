@@ -51,6 +51,12 @@ function tokenTransport(): { t: Transport; calls: string[] } {
     if (u.pathname.startsWith('/tokens/v1/solana/')) return json(200, [pair]);
     if (u.pathname === '/tokens/v2/search') return json(200, [jup]);
     if (u.pathname === '/price/v3') return json(200, { [BONK]: { usdPrice: 0.0000377, priceChange24h: -5.6 } });
+    // task-1518: the holders' owner-program lookup (getMultipleAccounts with no data) is not in the recordings; answer
+    // "unknown" for every owner, so every holder stays counted and the top-10 is the recorded chain truth.
+    if (req.body?.includes('"getMultipleAccounts"') && req.body.includes('"dataSlice"')) {
+      const asked = (JSON.parse(req.body) as { params: [string[]] }).params[0];
+      return json(200, { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: asked.map(() => null) } });
+    }
     // d06 recorded the OHLCV without the `token` parameter the live loader adds
     if (u.pathname.includes('/ohlcv/')) { u.searchParams.delete('token'); return b({ ...req, url: u.toString() }); }
     try { return await a(req); } catch { return b(req); }
@@ -116,7 +122,7 @@ test('token live: every panel loads from recorded Helius / GoPlus / Gecko / RugC
   assert.ok(changes.length >= 7, 'one redraw per panel at least');
   assert.ok(calls.some((u) => u.includes('mainnet.helius-rpc.com')));
   assert.ok(!calls.some((u) => u.includes('api.mainnet-beta.solana.com')), 'Helius answered, the public fallback was never needed');
-  assert.equal(dl.credits?.status().session, 3);
+  assert.equal(dl.credits?.status().session, 4, 'mint, largest accounts, owners and (task-1518) the owners\' programs');
   // interval change refetches only candles
   const before = calls.length;
   const q = live.setInterval('1m');

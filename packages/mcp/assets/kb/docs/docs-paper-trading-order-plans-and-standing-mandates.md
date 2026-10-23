@@ -1,9 +1,9 @@
 ---
 id: docs-paper-trading-order-plans-and-standing-mandates
-title: Paper trading, live trading and the safety model › Order plans and standing mandates
+title: Paper trading and the safety model › Order plans and standing mandates
 kind: docs
 page: paper-trading
-page_title: Paper trading, live trading and the safety model
+page_title: Paper trading and the safety model
 heading: Order plans and standing mandates
 anchor: order-plans-and-standing-mandates
 url: https://dexterm.xyz/docs/paper-trading#order-plans-and-standing-mandates
@@ -16,7 +16,6 @@ tags:
   - mandates
   - paper
   - trading
-  - live
   - safety
   - model
 confidence: high
@@ -29,7 +28,7 @@ sources:
 date: 2026-10-16
 ---
 
-Merged 2026-10-11 (`task-1355`) and labelled **in progress**: the engine, the typed and spoken proposal paths, the `O` screen, the popup and the audit journal are on main and every default run is **paper**. Since 2026-10-12 (`task-1363`) a **live fire path on devnet** exists behind a held keypress: fills go through the signer process and a separate capped fast wallet, described in the live fire path (https://dexterm.xyz/docs/paper-trading#the-live-fire-path-devnet-the-fast-wallet) below. No plan has moved mainnet funds; there is no mainnet fast wallet.
+Labelled **in progress**: the engine, the typed and spoken proposal paths, the `O` screen, the popup and the audit journal are on main, and every plan fills on **paper**. There is no live fire path: plans never sign or send anything.
 
 An **order plan** is "buy this coin if it dips to 300k market cap, sell half at 600k, keep the rest as a moon bag", written down once: one entry trigger (market cap or price, below or above, or immediate), a ladder of take-profit tranches (each an above-trigger with a fraction; whatever the fractions leave is the moon bag), an optional stop (a below-trigger, below the entry), slippage and impact ceilings and an expiry (4 h by default, 7 days at most). `dexterm plan propose --mint M --size 20 --entry mc-below:300k --tp mc-above:600k:50% --stop mc-below:150k` writes one; so does saying it to Jarvis (https://dexterm.xyz/docs/voice) or an agent's `propose_order_plan` tool. All three produce the same thing: an **inert proposal** with a SHA-256 hash of its material fields and a plain-language read-back. A proposal fires nothing.
 

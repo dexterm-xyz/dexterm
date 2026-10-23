@@ -102,6 +102,8 @@ export async function resolvePaperAgentDesk(data: DataLayer, env: NodeJS.Process
     control: () => readDeskControl(env),
     journal: new SharedJournal(paperAgentJournalPath(env), systemClock),
     agent: rv.agent ?? 'mcp-agent',
+    // task-1530: the launcher may name the model session (journaled on each fill so the trade ledger can join its cost)
+    sessionId: () => env.DEXTERM_SESSION_ID ?? null,
   });
   cache = { mtimeMs, db: rv.db, mandateId: rv.mandateId, wallet, desk };
   return desk;

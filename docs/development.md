@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 66b78c5 and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 8fa5dfa and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -10,6 +10,7 @@ built-in type stripping; no build step is needed for development.
 | Package | Role |
 |---|---|
 | `packages/agents` (`@dexterm/agents`) | bring-your-own-agent layer (task-1345): per-agent identity and session tokens, server-side capability tiers (observe / annotate / propose), the gate every agent call passes, rate limits and quotas, proposals, the audit log, the loopback agent bus and the TS SDK. No agent path can arm, sign, raise a cap or change the gate. |
+| `packages/autotrade` (`@dexterm/autotrade`) | autotrade engine (AUTOTRADE-SPEC, paper only): the dexterm-strategy/1 document + validator, exit profiles 1.0.0..1.2.0, presets, the clamp, the constant-product fill model, the position monitor, the replay tape, the run loop + hash-chained ledger, backtests + held-out sweeps, and the ~/.dexterm/strategies store. No keys, no wallet, no signer: mode live validates with a warning and the runner refuses it. |
 | `packages/cli` (`dexterm`) | terminal DEX screener with a local Claude CLI analyst |
 | `packages/custom` (`@dexterm/custom`) | customization layer (task-1358, from the task-1288 design): versioned config.json (no secrets, ever), the layout solver + named workspaces, user themes, keymap overrides, the rules engine (parsed, never eval'd; alerts + PROPOSALS only), shareable packs (hash lock + ssh signature; never executes pack code) and the popup widget API. Zero runtime dependencies. |
 | `packages/data` (`@dexterm/data`) | data layer: normalized model, source adapters, cache, rate limiter, health registry (SPEC §3) |
@@ -487,10 +488,17 @@ DEXTERM_TEST_NO_RETRY=1 npm run test:serial   # same, with the automatic retry o
 
 `npm test` runs three lanes, in order:
 
-1. **parallel**: every `packages/*/test/*.test.ts` file at once (one process each, ~150 of them).
+1. **parallel**: every `packages/*/test/*.test.ts` file, one process each (~150 of them), at most 3 at a
+   time (task-1480; `DEXTERM_TEST_CONCURRENCY=N` overrides).
 2. **serial** (task-1424): `packages/*/test/serial/*.test.ts`, one file at a time, after the parallel lane
    has finished, so these tests never share the CPU with it.
 3. **perf** (task-1410): `packages/*/test/perf/*.test.ts`, one file at a time, last.
+
+Machine load (task-1480): `npm test`, `test:serial` and `test:perf` run at nice 15 and take one lock shared by
+every worktree (`/tmp/dexterm-test-suite.lock`, override `DEXTERM_TEST_LOCK`), so two suites never overlap. A run
+that finds the lock held prints one waiting line every 30 s and gives up after `DEXTERM_TEST_LOCK_WAIT_S`
+(default 3600; `0` fails at once with exit 75). A lock whose owner pid is gone is taken over. Lanes: run the
+suite with nohup and poll its log; the wait is visible there.
 
 The parallel glob does not reach `test/serial/` or `test/perf/`. **Where a test goes:**
 - a test that drives a terminal through a pty (`measure/drive.py`, `measure/action-pty.py`,

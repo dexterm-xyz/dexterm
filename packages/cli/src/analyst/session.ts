@@ -170,6 +170,7 @@ export class AnalystSession {
     this.model = opts.model ?? null;
     this.engine = opts.engine ?? 'claude';
     if (this.engine === 'codex') this.footer = 'codex exec · read-only · local';
+    else if (this.engine === 'ollama') this.footer = 'ollama · local model · $0';
     this.screenState = stampActionTypes(opts.screenState, opts.actionTypes);
     const who = opts.symbol ? '$' + opts.symbol : opts.mint ?? 'this token';
     this.question = opts.skill === 'trench-scan'
@@ -264,7 +265,7 @@ export class AnalystSession {
       {
         prompt: req.prompt, schema: req.schema, resume: req.resume, screenState: this.screenState, model: this.opts.model, budgetUsd: 1.0,
         actionTypes: this.opts.actionTypes,
-        ...(this.engine === 'codex' ? { engine: 'codex' as const } : {}),
+        ...(this.engine !== 'claude' ? { engine: this.engine } : {}),
         ...(this.opts.scan ? { longForm: false } : {}),
       },
       {
@@ -300,7 +301,8 @@ export class AnalystSession {
     this.handle = null;
     const dur = ((Date.now() - this.startedAt) / 1000).toFixed(1);
     // codex bills the user's own plan and reports no dollar figure: say whose plan rather than a fake $0.
-    const cost = ev.costUsd !== null ? `$${ev.costUsd.toFixed(ev.costUsd < 0.1 ? 3 : 2)}` : this.engine === 'codex' ? 'codex plan' : '$—';
+    // task-1543: a local model costs nothing and says so ("local $0"), never a fake cloud price.
+    const cost = this.engine === 'ollama' ? 'local $0' : ev.costUsd !== null ? `$${ev.costUsd.toFixed(ev.costUsd < 0.1 ? 3 : 2)}` : this.engine === 'codex' ? 'codex plan' : '$—';
     this.model = ev.model ?? this.model;
     this.footer = `${cost} · ${dur}s · ${this.toolLines.length} tools${this.model ? ' · ' + this.model : ''}`;
     const s = ev.structured;

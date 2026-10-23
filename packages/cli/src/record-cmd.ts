@@ -4,8 +4,9 @@
 // (observe snapshots + feed membership, the 1 h/2 h/6 h/24 h/72 h outcome sweeps, labels, retention) with no
 // TUI, to be driven by a user-level launchd LaunchAgent on the Mac mini.
 //
-//   dexterm record [run] [--interval S] [--ticks N | --once] [--maintain S] [--max-db-mb N] [--no-newpairs] [--db PATH] [--verbose]
-//   dexterm record install   [--interval S] [--max-db-mb N] [--load] [--dry-run]
+//   dexterm record [run] [--interval S] [--ticks N | --once] [--maintain S] [--max-db-mb N] [--retention-mb N] [--retention-days D]
+//                        [--focus-ticks] [--no-newpairs] [--db PATH] [--verbose]
+//   dexterm record install   [--interval S] [--max-db-mb N] [--retention-mb N] [--retention-days D] [--focus-ticks] [--load] [--dry-run]
 //   dexterm record uninstall [--unload]
 //   dexterm record status    [--db PATH]
 //
@@ -15,13 +16,18 @@
 // the data layer; only the provider name is ever logged). Modest CPU: one feed refresh per `--interval` (60 s
 // default) and recorder maintenance at most every `--maintain` seconds. A soft disk cap pauses OBSERVATION
 // (the growth source) above `--max-db-mb` while labels + retention keep running, so the DB cannot run away.
+// task-1504 (AUTOTRADE-SPEC §3, §10 Q4), both opt-in so an installed collector behaves as before until it is
+// re-installed with them: `--retention-mb N` replaces that pause with eviction of the oldest history (observation
+// never pauses), `--retention-days D` is the age rule for snapshot rows, and `--focus-ticks` runs the autotrade
+// tick lane (5–10 s DexScreener samples of watchlist / held / candidate / open coins, plus 1m candles).
 import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultDbPath, resolveRpcUrl, extraRpcUrls, redactSecrets, type DataLayer } from '@dexterm/data';
 import { PumpPortalClient } from '@dexterm/data';
-import { Recorder, recorderEnabled } from '@dexterm/recorder';
+import { Recorder, recorderEnabled, dbFocus, focusFilePath, readFocusFile, DEFAULT_TICKS, type TickPollResult } from '@dexterm/recorder';
+import { dextermHome } from './boot-state.ts';
 import { createLiveFeed } from './feed.ts';
 import { NewPairsLive } from './live/index.ts';
 
@@ -46,6 +52,10 @@ export interface CollectorEngine {
   maintain(): Promise<void>;
   /** Force a retention pass now (disk-cap recovery). */
   prune(): void;
+  /** task-1504: evict the oldest history down under the retention cap (when one is set). */
+  enforceCap?(): { evicted: boolean; usedAfter: number; over: boolean } | null;
+  /** task-1504: one autotrade tick-lane poll (when the lane is on). */
+  pollTicks?(): Promise<TickPollResult>;
   /** Whole DB file size in bytes (cheap PRAGMA), or null when unavailable. */
   dbBytes(): number | null;
   /** New-pair mints currently tracked from the PumpPortal stream (diagnostics). */
@@ -57,13 +67,23 @@ export interface CollectorEngine {
 /** Build the real collector engine: the keyless live feed, the recorder attached to its store, and (unless
  *  disabled) the PumpPortal new-pairs stream folded into the feed's candidate pool so fresh launches get
  *  recorded before the REST feeds index them. */
-export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; noNewpairs?: boolean; verbose?: boolean; onLog?: (s: string) => void }): CollectorEngine {
+export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; noNewpairs?: boolean; verbose?: boolean; onLog?: (s: string) => void; retentionBytes?: number | null; retentionDays?: number | null; focusTicks?: boolean }): CollectorEngine {
   const rpc = resolveRpcUrl({ env });
   const feed = createLiveFeed({
     dbPath: opts.dbPath, rpcUrl: rpc.url, rpcFallbackUrl: rpc.fallbackUrl, rpcPublicPool: true, rpcExtraUrls: extraRpcUrls(env),
     onRequest: opts.verbose ? (req, meta, o) => opts.onLog?.(`  ${meta.source.padEnd(14)} ${String(o.status ?? 'ERR').padStart(3)} ${String(o.latencyMs).padStart(5)}ms ${redactSecrets(req.url).slice(0, 110)}\n`) : undefined,
   });
-  const recorder = new Recorder({ path: opts.dbPath, onLog: opts.verbose ? opts.onLog : undefined });
+  // Focus coins for the tick lane: the watchlist + paper positions in this DB, and whatever the autotrade runner /
+  // the app publish in the focus file. Read on every poll (two indexed reads + one small file).
+  const focusFile = focusFilePath(dextermHome(env));
+  const recorder: Recorder = new Recorder({
+    path: opts.dbPath, onLog: opts.verbose ? opts.onLog : undefined,
+    // The cap reclaims the data layer's expired cache entries (its own rule: a day past their TTL) before it evicts
+    // any history; `feed` is built above, so the hook can reach it.
+    ...(opts.retentionBytes ? { cap: { maxBytes: opts.retentionBytes, reclaim: () => feed.dl.cache.prune() } } : {}),
+    ...(opts.retentionDays ? { retention: { columnsDays: opts.retentionDays } } : {}),
+    ...(opts.focusTicks ? { ticks: { focus: () => [...dbFocus(recorder.database), ...readFocusFile(focusFile, Date.now())] } } : {}),
+  });
   recorder.attach(feed.dl.store);
   let newpairs: NewPairsLive | null = null;
   if (!opts.noNewpairs) {
@@ -85,6 +105,8 @@ export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; 
     },
     async maintain(): Promise<void> { await recorder.maintain(dl); },
     prune(): void { try { recorder.prune(); } catch { /* logged inside; never fatal */ } },
+    enforceCap() { return recorder.enforceCap(); },
+    ...(opts.focusTicks ? { pollTicks: () => recorder.pollTicks(dl) } : {}),
     dbBytes(): number | null {
       try {
         const db = recorder.database;
@@ -111,6 +133,9 @@ export interface CollectorLoopOptions {
   maintainEveryMs: number;
   /** Soft cap on the whole DB file in bytes; null = off. */
   maxDbBytes: number | null;
+  /** task-1504: 'evict' = call engine.enforceCap() every tick and never pause observation (the `maxDbBytes` pause is
+   *  skipped). Default 'pause' (the task-1414 behaviour). */
+  capMode?: 'pause' | 'evict';
   now: () => number;
   /** Cancellable sleep (resolves early on abort). */
   sleep: (ms: number) => Promise<void>;
@@ -125,6 +150,8 @@ export interface CollectorRunResult {
   rowsWritten: number;
   maintainPasses: number;
   cappedTicks: number;
+  /** task-1504: ticks where the retention cap evicted old history ('evict' mode). */
+  evictions: number;
 }
 
 /**
@@ -134,13 +161,19 @@ export interface CollectorRunResult {
  * Never throws out of the loop: an engine error is logged and the loop continues to the next tick.
  */
 export async function runCollectorLoop(engine: CollectorEngine, opts: CollectorLoopOptions): Promise<CollectorRunResult> {
-  const res: CollectorRunResult = { ticks: 0, observePasses: 0, rowsWritten: 0, maintainPasses: 0, cappedTicks: 0 };
+  const res: CollectorRunResult = { ticks: 0, observePasses: 0, rowsWritten: 0, maintainPasses: 0, cappedTicks: 0, evictions: 0 };
   let lastMaintain = -Infinity;
   for (let i = 0; i < opts.ticks && !opts.aborted(); i++) {
     if (i > 0) { await opts.sleep(opts.intervalMs); if (opts.aborted()) break; }
     res.ticks++;
     let over = false;
-    if (opts.maxDbBytes !== null) {
+    if (opts.capMode === 'evict') {
+      try {
+        const c = engine.enforceCap?.() ?? null;
+        if (c?.evicted) res.evictions++;
+        if (c?.over) opts.onLog?.(`record: DB still at ${(c.usedAfter / 1e6).toFixed(0)} MB used after evicting all but the newest hour (other tables are large); observation continues\n`);
+      } catch (e) { opts.onLog?.(`record: retention failed: ${redactSecrets((e as Error).message)}\n`); }
+    } else if (opts.maxDbBytes !== null) {
       const b = engine.dbBytes();
       if (b !== null && b >= opts.maxDbBytes) {
         engine.prune();
@@ -161,6 +194,32 @@ export async function runCollectorLoop(engine: CollectorEngine, opts: CollectorL
   return res;
 }
 
+export interface TickLoopOptions {
+  /** Spacing between polls (the lane's fast cadence, 5 s). */
+  everyMs: number;
+  sleep: (ms: number) => Promise<void>;
+  aborted: () => boolean;
+  onLog?: (s: string) => void;
+}
+
+export interface TickLoopResult { polls: number; calls: number; written: number }
+
+/** task-1504: drive the tick lane every `everyMs` until aborted. Never throws (a failed poll is logged). */
+export async function runTickLoop(engine: CollectorEngine, opts: TickLoopOptions): Promise<TickLoopResult> {
+  const res: TickLoopResult = { polls: 0, calls: 0, written: 0 };
+  if (!engine.pollTicks) return res;
+  while (!opts.aborted()) {
+    try {
+      const r = await engine.pollTicks();
+      res.polls++; res.calls += r.calls; res.written += r.written;
+      if (r.error) opts.onLog?.(`record: tick poll failed: ${redactSecrets(r.error)}\n`);
+    } catch (e) { opts.onLog?.(`record: tick poll failed: ${redactSecrets((e as Error).message)}\n`); }
+    if (opts.aborted()) break;
+    await opts.sleep(opts.everyMs);
+  }
+  return res;
+}
+
 // ---------------------------------------------------------------- the launchd plist (generated, user-level)
 
 export interface PlistOptions {
@@ -171,6 +230,8 @@ export interface PlistOptions {
   binPath: string;
   intervalMs: number;
   maxDbMb: number;
+  /** task-1504: extra `record run` flags (--retention-mb / --retention-days / --focus-ticks), appended verbatim. */
+  extraArgs?: string[];
   /** Where the agent writes its stdout/stderr. */
   logPath: string;
   /** The collector's working directory (the checkout, so the source bin resolves its workspaces). */
@@ -187,7 +248,7 @@ const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'
  * collector to run; a true pre-login daemon would be a LaunchDaemon under sudo, which this task does not use.
  */
 export function renderCollectorPlist(o: PlistOptions): string {
-  const args = [o.nodePath, o.binPath, 'record', 'run', '--interval', String(Math.round(o.intervalMs / 1000)), '--max-db-mb', String(o.maxDbMb)];
+  const args = [o.nodePath, o.binPath, 'record', 'run', '--interval', String(Math.round(o.intervalMs / 1000)), '--max-db-mb', String(o.maxDbMb), ...(o.extraArgs ?? [])];
   const argXml = args.map((a) => `    <string>${esc(a)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -240,12 +301,30 @@ function sourceBin(): string {
 
 // ---------------------------------------------------------------- arg parsing + the command
 
-interface RunArgs { intervalMs: number; ticks: number; maintainMs: number; maxDbBytes: number | null; noNewpairs: boolean; db: string | null; verbose: boolean }
+interface RunArgs {
+  intervalMs: number; ticks: number; maintainMs: number; maxDbBytes: number | null; noNewpairs: boolean; db: string | null; verbose: boolean;
+  /** task-1504: retention cap in bytes (eviction instead of the pause); null = off. */
+  retentionBytes: number | null;
+  /** task-1504: age rule for snapshot rows in days; null = the recorder default (90). */
+  retentionDays: number | null;
+  focusTicks: boolean;
+}
+
+/** task-1504: the shared `--retention-mb` / `--retention-days` / `--focus-ticks` parser (run + install). */
+function parseRetention(t: string, next: () => string | undefined, a: { retentionBytes: number | null; retentionDays: number | null; focusTicks: boolean }): string | null | undefined {
+  if (t === '--focus-ticks') { a.focusTicks = true; return null; }
+  if (t === '--retention-mb') { const n = Number(next()); if (!Number.isFinite(n) || n < 1) return '--retention-mb needs a number ≥ 1'; a.retentionBytes = Math.round(n * 1_000_000); return null; }
+  if (t === '--retention-days') { const n = Number(next()); if (!Number.isFinite(n) || n < 1) return '--retention-days needs a number of days ≥ 1'; a.retentionDays = n; return null; }
+  return undefined;
+}
 
 export function parseRun(argv: string[]): RunArgs | { error: string } {
-  const a: RunArgs = { intervalMs: DEFAULT_INTERVAL_MS, ticks: Infinity, maintainMs: DEFAULT_MAINTAIN_MS, maxDbBytes: DEFAULT_MAX_DB_MB * 1_000_000, noNewpairs: false, db: null, verbose: false };
+  const a: RunArgs = { intervalMs: DEFAULT_INTERVAL_MS, ticks: Infinity, maintainMs: DEFAULT_MAINTAIN_MS, maxDbBytes: DEFAULT_MAX_DB_MB * 1_000_000, noNewpairs: false, db: null, verbose: false, retentionBytes: null, retentionDays: null, focusTicks: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
+    const r = parseRetention(t, () => argv[++i], a);
+    if (typeof r === 'string') return { error: r };
+    if (r === null) continue;
     if (t === '--verbose' || t === '-v') a.verbose = true;
     else if (t === '--no-newpairs') a.noNewpairs = true;
     else if (t === '--once') a.ticks = 1;
@@ -261,15 +340,20 @@ export function parseRun(argv: string[]): RunArgs | { error: string } {
 
 export const RECORD_USAGE = `dexterm record: keep the history recorder fed with no TUI open (task-1414).
 
-  dexterm record [run] [--interval S] [--ticks N | --once] [--maintain S] [--max-db-mb N] [--no-newpairs] [--db PATH] [--verbose]
-  dexterm record install   [--interval S] [--max-db-mb N] [--load] [--dry-run]
+  dexterm record [run] [--interval S] [--ticks N | --once] [--maintain S] [--max-db-mb N] [--retention-mb N] [--retention-days D]
+                       [--focus-ticks] [--no-newpairs] [--db PATH] [--verbose]
+  dexterm record install   [--interval S] [--max-db-mb N] [--retention-mb N] [--retention-days D] [--focus-ticks] [--load] [--dry-run]
   dexterm record uninstall [--unload]
   dexterm record status    [--db PATH]
 
 run        the collector loop: one keyless feed refresh per --interval (default 60 s) feeds the recorder
            (snapshots + feed membership + new pairs), recorder maintenance (outcome sweeps, labels, retention)
            every --maintain seconds. --max-db-mb is a soft cap (default 1024): above it observation pauses while
-           labels + retention keep running. --no-newpairs drops the PumpPortal stream. Ctrl-C stops cleanly
+           labels + retention keep running. --retention-mb N replaces that pause: the oldest history is evicted
+           to stay under N MB and observation never pauses. --retention-days D drops snapshot rows (sweep rows
+           too) older than D days (default 90). --focus-ticks samples watchlist / held / candidate / open coins
+           every 5-10 s (DexScreener batches of 30, a daily call ceiling) with 1m candles; autotrade backtests
+           read them. --no-newpairs drops the PumpPortal stream. Ctrl-C stops cleanly
            (labels whatever is due). Requests honour the data layer's rate limits, health gate and sweep budgets.
 install    write a user-level launchd LaunchAgent (no sudo) that runs \`record run\`; prints the launchctl
            command. --load also runs launchctl (off by default). --dry-run prints the plist, writes nothing.
@@ -300,40 +384,62 @@ async function run(argv: string[], io: RecordIo, deps: { engine?: CollectorEngin
   if (!deps.engine && !recorderEnabled(io.env, false)) { io.stderr.write('dexterm record: the recorder is disabled (DEXTERM_RECORDER=0); nothing to collect\n'); return 2; }
 
   // SIGINT/SIGTERM-aware cancellable sleeper (launchd sends SIGTERM to stop the agent).
+  // Several loops may sleep at once (the collector + the tick lane), so every sleeper is woken on abort.
   const stop = (() => {
-    let aborted = false; let wake: () => void = () => {};
+    let aborted = false; const wakes = new Set<() => void>();
     return {
       get aborted() { return aborted; },
-      abort() { aborted = true; wake(); },
-      sleep(ms: number): Promise<void> { return new Promise<void>((r) => { const t = setTimeout(r, ms); t.unref?.(); wake = () => { clearTimeout(t); r(); }; }); },
+      abort() { aborted = true; for (const w of [...wakes]) w(); },
+      sleep(ms: number): Promise<void> {
+        return new Promise<void>((r) => {
+          const done = (): void => { clearTimeout(t); wakes.delete(done); r(); };
+          const t = setTimeout(done, ms); t.unref?.();
+          wakes.add(done);
+        });
+      },
     };
   })();
 
   const log = (s: string): void => io.stderr.write(s);
-  const engine = deps.engine ?? buildLiveEngine(io.env, { dbPath, noNewpairs: parsed.noNewpairs, verbose: parsed.verbose, onLog: log });
+  const engine = deps.engine ?? buildLiveEngine(io.env, { dbPath, noNewpairs: parsed.noNewpairs, verbose: parsed.verbose, onLog: log, retentionBytes: parsed.retentionBytes, retentionDays: parsed.retentionDays, focusTicks: parsed.focusTicks });
   const own = !deps.engine;
   const onSig = (): void => { io.stderr.write('\ndexterm record: stopping…\n'); stop.abort(); };
   if (own) { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); }
-  if (parsed.verbose || parsed.ticks !== Infinity) io.stderr.write(`dexterm record: db ${dbPath} · interval ${Math.round(parsed.intervalMs / 1000)}s · maintain ${Math.round(parsed.maintainMs / 1000)}s · cap ${parsed.maxDbBytes === null ? 'off' : `${Math.round(parsed.maxDbBytes / 1e6)} MB`} · newpairs ${parsed.noNewpairs ? 'off' : 'on'}\n`);
+  // The sleeps are unref'd; without the PumpPortal socket (--no-newpairs) nothing else would keep the event loop
+  // alive between passes and node would exit mid-run (task-1504 smoke). Hold it open until the loops finish.
+  const hold = own ? setInterval(() => {}, 1 << 30) : null;
+  if (parsed.verbose || parsed.ticks !== Infinity) io.stderr.write(`dexterm record: db ${dbPath} · interval ${Math.round(parsed.intervalMs / 1000)}s · maintain ${Math.round(parsed.maintainMs / 1000)}s · cap ${parsed.maxDbBytes === null ? 'off' : `${Math.round(parsed.maxDbBytes / 1e6)} MB`} · newpairs ${parsed.noNewpairs ? 'off' : 'on'}${parsed.retentionBytes !== null ? ` · retention ${Math.round(parsed.retentionBytes / 1e6)} MB (evict, never pause)` : ''}${parsed.retentionDays !== null ? ` · rows ${parsed.retentionDays} d` : ''} · focus ticks ${parsed.focusTicks ? 'on' : 'off'}\n`);
 
   let result: CollectorRunResult;
+  let tickRes: TickLoopResult = { polls: 0, calls: 0, written: 0 };
   try {
-    result = await runCollectorLoop(engine, {
+    let mainDone = false;
+    const main = runCollectorLoop(engine, {
       intervalMs: parsed.intervalMs, ticks: parsed.ticks, maintainEveryMs: parsed.maintainMs, maxDbBytes: parsed.maxDbBytes,
+      capMode: parsed.retentionBytes !== null ? 'evict' : 'pause',
       now, sleep: (ms) => stop.sleep(ms), aborted: () => stop.aborted, onLog: log,
-    });
+    }).finally(() => { mainDone = true; if (parsed.ticks !== Infinity) stop.abort(); });
+    const lane = parsed.focusTicks && engine.pollTicks
+      ? runTickLoop(engine, { everyMs: DEFAULT_TICKS.fastEveryMs, sleep: (ms) => stop.sleep(ms), aborted: () => stop.aborted || mainDone, onLog: log })
+      : Promise.resolve(tickRes);
+    [result, tickRes] = await Promise.all([main, lane]);
   } finally {
     if (own) { process.removeListener('SIGINT', onSig); process.removeListener('SIGTERM', onSig); }
+    if (hold) clearInterval(hold);
     engine.close();
   }
-  if (parsed.verbose || parsed.ticks !== Infinity) io.stdout.write(`record: ${result.observePasses} observe pass(es), ${result.rowsWritten} snapshot row(s), ${result.maintainPasses} maintenance pass(es)${result.cappedTicks ? `, ${result.cappedTicks} tick(s) paused at the disk cap` : ''}\n`);
+  if (parsed.verbose || parsed.ticks !== Infinity) io.stdout.write(`record: ${result.observePasses} observe pass(es), ${result.rowsWritten} snapshot row(s), ${result.maintainPasses} maintenance pass(es)${result.cappedTicks ? `, ${result.cappedTicks} tick(s) paused at the disk cap` : ''}${result.evictions ? `, ${result.evictions} retention eviction(s)` : ''}${tickRes.polls ? `, ${tickRes.polls} focus-tick poll(s) (${tickRes.calls} call(s), ${tickRes.written} tick row(s))` : ''}\n`);
   return 0;
 }
 
 function install(argv: string[], io: RecordIo): number {
   let intervalMs = DEFAULT_INTERVAL_MS, maxDbMb = DEFAULT_MAX_DB_MB, load = false, dry = false;
+  const ret = { retentionBytes: null as number | null, retentionDays: null as number | null, focusTicks: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
+    const r = parseRetention(t, () => argv[++i], ret);
+    if (typeof r === 'string') { io.stderr.write(`dexterm record: ${r}\n`); return 2; }
+    if (r === null) continue;
     if (t === '--load') load = true;
     else if (t === '--dry-run') dry = true;
     else if (t === '--interval') { const n = Number(argv[++i]); if (!Number.isFinite(n) || n < 1) { io.stderr.write('dexterm record: --interval needs seconds ≥ 1\n'); return 2; } intervalMs = Math.round(n * 1000); }
@@ -343,7 +449,12 @@ function install(argv: string[], io: RecordIo): number {
   const path = plistPath(io.env);
   const logPath = join(dataDir(io.env), 'collector.log');
   const bin = sourceBin();
-  const plist = renderCollectorPlist({ label: COLLECTOR_LABEL, nodePath: process.execPath, binPath: bin, intervalMs, maxDbMb, logPath, workingDir: resolve(dirname(bin), '..', '..', '..') });
+  const extraArgs = [
+    ...(ret.retentionBytes !== null ? ['--retention-mb', String(Math.round(ret.retentionBytes / 1e6))] : []),
+    ...(ret.retentionDays !== null ? ['--retention-days', String(ret.retentionDays)] : []),
+    ...(ret.focusTicks ? ['--focus-ticks'] : []),
+  ];
+  const plist = renderCollectorPlist({ label: COLLECTOR_LABEL, nodePath: process.execPath, binPath: bin, intervalMs, maxDbMb, extraArgs, logPath, workingDir: resolve(dirname(bin), '..', '..', '..') });
   if (dry) { io.stdout.write(plist); io.stderr.write(`\ndexterm record: dry run — would write ${path}\n`); return 0; }
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(logPath), { recursive: true });
@@ -382,6 +493,7 @@ function status(argv: string[], io: RecordIo): number {
       `snapshots       ${s.snapshots} (live ${s.live}, sweep ${s.sweep}, t0 anchors ${s.t0})`,
       `outcomes        ${s.outcomes}${s.outcomes ? ` (${Object.entries(s.outcomesByLabel).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}`,
       `sweeps          ${s.sweeps} runs · ${s.sweepCallsToday} DexScreener calls today`,
+      `focus ticks     ${s.ticks} rows · ${s.candles} 1m candles · ${s.tickCallsToday} calls today`,
       `span            ${when(s.oldestT)} → ${when(s.newestT)}`,
     ].join('\n') + '\n');
   } catch (e) {

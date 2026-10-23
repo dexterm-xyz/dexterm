@@ -297,7 +297,13 @@ const USAGE = `dexterm mcp [<command>]
                             --print        only print the snippet, never write
                             --node         emit a "node <path> mcp" command (when dexterm is not on PATH)
                             --yes          write without the confirmation prompt
-  doctor                    spawn the server, do the MCP handshake, and list the tools/prompts/resources`;
+  doctor                    spawn the server, do the MCP handshake, and list the tools/prompts/resources
+
+for agent authors: \`dexterm mcp doctor\` lists every tool with its description. Reads (market data, the trade
+ledger: ledger_trades / positions / summary / equity / compare, candidate_dossier, outcomes_lookup, trading_status,
+telegram_status) never change anything; strategy_propose_* and backtest_request only file a proposal the user applies
+or runs; the paper_* tools trade the SIMULATED wallet and only inside a mandate the user armed. No tool can sign, send,
+enable live trading or raise a cap. Docs: https://dexterm.xyz/docs/agents/`;
 
 /** `dexterm mcp …`. With no subcommand (or an arg the server consumes, e.g. --replay) it runs the server. */
 export async function runMcp(rest: string[], io: Io): Promise<number> {

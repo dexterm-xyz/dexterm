@@ -6,7 +6,7 @@
 //
 //   observe   read tools and live streams
 //   annotate  + non-financial UI navigation on the user's screen, agent-owned notes/tags on coins
-//   propose   + proposals: alerts, order plans, watchlist adds — they appear labelled with the agent and
+//   propose   + proposals: alerts, order plans, watchlist adds, strategy edits — they appear labelled with the agent and
 //               need the user's keypress; nothing an agent proposes is ever applied by itself
 //
 // NEVER, for any agent at any tier (ROADMAP hard rule, SPEC §6.0): arm, sign, confirm, send, raise or
@@ -64,6 +64,25 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   check_x: 'observe',
   agent_whoami: 'observe',
   list_proposals: 'observe',
+  // AUTOTRADE strategy reads (task-1507, paper): the strategies, a backtest on recorded history (read-only,
+  // bounded, rate-limited) and the paper runner's status
+  strategy_list: 'observe',
+  strategy_get: 'observe',
+  strategy_validate: 'observe',
+  strategy_backtest: 'observe',
+  autotrade_status: 'observe',
+  // TRADE LEDGER + neighbours (task-1530): ledger reads, a run's candidate record, outcome labels, the Telegram and
+  // live-signer STATE (never a key, an address or an exact balance) and the agent's own backtest requests
+  ledger_trades: 'observe',
+  ledger_positions: 'observe',
+  ledger_equity: 'observe',
+  ledger_summary: 'observe',
+  ledger_compare: 'observe',
+  candidate_dossier: 'observe',
+  outcomes_lookup: 'observe',
+  telegram_status: 'observe',
+  trading_status: 'observe',
+  backtest_requests: 'observe',
   subscribe: 'observe',
   unsubscribe: 'observe',
   // ---- annotate: non-financial navigation + agent-owned annotations
@@ -75,6 +94,12 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   propose_alert: 'propose',
   propose_order_plan: 'propose',
   add_to_watchlist: 'propose',
+  // AUTOTRADE strategy proposals (task-1507): a JSON-patch proposal the user applies with a keypress on the Q screen
+  // (a LOOSER one needs a second keypress); /mode, /bankroll, the day budget and the exit-liquidity floor are user-only
+  strategy_propose_edit: 'propose',
+  strategy_propose_new: 'propose',
+  // a backtest REQUEST (task-1530): a file the user runs or dismisses with `dexterm autotrade requests`
+  backtest_request: 'propose',
 });
 
 /** Tools that are proposals (write-shaped): they need an idempotency key and count against the proposal quota. */
@@ -125,5 +150,5 @@ export function toolsForTier(tier: Tier): string[] {
 export const TIER_LEGEND: Record<Tier, string> = {
   observe: 'read tools + streams',
   annotate: 'navigation, notes, tags',
-  propose: 'alerts, order plans, watch adds — as proposals',
+  propose: 'alerts, order plans, watch adds, strategy edits, backtest requests — as proposals',
 };

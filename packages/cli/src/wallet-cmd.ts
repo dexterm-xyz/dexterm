@@ -1,14 +1,12 @@
-// dexterm T1 — `dexterm wallet <link|unlink|status|panic|resume>` (SPEC §6.5). A non-TUI one-shot that
-// links a Phantom wallet through the loopback bridge (keys never enter dexterm; only the public key is
-// kept), unlinks it, prints the current link + the active trade caps, or PANICS live trading (round 2:
-// the cheapest safe signer panic path — a kill-switch file every dexterm process re-reads, plus a lock
-// on the shared daily-cap ledger). `resume` needs a real TTY keypress; piped input cannot re-arm.
+// dexterm — `dexterm wallet <link|unlink|status|panic|resume>` (SPEC §6.5). A non-TUI one-shot that
+// links a Phantom wallet through the loopback bridge (sign-a-message only: dexterm keeps the PUBLIC key,
+// never a private key, and signs nothing), unlinks it, prints the link, or engages the PANIC switch (a
+// kill-switch file every dexterm process re-reads: autotrade runs and the paper agent desk halt).
+// `resume` needs a real TTY keypress; piped input cannot re-arm. task-1571: dexterm holds no key and has
+// no trading wallet; live trading happens in the Telegram trading bot of the user's choice.
 import {
-  WalletBridge, WalletLinkStore, shortPubkey, defaultCaps, capsOnlyDownward, KillSwitch, CapLedger, defaultCapLedgerPath, defaultLiveLedgerPath, LiveLedger,
-  HARD_MAX_PER_TRADE_USD, HARD_MAX_DAILY_USD, HARD_MAX_SOL_OUT, HARD_MAX_SLIPPAGE_BPS,
-  parseSignerArgs, buildSignerService, lamportsToSol,
-  FastWalletStore, defaultFastWalletPath, FAST_MAX_SOL_PER_FILL, createDataLayer, TradeRpc, DEVNET_RPC,
-  type BridgeOpener, type TradeCaps, type LinkedWallet, type SignerService,
+  WalletBridge, WalletLinkStore, shortPubkey, KillSwitch,
+  type BridgeOpener, type LinkedWallet,
 } from '@dexterm/data';
 
 /** The slice of a TTY stdin the resume gate needs. A piped stdin has `isTTY` undefined/false. */
@@ -37,85 +35,23 @@ export interface WalletCmdOverrides {
   open?: BridgeOpener;
   /** Inject the panic switch (tests); default ~/.dexterm/trading.panic. */
   killSwitch?: KillSwitch;
-  /** Path of the shared daily-cap ledger (tests); default ~/.dexterm/trade-caps.sqlite. */
-  ledgerPath?: string;
   /** Keypress timeout for `resume` (ms). */
   keypressTimeoutMs?: number;
-  /** Inject the signer service for `probe` (tests); default builds the real one (devnet RPC, system browser). */
-  signerService?: SignerService;
-  /** Path of the live fill ledger (status shows the count). */
-  liveLedgerPath?: string;
-  /** task-1363: where the fast wallet record lives (tests); default ~/.dexterm/fast-wallet.json. */
-  fastWalletPath?: string;
-  /** task-1363: devnet RPC stand-in for `fast status|airdrop|remove` (tests); default the public devnet endpoint. */
-  fastRpc?: { balance(pubkey: string): Promise<bigint>; airdrop(pubkey: string, lamports: bigint): Promise<string>; confirm?(sig: string): Promise<{ confirmed: boolean; err: unknown }> };
 }
 
-/**
- * Parse the trade-caps flags shared by the wallet command and (later) live trading. DEFECT 6: a USD
- * flag above the hard ceiling (e.g. `--max-usd 1000000`, `--daily-usd 1e12`) is REJECTED rather than
- * silently accepted, so a fat-fingered cap can never arm a huge money path. Throws on an over-ceiling
- * value; the caller surfaces it as a usage error. (defaultCaps also clamps as a second line of defence.)
- */
-export function parseCapsFlags(argv: string[]): TradeCaps {
-  let mainnet = false;
-  let perTradeUsd: number | undefined;
-  let dailyUsd: number | undefined;
-  let maxSolOut: number | undefined;
-  let maxSlippageBps: number | undefined;
-  const fmt = (n: number, unit: string) => (unit === '$' ? `$${n}` : `${n} ${unit}`);
-  const take = (flag: string, raw: string | undefined, ceiling: number, unit = '$'): number | undefined => {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return undefined; // ignore junk; defaults apply
-    if (n > ceiling) throw new Error(`${flag} ${fmt(n, unit)} exceeds the hard ceiling of ${fmt(ceiling, unit)}`);
-    return n;
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const k = argv[i];
-    if (k === '--mainnet') mainnet = true;
-    else if (k === '--max-usd') perTradeUsd = take('--max-usd', argv[++i], HARD_MAX_PER_TRADE_USD);
-    else if (k === '--daily-usd') dailyUsd = take('--daily-usd', argv[++i], HARD_MAX_DAILY_USD);
-    else if (k === '--max-sol-out') maxSolOut = take('--max-sol-out', argv[++i], HARD_MAX_SOL_OUT, 'SOL');
-    else if (k === '--max-slippage-bps') maxSlippageBps = take('--max-slippage-bps', argv[++i], HARD_MAX_SLIPPAGE_BPS, 'bps');
-  }
-  // task-1328: without --mainnet the USD caps can only go DOWN from the defaults (what the signer applies).
-  return capsOnlyDownward(defaultCaps({ network: mainnet ? 'mainnet' : 'devnet', mainnetEnabled: mainnet, perTradeUsd, dailyUsd, maxSolOut, maxSlippageBps }));
-}
-
-function capsLine(caps: TradeCaps): string {
-  const net = caps.network === 'mainnet' ? 'MAINNET' : 'devnet';
-  return `mode: ${caps.network === 'mainnet' ? 'LIVE' : 'DRY-RUN'} · network: ${net} · per-trade $${caps.perTradeUsd} · daily $${caps.dailyUsd} · max impact ${caps.maxPriceImpactPct}% · max SOL out ${caps.maxSolOut} · max slippage ${caps.maxSlippageBps} bps`;
-}
-
-function panicLine(ks: KillSwitch, ledger: CapLedger | null): string | null {
+function panicLine(ks: KillSwitch): string | null {
   const p = ks.engaged();
-  const l = ledger?.locked() ?? null;
-  if (!p && !l) return null;
-  const parts: string[] = [];
-  if (p) parts.push(`panic switch engaged${p.engagedAt ? ` at ${new Date(p.engagedAt).toISOString()}` : ''} (${p.reason})`);
-  if (l) parts.push(`cap ledger locked (${l.reason})`);
-  return `⛔ LIVE TRADING DISABLED — ${parts.join('; ')}. Run \`dexterm wallet resume\` in a terminal to re-enable.`;
+  if (!p) return null;
+  return `⛔ PANIC ENGAGED${p.engagedAt ? ` at ${new Date(p.engagedAt).toISOString()}` : ''} (${p.reason}): autotrade runs and the paper agent desk stay halted. Run \`dexterm wallet resume\` in a terminal to clear it.`;
 }
 
-function printStatus(io: WalletIo, store: WalletLinkStore, caps: TradeCaps, ks: KillSwitch, ledger: CapLedger | null): void {
+function printStatus(io: WalletIo, store: WalletLinkStore, ks: KillSwitch): void {
   const w: LinkedWallet | null = store.get();
-  if (w) io.stdout.write(`linked: ${shortPubkey(w.publicKey)}  (${w.publicKey})\n`);
+  if (w) io.stdout.write(`linked: ${shortPubkey(w.publicKey)}  (${w.publicKey}) · public key only, read-only\n`);
   else io.stdout.write('linked: (none) — run `dexterm wallet link`\n');
-  io.stdout.write(`${capsLine(caps)}\n`);
-  const p = panicLine(ks, ledger);
+  const p = panicLine(ks);
   if (p) io.stdout.write(`${p}\n`);
-  if (caps.network === 'mainnet') io.stdout.write('⚠ --mainnet is on: real funds, within the caps above. Devnet is the default; drop --mainnet to stay safe.\n');
-}
-
-function liveLine(path: string): string | null {
-  try {
-    const l = new LiveLedger({ path, readOnly: true });
-    try {
-      const fills = l.records(1000);
-      const open = l.positions().filter((p) => p.tokensRaw > 0n);
-      return `live ledger: ${fills.length} confirmed fill${fills.length === 1 ? '' : 's'} · ${open.length} open position${open.length === 1 ? '' : 's'}${open.length ? ` (${open.map((p) => `$${p.symbol}`).join(', ')})` : ''}`;
-    } finally { l.close(); }
-  } catch { return null; }
+  io.stdout.write('dexterm holds no key and signs nothing. Live trading happens in the Telegram trading bot of your choice (dexterm telegram setup).\n');
 }
 
 /**
@@ -148,138 +84,16 @@ export async function ttyKeypress(stdin: KeyInput | undefined, timeoutMs: number
 /** Run the wallet subcommand. Returns a process exit code. */
 export async function runWallet(argv: string[], io: WalletIo, over: WalletCmdOverrides = {}): Promise<number> {
   const sub = argv[0] ?? 'status';
-  let caps: TradeCaps;
-  try {
-    caps = parseCapsFlags(argv.slice(1));
-  } catch (e) {
-    io.stderr.write(`dexterm wallet: ${e instanceof Error ? e.message : String(e)}\n`);
+  if (sub === 'trading' || sub === 'fast' || sub === 'probe') {
+    io.stderr.write(`dexterm wallet ${sub}: removed in 0.1.7. dexterm holds no key and has no trading wallet; live trading happens in the Telegram trading bot of your choice\n`);
     return 2;
   }
   const store = over.store ?? new WalletLinkStore();
   const ks = over.killSwitch ?? new KillSwitch();
-  const ledgerPath = over.ledgerPath ?? defaultCapLedgerPath();
-  const openLedger = (): CapLedger | null => { try { return new CapLedger({ path: ledgerPath }); } catch { return null; } };
 
   if (sub === 'status') {
-    const ledger = openLedger();
-    try { printStatus(io, store, caps, ks, ledger); } finally { ledger?.close(); }
-    const ll = liveLine(over.liveLedgerPath ?? defaultLiveLedgerPath());
-    if (ll) io.stdout.write(`${ll}\n`);
+    printStatus(io, store, ks);
     return 0;
-  }
-
-  // PROBE (task-1328): the devnet plumbing test from a shell — the signer service runs in THIS process
-  // (same code the TUI's signer child runs), builds the wrap-and-unwrap plan for the linked wallet,
-  // prints it, waits for a real TTY keypress, then opens Phantom, verifies, re-simulates, submits and
-  // confirms. Devnet only: the service refuses a non-devnet RPC and --mainnet is not accepted here.
-  if (sub === 'probe') {
-    if (argv.includes('--mainnet')) { io.stderr.write('dexterm wallet probe: devnet only (drop --mainnet)\n'); return 2; }
-    if (!store.get()) { io.stderr.write('dexterm wallet probe: no wallet linked; run `dexterm wallet link` first\n'); return 2; }
-    let service: SignerService;
-    try {
-      service = over.signerService ?? buildSignerService(parseSignerArgs(argv.slice(1).filter((a) => a !== '--no-browser'), io.env), (l) => io.stderr.write(`${l}\n`));
-    } catch (e) { io.stderr.write(`dexterm wallet probe: ${e instanceof Error ? e.message : String(e)}\n`); return 2; }
-    const st = service.status();
-    if (st.network !== 'devnet') { io.stderr.write(`dexterm wallet probe: the signer RPC is ${st.network}; the probe runs only on devnet\n`); return 2; }
-    if (st.panic || st.ledgerLocked) { io.stderr.write(`${panicLine(ks, openLedger()) ?? 'panicked'}\n`); return 2; }
-    let plan;
-    try { plan = await service.probe(); } catch (e) { io.stderr.write(`dexterm wallet probe: plan failed: ${e instanceof Error ? e.message : String(e)}\n`); return 1; }
-    io.stdout.write(`DEVNET PROBE for ${shortPubkey(plan.userPublicKey)} via ${st.rpcHost}\n`);
-    io.stdout.write(`  wraps ${lamportsToSol(BigInt(plan.amountInRaw)).toFixed(4)} SOL into your own WSOL account and closes it back · fee ≈ ${lamportsToSol(BigInt(plan.feeLamports)).toFixed(6)} SOL\n`);
-    io.stdout.write(`  will sign: ${plan.instructions.map((i) => `${i.program}${i.op ? ':' + i.op : ''}`).join(' · ')}\n`);
-    io.stdout.write(`  simulation: ${plan.sim.ran ? (plan.sim.ok ? `ok (${plan.sim.solOutLamports ?? '?'} lamports leave the wallet)` : `FAILED ${plan.sim.error ?? ''}`) : 'not run'} · policy: ${plan.policy.ok ? 'ok' : `REFUSE ${plan.policy.reason}`} · caps: ${plan.precheck.ok ? 'ok' : `REFUSE ${plan.precheck.reason}`}\n`);
-    if (!plan.policy.ok || !plan.precheck.ok || !plan.sim.ok) { io.stderr.write('dexterm wallet probe: the signer would refuse this plan; nothing to sign\n'); return 1; }
-    const stdin = io.stdin;
-    if (!stdin || stdin.isTTY !== true) { io.stderr.write('dexterm wallet probe: needs a real terminal keypress (stdin is not a TTY). Refusing.\n'); return 2; }
-    io.stdout.write('Press Y to sign this probe in Phantom (any other key aborts)… ');
-    const key = await ttyKeypress(stdin, over.keypressTimeoutMs ?? 60_000);
-    io.stdout.write('\n');
-    if (key !== 'y' && key !== 'Y') { io.stdout.write('aborted; nothing signed.\n'); return 1; }
-    const out = await service.confirm({ hash: plan.hash });
-    if (out.kind === 'filled') { io.stdout.write(`✓ confirmed on devnet · signature ${out.signature}${out.lighthouseTail ? ` · Phantom appended ${out.lighthouseTail} Lighthouse instruction(s)` : ' · no Lighthouse tail'} · ${out.roundTripMs} ms\n`); return 0; }
-    if (out.kind === 'refused') { io.stdout.write(`✗ refused by the signer: ${out.reason} — ${out.message}\n`); return 1; }
-    if (out.kind === 'send-unknown') { io.stdout.write(`? send outcome unknown: ${out.error} · signature ${out.signature} · do NOT resend\n`); return 1; }
-    io.stdout.write(`✗ send failed: ${out.error}${out.signature ? ` · signature ${out.signature}` : ''}\n`);
-    return 1;
-  }
-
-  // FAST WALLET (task-1363): the one key dexterm holds, devnet only, for standing-mandate fills at machine speed.
-  //   create   a new devnet key at ~/.dexterm/fast-wallet.json (mode 600) after a real TTY keypress; never overwrites
-  //   status   public key, devnet balance, the per-fill ceiling
-  //   airdrop  devnet faucet into the fast wallet (--sol N, default 1)
-  //   remove   delete the key (TTY keypress; refused while it still holds SOL unless --force)
-  // There is no export, no import, no mainnet variant, and the signer process only ever READS this file.
-  if (sub === 'fast') {
-    if (argv.includes('--mainnet')) { io.stderr.write('dexterm wallet fast: devnet only (there is no mainnet fast wallet; drop --mainnet)\n'); return 2; }
-    const action = argv[1] ?? 'status';
-    const fastStore = new FastWalletStore(over.fastWalletPath ?? defaultFastWalletPath(io.env));
-    const rpc = (): NonNullable<WalletCmdOverrides['fastRpc']> => {
-      if (over.fastRpc) return over.fastRpc;
-      const dl = createDataLayer({ dbPath: ':memory:', rpcUrl: DEVNET_RPC, rpcFallbackUrl: null });
-      const r = new TradeRpc(dl.http, { url: DEVNET_RPC });
-      return { balance: (pk) => r.balance(pk), airdrop: (pk, l) => r.airdrop(pk, l), confirm: (sig) => r.confirm(sig, { timeoutMs: 45_000 }) };
-    };
-    const balanceLine = async (pk: string): Promise<{ lamports: bigint | null; text: string }> => {
-      try { const l = await rpc().balance(pk); return { lamports: l, text: `${lamportsToSol(l).toFixed(4)} SOL (devnet)` }; }
-      catch (e) { return { lamports: null, text: `balance unavailable (${e instanceof Error ? e.message : String(e)})` }; }
-    };
-    if (action === 'status') {
-      const rec = fastStore.get();
-      if (!rec) { io.stdout.write(`fast wallet: (none) — create one with \`dexterm wallet fast create\` (devnet only)\n`); return 0; }
-      const b = await balanceLine(rec.publicKey);
-      io.stdout.write(`fast wallet: ${shortPubkey(rec.publicKey)}  (${rec.publicKey}) · devnet · created ${new Date(rec.createdAt).toISOString()}\n`);
-      io.stdout.write(`  balance: ${b.text} · per-fill ceiling ${FAST_MAX_SOL_PER_FILL} SOL · the signer's USD per-trade/daily caps apply on every fill\n`);
-      io.stdout.write(`  file: ${fastStore.path} (mode 600; never exported, never printed)\n`);
-      return 0;
-    }
-    if (action === 'create') {
-      if (fastStore.exists()) { io.stderr.write(`dexterm wallet fast create: a fast wallet already exists at ${fastStore.path} (remove it first, after draining)\n`); return 2; }
-      const stdin = io.stdin;
-      if (!stdin || stdin.isTTY !== true) { io.stderr.write('dexterm wallet fast create: needs a real terminal keypress (stdin is not a TTY). Refusing.\n'); return 2; }
-      io.stdout.write(`Create a DEVNET fast wallet at ${fastStore.path}?\n  armed order plans inside a standing mandate fire from it at machine speed, within the signer's caps and a ${FAST_MAX_SOL_PER_FILL} SOL per-fill ceiling.\n  devnet only — this key can never be used on mainnet. Press Y to create (any other key aborts)… `);
-      const key = await ttyKeypress(stdin, over.keypressTimeoutMs ?? 30_000);
-      io.stdout.write('\n');
-      if (key !== 'y' && key !== 'Y') { io.stdout.write('aborted; nothing created.\n'); return 1; }
-      const rec = fastStore.create({ network: 'devnet' });
-      io.stdout.write(`✓ fast wallet created: ${rec.publicKey} (devnet)\n  fund it: dexterm wallet fast airdrop   · then restart dexterm so the signer loads it\n`);
-      return 0;
-    }
-    if (action === 'airdrop') {
-      const rec = fastStore.get();
-      if (!rec) { io.stderr.write('dexterm wallet fast airdrop: no fast wallet; `dexterm wallet fast create` first\n'); return 2; }
-      const solIdx = argv.indexOf('--sol');
-      const sol = solIdx >= 0 ? Number(argv[solIdx + 1]) : 1;
-      if (!Number.isFinite(sol) || sol <= 0 || sol > 5) { io.stderr.write('dexterm wallet fast airdrop: --sol must be in (0, 5]\n'); return 2; }
-      try {
-        const sig = await rpc().airdrop(rec.publicKey, BigInt(Math.round(sol * 1e9)));
-        io.stdout.write(`airdrop requested: ${sol} SOL (devnet) → ${shortPubkey(rec.publicKey)} · signature ${sig}\n`);
-        const c = rpc().confirm ? await rpc().confirm!(sig).catch(() => null) : null;
-        if (c) io.stdout.write(c.confirmed ? '✓ confirmed\n' : `? not confirmed yet (${c.err ?? 'pending'})\n`);
-        const b = await balanceLine(rec.publicKey);
-        io.stdout.write(`  balance: ${b.text}\n`);
-        return 0;
-      } catch (e) {
-        io.stderr.write(`dexterm wallet fast airdrop failed: ${e instanceof Error ? e.message : String(e)} — the public devnet faucet is often dry; try https://faucet.solana.com with the address above\n`);
-        return 1;
-      }
-    }
-    if (action === 'remove') {
-      const rec = fastStore.get();
-      if (!rec) { io.stdout.write('no fast wallet to remove.\n'); return 0; }
-      const b = await balanceLine(rec.publicKey);
-      if (b.lamports !== null && b.lamports > 0n && !argv.includes('--force')) { io.stderr.write(`dexterm wallet fast remove: the fast wallet still holds ${b.text}; move it out first, or pass --force to delete the key anyway (devnet SOL only)\n`); return 2; }
-      const stdin = io.stdin;
-      if (!stdin || stdin.isTTY !== true) { io.stderr.write('dexterm wallet fast remove: needs a real terminal keypress (stdin is not a TTY). Refusing.\n'); return 2; }
-      io.stdout.write(`Delete the fast wallet ${shortPubkey(rec.publicKey)} (${b.text})? Press Y to delete (any other key aborts)… `);
-      const key = await ttyKeypress(stdin, over.keypressTimeoutMs ?? 30_000);
-      io.stdout.write('\n');
-      if (key !== 'y' && key !== 'Y') { io.stdout.write('aborted; the fast wallet is kept.\n'); return 1; }
-      fastStore.remove();
-      io.stdout.write('✓ fast wallet removed. Restart dexterm so the signer stops loading it.\n');
-      return 0;
-    }
-    io.stderr.write(`dexterm wallet fast: unknown action ${JSON.stringify(action)} (expected status | create | airdrop | remove)\n`);
-    return 2;
   }
 
   if (sub === 'unlink') {
@@ -289,44 +103,33 @@ export async function runWallet(argv: string[], io: WalletIo, over: WalletCmdOve
   }
 
   // PANIC: instant, no confirmation, scriptable from anywhere (a second terminal, a hotkey, an agent).
-  // Engages the kill-switch file (every executor re-reads it on each plan/confirm) AND locks the shared
-  // daily-cap ledger so no reservation can be taken even if the file were removed by hand.
+  // Engages the kill-switch file; every autotrade runner and the paper agent desk re-read it on each step.
   if (sub === 'panic') {
     const reasonIdx = argv.indexOf('--reason');
     const reason = reasonIdx >= 0 && argv[reasonIdx + 1] ? argv[reasonIdx + 1] : 'manual panic';
     const rec = ks.engage(reason);
-    const ledger = openLedger();
-    let lockNote = '';
-    if (ledger) { try { ledger.lock(reason); lockNote = ' · cap ledger locked'; } finally { ledger.close(); } }
-    else lockNote = ' · (cap ledger could not be opened; the kill-switch file still disables trading)';
-    io.stdout.write(`⛔ PANIC: live trading disabled (${rec.reason})${lockNote}\n`);
-    io.stdout.write(`kill switch: ${ks.path}\nRe-enable only from a real terminal: dexterm wallet resume\n`);
+    io.stdout.write(`⛔ PANIC: autotrade and the paper agent desk halted (${rec.reason})\n`);
+    io.stdout.write(`kill switch: ${ks.path}\nClear it only from a real terminal: dexterm wallet resume\n`);
     return 0;
   }
 
   // RESUME: the only way back. Requires a physical keypress on a TTY — not piped/scripted input — so a
-  // model, a script or a compromised popup cannot silently re-arm live trading.
+  // model or a script cannot silently clear the panic switch.
   if (sub === 'resume') {
     const stdin = io.stdin;
     if (!stdin || stdin.isTTY !== true) {
       io.stderr.write('dexterm wallet resume: needs a real terminal keypress (stdin is not a TTY). Refusing.\n');
       return 2;
     }
-    const p = ks.engaged();
-    const ledger = openLedger();
-    try {
-      const l = ledger?.locked() ?? null;
-      if (!p && !l) { io.stdout.write('live trading is not panicked; nothing to resume.\n'); return 0; }
-      io.stdout.write(`${panicLine(ks, ledger) ?? ''}\nPress Y to re-enable live trading (any other key aborts)… `);
-      const key = await ttyKeypress(stdin, over.keypressTimeoutMs ?? 30_000);
-      io.stdout.write('\n');
-      if (key === null) { io.stderr.write('dexterm wallet resume: no keypress; still panicked.\n'); return 2; }
-      if (key !== 'y' && key !== 'Y') { io.stdout.write('aborted; still panicked.\n'); return 1; }
-      ks.release();
-      ledger?.unlock();
-      io.stdout.write('✓ live trading re-enabled (caps still apply).\n');
-      return 0;
-    } finally { ledger?.close(); }
+    if (!ks.engaged()) { io.stdout.write('the panic switch is not engaged; nothing to resume.\n'); return 0; }
+    io.stdout.write(`${panicLine(ks) ?? ''}\nPress Y to clear the panic switch (any other key aborts)… `);
+    const key = await ttyKeypress(stdin, over.keypressTimeoutMs ?? 30_000);
+    io.stdout.write('\n');
+    if (key === null) { io.stderr.write('dexterm wallet resume: no keypress; still panicked.\n'); return 2; }
+    if (key !== 'y' && key !== 'Y') { io.stdout.write('aborted; still panicked.\n'); return 1; }
+    ks.release();
+    io.stdout.write('✓ panic switch cleared.\n');
+    return 0;
   }
 
   if (sub === 'link') {
@@ -334,9 +137,8 @@ export async function runWallet(argv: string[], io: WalletIo, over: WalletCmdOve
     io.stdout.write('Opening your browser to link a Solana wallet (sign-a-message only; no transaction)…\n');
     try {
       const res = await bridge.link();
-      const rec = store.set(res.publicKey, { network: caps.network });
-      io.stdout.write(`linked: ${shortPubkey(rec.publicKey)}  (${rec.publicKey})\n`);
-      io.stdout.write(`${capsLine(caps)}\n`);
+      const rec = store.set(res.publicKey);
+      io.stdout.write(`linked: ${shortPubkey(rec.publicKey)}  (${rec.publicKey}) · public key only; dexterm never signs with it\n`);
       return 0;
     } catch (e) {
       io.stderr.write(`dexterm wallet link failed: ${e instanceof Error ? e.message : String(e)}\n`);
@@ -344,6 +146,6 @@ export async function runWallet(argv: string[], io: WalletIo, over: WalletCmdOve
     }
   }
 
-  io.stderr.write(`dexterm wallet: unknown subcommand ${JSON.stringify(sub)} (expected link | unlink | status | panic | resume | probe | fast)\n`);
+  io.stderr.write(`dexterm wallet: unknown subcommand ${JSON.stringify(sub)} (expected link | unlink | status | panic | resume)\n`);
   return 2;
 }

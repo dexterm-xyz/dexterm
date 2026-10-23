@@ -1,0 +1,46 @@
+{
+  "kind": "exit-profile",
+  "id": "moonbag",
+  "name": "Moonbag (early entry, free bag)",
+  "version": "1.2.0",
+  "description": "An early entry on a young pair. At about 2x, sell the slice whose proceeds pay back the whole position cost; the rest rides as a free bag with a loose 55% trail off its peak and the thesis-break exits only. No hard stop, so the size is small: early entries rug often.",
+  "fit": {
+    "summary": "A young pair (0-2 h) with an early clean push that has not gone vertical yet, liquidity >= $20k, and the holder-safety gates clean (no mint or freeze authority, top-10 <= 30%, dev <= 5%).",
+    "minLiquidityUsd": 20000,
+    "ageHours": { "min": 0, "max": 2 },
+    "maxTop10Pct": 30,
+    "signals": ["first clean 5m push with buyers ahead of sellers", "liquidity rising with price", "many distinct buyers, top-2 share low"]
+  },
+  "sizing": { "maxSizePctOfBankroll": 3 },
+  "tpLadder": [],
+  "trailingStop": null,
+  "costRecovery": { "atPct": 100, "maxSellFrac": 0.6 },
+  "bagTrail": { "trailPct": 55 },
+  "timeStop": null,
+  "hardStop": {
+    "enabled": false,
+    "atPct": null,
+    "why": "Young pairs shake out 30-60% before a real run, and a rug fills near -100% whatever stop is set. The protection is the small size, the safety gates at entry and the thesis breaks."
+  },
+  "thesisBreak": {
+    "liquidityDropPct": 40,
+    "liquidityWindowMin": 10,
+    "mcapDivergenceX": 5,
+    "devSell": { "exitOnAnyDevSell": true, "topHolderSellPctOfBag": 30 },
+    "volumeDeath": { "m5TradesBelow": 5, "forMinutes": 60 }
+  },
+  "reentry": {
+    "allowed": false,
+    "cooldownMinutes": 0,
+    "maxEntriesPerCoinPerSession": 1,
+    "requires": "one entry per coin: an early entry cannot be repeated late"
+  },
+  "carry": { "allowed": true, "requiresTpFilled": 0, "maxRemainderPctOfBankroll": 3 },
+  "reprofileTo": [],
+  "wake": { "onTpFilled": false, "onTimeReview": false, "drawdownPct": -50, "thesisWarnFrac": 0.6, "noAnswer": "hold", "onCostRecovered": true },
+  "maxHoldMinutes": 10080,
+  "notes": [
+    "The bag trail arms on the cost-recovery sell, not on a gain; before that only the thesis breaks and the rug floor can exit.",
+    "tighten on a free bag halves its trail (never below 10%); a bag trail is never loosened by an agent."
+  ]
+}

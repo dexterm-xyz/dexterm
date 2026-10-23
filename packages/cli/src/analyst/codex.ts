@@ -18,13 +18,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ACTION_FILE_ENV, ACTION_TOKEN_ENV, ANALYST_ACTION_TYPES } from '@dexterm/data';
-import { READ_ONLY_TOOLS, type ContentEntry } from '@dexterm/mcp';
+import { READ_ONLY_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
 import { skillStore } from '../kb-skill-cmd.ts';
 
-/** The analyst engines dexterm can drive. Both are the user's own locally installed CLI. */
-export const ANALYST_ENGINES = ['claude', 'codex'] as const;
+/** The analyst engines dexterm can drive: the user's own claude or codex CLI, or (task-1543) a local model on their Ollama. */
+export const ANALYST_ENGINES = ['claude', 'codex', 'ollama'] as const;
 export type AnalystEngine = typeof ANALYST_ENGINES[number];
-/** What the user may choose: an engine, or `auto` (claude when installed, else codex). */
+/** What the user may choose: an engine, or `auto` (claude when installed, else codex, else a set-up local Ollama). */
 export const ENGINE_CHOICES = ['auto', ...ANALYST_ENGINES] as const;
 export type EngineChoice = typeof ENGINE_CHOICES[number];
 
@@ -55,15 +55,16 @@ export function analystCliOnPath(bin: string, env: NodeJS.ProcessEnv = process.e
   return false;
 }
 
-/** Pick the engine: an explicit choice wins; `auto` prefers claude (the original path), then codex. */
+/** Pick the engine: an explicit choice wins; `auto` prefers claude (the original path), then codex, then ollama. */
 export function resolveEngine(choice: string | null | undefined, has: (bin: string) => boolean): AnalystEngine {
-  if (choice === 'claude' || choice === 'codex') return choice;
+  if (choice === 'claude' || choice === 'codex' || choice === 'ollama') return choice;
   if (has('claude')) return 'claude';
   if (has('codex')) return 'codex';
+  if (has('ollama')) return 'ollama';
   return 'claude';
 }
 
-/** Parse a user-supplied engine choice; null when it is not one of auto|claude|codex. */
+/** Parse a user-supplied engine choice; null when it is not one of auto|claude|codex|ollama. */
 export function parseEngineChoice(v: unknown): EngineChoice | null {
   const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
   return (ENGINE_CHOICES as readonly string[]).includes(s) ? s as EngineChoice : null;
@@ -71,12 +72,15 @@ export function parseEngineChoice(v: unknown): EngineChoice | null {
 
 /**
  * The dexterm tools a codex turn may call: the read-only surface plus the UI actions this session allows
- * (absent = all of them; AI scan mode passes [] = none). Never a paper/trade tool, whatever the server grows.
+ * (absent = all of them; AI scan mode passes [] = none), plus the strategy PROPOSE tools outside scan mode (task-1507:
+ * they only write a proposal the user applies by keypress). Never a paper/trade tool, whatever the server grows.
  */
 export function codexAllowedTools(actionTypes: readonly string[] | undefined): string[] {
   const reads = READ_ONLY_TOOLS.filter((n) => !/^paper_/.test(n) && !(ANALYST_ACTION_TYPES as readonly string[]).includes(n));
   const actions = (ANALYST_ACTION_TYPES as readonly string[]).filter((t) => !actionTypes || actionTypes.includes(t));
-  return [...reads, ...actions];
+  // task-1507: strategy PROPOSALS (never applied by a tool) for a chat turn; an observe-only scan gets none
+  const propose = actionTypes && actionTypes.length === 0 ? [] : STRATEGY_PROPOSE_TOOLS;
+  return [...reads, ...actions, ...propose];
 }
 
 const tomlString = (s: string): string => JSON.stringify(s); // a JSON string is a valid TOML basic string

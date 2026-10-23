@@ -148,7 +148,9 @@ export function runBacktest(doc: ExportDoc, req: BacktestRequest, now = Date.now
   };
 
   if (req.kind === 'strategy') {
-    return { n: rows.length, base_rate: 0, precision: null, recall: null, brier: null, brier_base_rate: null, auc: null, ...base, note: 'strategy/paper subject not implemented in this tier (needs the position-fill simulator, §6)' };
+    // task-1503: a strategy is scored by the @dexterm/autotrade engine over a replay tape (positions, fills,
+    // exits), not by this t0-features harness; `dexterm backtest --subject strategy` routes there.
+    return { n: rows.length, base_rate: 0, precision: null, recall: null, brier: null, brier_base_rate: null, auc: null, ...base, note: 'strategy/paper subject not implemented in this t0 harness: it runs on the autotrade engine over a replay tape (dexterm backtest --subject strategy --strategy <id>)' };
   }
   if (req.kind === 'watch_rule') {
     return { n: rows.length, base_rate: 0, precision: null, recall: null, brier: null, brier_base_rate: null, auc: null, ...base, note: 'watch_rule subject not implemented in this tier (needs the rules engine, lane W-01)' };

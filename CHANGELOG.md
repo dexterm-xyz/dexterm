@@ -2,6 +2,38 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.1.7] - 2026-10-22
+
+A first cut of live trading through Telegram, and autotrade on paper. dexterm never holds a key and never signs; live trading happens in the Telegram trading bot of your choice; dexterm 0.1.7 sends alerts and signals to your own bot and does not place orders in it yet; automated order forwarding is next (0.1.8). The Telegram live path is experimental and has not been exercised end to end on mainnet; testing continues. Everything that trades inside dexterm is paper (simulated). Nothing in dexterm is financial advice.
+
+### Added
+
+- **Your own Telegram bot (experimental).** `dexterm telegram setup` and `dexterm telegram pair` connect a bot you create with @BotFather; the token stays in your OS keychain and is redacted from every error and log, and only your paired private chat is heard. During `dexterm autotrade run --paper` it sends candidates, entries, exits, halts, a PnL card per closed trade and a daily summary, takes `/status`, `/positions`, `/pause`, `/resume`, `/kill`, `/flatten` and `/use` (chat can make a run safer, never less safe), and turns paper entries into one-tap [Approve] [Half size] [Skip] cards. A blocked bot leaves an approval undelivered and nothing is bought; every message and tap is in a hash-chained audit (`dexterm telegram audit --verify`). This is dexterm's part in live trading: you act in your trading bot yourself.
+- **Autotrade (paper).** Strategies from presets (scalp, swing, runner, moonbag, a dip ladder) or your own file, validated with every problem named; backtests on your own recorded history with a held-out check; `dexterm autotrade run <strategy> --paper` works each candidate the screener finds with your own Claude (or a local model) while the exits run on their own; tune it by chat (the analyst proposes, you apply with `y`); `dexterm autotrade stop` and `flatten`; a hash-chained run file (`dexterm autotrade audit --verify`). The AUTOTRADE screen is `Q`.
+- **Several strategies at once, and paper accounts.** `dexterm autotrade run --all --paper` runs every strategy in `~/.dexterm/autotrade/autotrade.json` on one feed, each with its own bankroll, limits and breaker. A paper account lets several strategies share one simulated wallet (a buy by one leaves less for the others), or one strategy run on several.
+- **Full-port yolo preset (HIGH RISK, paper only).** One early-momentum entry at a time behind the holder-safety gates (LP burned or locked, no mint or freeze authority, a liquidity floor) and a live LARP check; cost back at about 2x, then a free bag. `dexterm autotrade yolo-replay` replays it at full port on your recorded history and shows the rugs, the loss spread and how often it zeroed the wallet. Paper only in this release.
+- **A local model as the AI engine (Ollama).** The analyst, tune-by-chat, `dexterm ask`, your agent on the dexterm tools and paper autotrade sessions can run on a model on your own machine: no login, no key, localhost by default, and a redirect from that host is refused. A restriction profile you choose (`observe`, `propose` for a new setup, `paper`, or `full` after a typed confirmation) sets how far it may go; the kill switch, mandate tiers and the prompt firewall stay outside the model. `dexterm ai probe` checks a model against your profile.
+- **One trade ledger.** `dexterm ledger` puts every trade from the paper ticket, the agent paper desk and autotrade runs in one table, one row per round trip, with win rate, P/L, drawdown and rug rate by strategy, exit profile and exit reason, strategy versions side by side, CSV/JSON export and a hash-chained file (`dexterm ledger verify`). New read-only MCP tools for the ledger, candidates, outcomes, `trading_status` and `telegram_status`.
+- **Your buys and sells on every chart.** Paper fills of the open coin are marked on the terminal chart, the chart popup and the brain view, with your average entry while you hold. Display only; `dexterm display markers on|off`.
+
+### Changed
+
+- **No key in dexterm.** The local live signer, the encrypted trading wallet, the devnet fast wallet and the LIVE trade ticket signed in Phantom from earlier test builds are removed, with the commands `dexterm live …`, `dexterm wallet trading|fast|probe` and `autotrade run --live`; they now refuse with a message that says where live trading happens. `dexterm wallet link` stays and stores your public key only. A test fails the build if signing or key-storage code comes back.
+- **Market cap is the default everywhere.** Screens, the CLI text, PnL cards, the chat assistant and autotrade agents talk about a coin in market cap ("in at $69.7K, out at $264.9K"); one switch brings back the price.
+- **Docs and site.** New pages for live trading, Telegram, Ollama and the yolo preset; every page rewritten for no key in dexterm.
+
+### Fixed
+
+- The top-10 holder share leaves out pools, bonding curves, launch vaults and locks on young PumpSwap and Meteora coins.
+- A coin that simply ran no longer shows a market-cap "split" between two sources.
+
+### Known issues
+
+- The Telegram live path is a first cut: dexterm 0.1.7 does not place orders in your trading bot, and the path has not been exercised end to end on mainnet. dexterm has not been tested with any particular trading bot.
+- Paper trading, paper autotrade, paper accounts and the yolo preset are simulated: paper fills are modelled, not results, and a backtest on your own recorded history is not a forecast.
+- The Telegram connector needs a bot you create and a private chat; a group chat is refused. If another program polls the same bot, pairing and approvals stop.
+- Trading remains experimental. Models, voice, agents and chat only propose; nothing in dexterm is financial advice.
+
 ## [0.1.6] - 2026-10-20
 
 A watch-it-work release: see an agent's reasoning, vetting and paper position as it trades, get a 0-100 LARP score that shows every point, and read charts in market cap. Trading remains experimental; agent trading is paper only (simulated), and this release does not enable mainnet trading. Nothing in dexterm is financial advice.

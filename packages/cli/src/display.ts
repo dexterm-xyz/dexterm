@@ -9,12 +9,13 @@
 //
 // No network calls, nothing here is read by the signer, the caps, tickets, plans or the confirm gate.
 import { fmtMcap, fmtCompact, fmtPrice } from '@dexterm/tui';
-import { applyAndJournal, configPath, dextermHome, loadConfig, DEFAULT_PRICE_MODE, PRICE_MODES, CHART_AXES, DEFAULT_CHART_AXIS, type PriceMode, type ChartAxis } from '@dexterm/custom';
+import { applyAndJournal, configPath, dextermHome, loadConfig, DEFAULT_PRICE_MODE, PRICE_MODES, CHART_AXES, DEFAULT_CHART_AXIS, CHART_MARKERS, DEFAULT_CHART_MARKERS, type PriceMode, type ChartAxis, type ChartMarkers } from '@dexterm/custom';
 import type { AppState } from './state.ts';
 import type { OrderPlan, Trigger } from '@dexterm/data/plans';
+import { knownSupply, pickBasis, PRICE_BASIS_ENV } from '@dexterm/data/basis';
 
-export type { PriceMode, ChartAxis };
-export { PRICE_MODES, DEFAULT_PRICE_MODE, CHART_AXES, DEFAULT_CHART_AXIS };
+export type { PriceMode, ChartAxis, ChartMarkers };
+export { PRICE_MODES, DEFAULT_PRICE_MODE, CHART_AXES, DEFAULT_CHART_AXIS, CHART_MARKERS, DEFAULT_CHART_MARKERS };
 
 /** Axis / caption label for an mcap chart: the history is scaled by today's supply, and says so. */
 export const MCAP_AXIS_LABEL = 'mcap (current supply)';
@@ -165,35 +166,100 @@ export function positionPriceCells(mode: PriceMode, supply: number | null, avgUs
   return { avg: { label: 'AVG ENTRY', value: avgText === '—' ? avgText : avgText + mark }, price: { label: 'PRICE', value: priceText === '—' ? priceText : priceText + mark } };
 }
 
-/** The mode in effect: the state's (set from config, a workspace or `$`), default price. */
-export function priceModeOf(state: Pick<AppState, 'priceMode'> | null | undefined): PriceMode {
-  return state?.priceMode === 'mcap' ? 'mcap' : 'price';
-}
-
-/** The mode a run starts in: config.display.priceMode, else price. */
-export function configPriceMode(cfg: { display?: { priceMode?: unknown } } | null | undefined): PriceMode {
-  const m = cfg?.display?.priceMode;
-  return isPriceMode(m) ? m : DEFAULT_PRICE_MODE;
+/**
+ * task-1537: the known supply for a coin the app is showing: the open token view's (mcap ÷ price at its latest tick),
+ * else its screener row's, else pump.fun's fixed 1B (the PnL card's rule, @dexterm/data/basis knownSupply). Never
+ * guessed: null means the caller shows the price and marks it.
+ */
+export function supplyForMint(state: Pick<AppState, 'screener' | 'live'>, mint: string | null | undefined): number | null {
+  if (!mint) return null;
+  const v = state.live?.token?.view;
+  if (v && v.mint === mint) { const r = supplyRatio(v.price, v.mcap); if (r !== null) return r; }
+  const row = state.screener?.rows.find((x) => x.mint === mint);
+  if (row) { const r = supplyRatio(row.price, row.mcap); if (r !== null) return r; }
+  return knownSupply({ mint, launchpad: row?.launchpad ?? (v && v.mint === mint ? v.launchpad : null) })?.tokens ?? null;
 }
 
 /**
- * `$`: flip the mode and persist it to config.display.priceMode through the journal (actor user, so `undo` works).
- * Returns the notice for the toast. Persistence failure keeps the new mode for this run and says why.
+ * task-1537: one more price LEVEL in a row (a stop, a target, a fill, a tape trade): its market cap at the given supply
+ * in mcap mode, else the price (marked ᵖ when mcap mode had no supply). Display only.
  */
-export function togglePriceMode(state: AppState): string {
-  const next: PriceMode = priceModeOf(state) === 'mcap' ? 'price' : 'mcap';
-  state.priceMode = next;
-  const what = next === 'mcap' ? 'showing MARKET CAP' : 'showing USD PRICE'; // task-1472: the charts follow A, not $
+export function levelCell(mode: PriceMode, supply: number | null | undefined, usd: number | null | undefined): string {
+  if (usd === null || usd === undefined || !Number.isFinite(usd)) return '—';
+  if (mode === 'mcap' && supply != null && supply > 0) return fmtMcap(usd * supply);
+  return fmtPrice(usd) + (mode === 'mcap' ? FALLBACK_MARK : '');
+}
+
+/** The mode in effect: the state's (set from config, a workspace, `$` or a one-run override), default MARKET CAP (task-1537). */
+export function priceModeOf(state: Pick<AppState, 'priceMode'> | null | undefined): PriceMode {
+  return state?.priceMode === 'price' ? 'price' : 'mcap';
+}
+
+/**
+ * The mode a run starts in: the one-run override (`DEXTERM_PRICE_BASIS=price|mcap`, which `--price` / `--mcap` /
+ * `--price-mode` also set), else config.display.priceMode, else market cap (task-1537: @dexterm/data/basis pickBasis).
+ */
+export function configPriceMode(cfg: { display?: { priceMode?: unknown } } | null | undefined, env?: Record<string, string | undefined> | null): PriceMode {
+  return pickBasis(cfg?.display?.priceMode, env);
+}
+
+/**
+ * `$` (and `/display mcap|price` in the chat box, task-1537): set the mode (`next` absent = flip) and persist it to
+ * config.display.priceMode through the journal (actor user, so `undo` works). Returns the notice for the toast.
+ * Persistence failure keeps the new mode for this run and says why.
+ */
+export function setPriceMode(state: AppState, next?: PriceMode, why = '$'): string {
+  const mode: PriceMode = next ?? (priceModeOf(state) === 'mcap' ? 'price' : 'mcap');
+  state.priceMode = mode;
+  const what = mode === 'mcap' ? 'showing MARKET CAP' : 'showing USD PRICE'; // task-1472: the charts follow A, not $
   const ui = state.custom;
   if (!ui) return `${what} (not saved: no config on this run)`;
   try {
-    const op = ui.config.display ? { op: 'add' as const, path: '/display/priceMode', value: next } : { op: 'add' as const, path: '/display', value: { priceMode: next } };
-    const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `$ price mode ${next}`, now: state.now.getTime() });
+    const op = ui.config.display ? { op: 'add' as const, path: '/display/priceMode', value: mode } : { op: 'add' as const, path: '/display', value: { priceMode: mode } };
+    const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `${why} price mode ${mode}`, now: state.now.getTime() });
     ui.config = config;
     return `${what} · saved ($ to switch back)`;
   } catch (e) {
     return `${what} (not saved: ${(e as Error).message})`;
   }
+}
+
+/** `$`: flip the mode and persist it (see setPriceMode). */
+export function togglePriceMode(state: AppState): string { return setPriceMode(state); }
+
+/**
+ * task-1537: the chat box command for the price basis, never sent to a model: `/display` (show), `/display mcap|price`,
+ * `/basis mcap|price`, `/set basis mcap|price` (also `/set priceMode …`). null = not this command.
+ */
+export function parseDisplayCommand(q: string): { show: true } | { mode: PriceMode } | { error: string } | null {
+  const w = q.trim().replace(/^\//, '').split(/\s+/).filter(Boolean).map((x) => x.toLowerCase());
+  let arg: string | undefined;
+  if (w[0] === 'display' || w[0] === 'basis') { if (w[1] === 'markers') return null; arg = w[1]; }
+  else if (w[0] === 'set' && (w[1] === 'basis' || w[1] === 'pricemode' || w[1] === 'price-basis' || w[1] === 'display.pricemode')) arg = w[2];
+  else return null;
+  if (arg === undefined) return { show: true };
+  return isPriceMode(arg) ? { mode: arg } : { error: `/display expects mcap or price, got ${JSON.stringify(arg.slice(0, 20))}` };
+}
+
+/** The toast for `/display` with no argument. */
+export function priceModeNotice(state: Pick<AppState, 'priceMode'>): string {
+  return priceModeOf(state) === 'mcap'
+    ? 'price basis: MARKET CAP (default) · coins with no known supply show price ᵖ · /display price or $ to switch'
+    : 'price basis: USD PRICE · /display mcap or $ to switch back to market cap';
+}
+
+/**
+ * task-1537: the one-run basis flags, accepted before any subcommand (`dexterm --price positions`, `dexterm autotrade
+ * list --mcap`): `--price` / `--mcap` are removed from argv and set DEXTERM_PRICE_BASIS in `env` for this process (so
+ * child agents and every CLI text follow it); nothing is saved. Returns argv without them.
+ */
+export function takeBasisFlags(argv: string[], env: Record<string, string | undefined>): string[] {
+  const out: string[] = [];
+  for (const a of argv) {
+    if (a === '--price' || a === '--mcap') env[PRICE_BASIS_ENV] = a.slice(2);
+    else out.push(a);
+  }
+  return out;
 }
 
 export function isChartAxis(v: unknown): v is ChartAxis { return (CHART_AXES as readonly unknown[]).includes(v); }
@@ -229,8 +295,41 @@ export function setChartAxis(state: AppState, next?: ChartAxis): string {
   }
 }
 
+export function isChartMarkers(v: unknown): v is ChartMarkers { return (CHART_MARKERS as readonly unknown[]).includes(v); }
+
+/** task-1483: are the BUY / SELL markers on (both charts)? Default on; only an explicit 'off' hides them. */
+export function chartMarkersOn(state: Pick<AppState, 'chartMarkers'> | null | undefined): boolean {
+  return state?.chartMarkers !== 'off';
+}
+
+/** task-1483: the markers setting a run starts with: config.display.chartMarkers, else on. */
+export function configChartMarkers(cfg: { display?: { chartMarkers?: unknown } } | null | undefined): ChartMarkers {
+  const m = cfg?.display?.chartMarkers;
+  return isChartMarkers(m) ? m : DEFAULT_CHART_MARKERS;
+}
+
+/**
+ * task-1483: show / hide the chart BUY / SELL markers (both chart surfaces) and persist config.display.chartMarkers through
+ * the journal (actor user, so `undo` works). `next` absent = flip. Returns the toast text. Display only.
+ */
+export function setChartMarkers(state: AppState, next?: ChartMarkers): string {
+  const v: ChartMarkers = next ?? (chartMarkersOn(state) ? 'off' : 'on');
+  state.chartMarkers = v;
+  const what = v === 'on' ? 'chart BUY/SELL markers: ON' : 'chart BUY/SELL markers: OFF';
+  const ui = state.custom;
+  if (!ui) return `${what} (not saved: no config on this run)`;
+  try {
+    const op = ui.config.display ? { op: 'add' as const, path: '/display/chartMarkers', value: v } : { op: 'add' as const, path: '/display', value: { chartMarkers: v } };
+    const { config } = applyAndJournal(ui.home, [op], { actor: 'user', why: `chart markers ${v}`, now: state.now.getTime() });
+    ui.config = config;
+    return `${what} · saved`;
+  } catch (e) {
+    return `${what} (not saved: ${(e as Error).message})`;
+  }
+}
+
 export interface DisplayIo { stdout: { write(s: string): unknown }; stderr: { write(s: string): unknown }; env: NodeJS.ProcessEnv }
-export const DISPLAY_USAGE = 'usage: dexterm display [price|mcap]   show or set display.priceMode in ~/.dexterm/config.json ($ in the app toggles it)';
+export const DISPLAY_USAGE = 'usage: dexterm display [price|mcap]   show or set display.priceMode in ~/.dexterm/config.json ($ in the app toggles it)\n       dexterm display markers [on|off]   show or set display.chartMarkers (BUY/SELL markers on both charts)';
 
 /** `dexterm display [price|mcap]`: print the saved price display mode, or set it (journaled, actor user). No network. */
 export function displayCommand(argv: string[], io: DisplayIo): number {
@@ -243,6 +342,24 @@ export function displayCommand(argv: string[], io: DisplayIo): number {
     io.stdout.write(`display.priceMode = ${m}${m === 'mcap' ? ' (tables show MCAP; tokens without a supply fall back to price)' : ' (USD price per token)'}\n`);
     const a = configChartAxis(loaded.config);
     io.stdout.write(`display.chartAxis = ${a}${a === 'mcap' ? ` (charts: ${MCAP_AXIS_LABEL}; A switches)` : ' (charts plot USD price; A switches)'}\n`);
+    const mk = configChartMarkers(loaded.config);
+    io.stdout.write(`display.chartMarkers = ${mk}${mk === 'on' ? ' (charts mark your paper and live fills; dexterm display markers off hides them)' : ' (no fill markers on the charts)'}\n`);
+    return 0;
+  }
+  // task-1483: `dexterm display markers [on|off]`
+  if (arg === 'markers') {
+    const v = argv[1];
+    if (v === undefined) {
+      if (!loaded.ok) { io.stderr.write(`dexterm display: ${loaded.errors[0]}\n`); return 1; }
+      io.stdout.write(`display.chartMarkers = ${configChartMarkers(loaded.config)}\n`);
+      return 0;
+    }
+    if (!isChartMarkers(v)) { io.stderr.write(`dexterm display markers: expected on or off, got ${JSON.stringify(v.slice(0, 20))}\n${DISPLAY_USAGE}\n`); return 2; }
+    try {
+      const op = loaded.config.display ? { op: 'add' as const, path: '/display/chartMarkers', value: v } : { op: 'add' as const, path: '/display', value: { chartMarkers: v } };
+      applyAndJournal(home, [op], { actor: 'user', why: `dexterm display markers ${v}` });
+    } catch (e) { io.stderr.write(`dexterm display: ${(e as Error).message}\n`); return 1; }
+    io.stdout.write(`display.chartMarkers = ${v} (saved to ${configPath(home)})\n`);
     return 0;
   }
   if (!isPriceMode(arg)) { io.stderr.write(`dexterm display: unknown mode ${JSON.stringify(arg.slice(0, 20))}\n${DISPLAY_USAGE}\n`); return 2; }
