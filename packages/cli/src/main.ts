@@ -57,6 +57,9 @@ import { OwnPnlTracker, type OwnHeldSample } from './screens/pnl-chip.ts';
 import { positionRow } from './live/trade.ts';
 import { widgetPage, widgetEnabled, syncWidgetPopups } from './widgets.ts';
 import { recordLarpVerdict } from './larp-record.ts';
+import { newAutotradeUi, defaultDeps as autotradeDeps, autotradeCapturing, autotradeTick, reloadList as autotradeReload, refreshRunner as autotradeRefreshRunner } from './screens/autotrade-ui.ts';
+import { autotradeAction, autotradeKey } from './screens/autotrade-keys.ts';
+import { workerJobs as autotradeWorkerJobs } from './screens/autotrade-worker.ts';
 import { rulesUiOf, rulesTick, rulesMove, beginRuleInput, saveRuleInput, dryRunNow, removeSelectedRule, toggleSelectedRule, dismissSelectedProposal, actOnSelectedProposal, RULE_INPUT_MAX } from './rules.ts';
 import { buildNotifier, hasPushChannel } from './alerts/notifier.ts';
 import { copyAlertToDelivery } from './alerts/format.ts';
@@ -64,6 +67,7 @@ import { readTelegramCreds, readDiscordCreds } from './alerts/creds.ts';
 import { launchIntelCells, launchRetryable } from './live/intel.ts';
 import { AnalystSession } from './analyst/session.ts';
 import { analystCliOnPath, parseEngineChoice, resolveEngine, type AnalystEngine, type EngineChoice } from './analyst/codex.ts';
+import { analystEngineHas, analystAiChoice } from './ai-cmd.ts';
 import type { AnalystDeps } from './analyst/backend.ts';
 import { resolveAnalystResults, type ResolvedResult } from './analyst/results.ts';
 import { parseScanCommand, SCAN_FLAGS, checkScanFlag, SCAN_HELP, type ScanCommand } from './scan/command.ts';
@@ -76,13 +80,13 @@ import { cleanText } from './screener/rows.ts';
 import { resolveImagesConfig } from './images-config.ts';
 import { popupImagePath } from './screens/coin.ts';
 import { VoiceController, selectStt, selectTts, SayTts, voiceStyleDefaults, type VoiceDecision, type VoiceScreenState } from '@dexterm/voice';
-import { LivePlanExecutor, defaultPlansJournalPath } from '@dexterm/data/plans';
+import { defaultPlansJournalPath } from '@dexterm/data/plans';
 import type { PlanInput } from '@dexterm/data/plans';
 import { isWalletAddress, shortAddr, buildMirror, leaderSoldSince, autoSizeCap, type MirrorMarket, type MirrorResult, type CopyAlert } from '@dexterm/data/copy';
 import { FOLLOW_INPUT_MAX } from './screens/follows.ts';
 import { HUD_MIN_H, hudAnimating } from './screens/agent-hud.ts';
 import type { VoiceHud } from './voice-hud.ts';
-import { isPriceMode, configPriceMode, togglePriceMode, priceModeOf, planLevels, configChartAxis, setChartAxis, chartAxisOf, type PriceMode } from './display.ts';
+import { isPriceMode, configPriceMode, takeBasisFlags, togglePriceMode, setPriceMode, parseDisplayCommand, priceModeNotice, priceModeOf, planLevels, configChartAxis, setChartAxis, chartAxisOf, configChartMarkers, setChartMarkers, chartMarkersOn, type PriceMode } from './display.ts';
 import { VERSION } from './version.ts';
 import { initCustom, planWorkspace, planPopupOpens, findWorkspace, nextWorkspaceName, workspaceSlots, saveWorkspace, themeFor, themeByName, cycleTheme, themeNames, CHORD_TTL_MS, MAX_WORKSPACE_NAME, type WorkspacePlan } from './custom.ts';
 import { DEFAULT_WORKSPACE, MORNING_HUD, applyAndJournal, policyCheck } from '@dexterm/custom';
@@ -159,9 +163,10 @@ export function buildScreenState(state: AppState): Record<string, unknown> {
   const newPairs = state.screen === 'newpairs' && live ? live.newpairs.list() : null;
   const rows: readonly unknown[] = state.screen === 'screener' || state.screen === 'analyst' ? screenerView(sc) : newPairs ?? sc.rows;
   const toRow = (r: unknown): VisibleRow | null => {
-    const x = r as { mint?: string; symbol?: string; price?: number | null; liq?: number | null; vol24?: number | null; chg?: { h1?: number | null; h24?: number | null } } | undefined;
+    const x = r as { mint?: string; symbol?: string; price?: number | null; mcap?: number | null; liq?: number | null; vol24?: number | null; chg?: { h1?: number | null; h24?: number | null } } | undefined;
     if (!x?.mint) return null;
-    return { mint: x.mint, symbol: x.symbol ?? '', priceUsd: x.price ?? null, chg1h: x.chg?.h1 ?? null, chg24h: x.chg?.h24 ?? null, liq: x.liq ?? null, vol24: x.vol24 ?? null };
+    // task-1537: the row's market cap rides along (the analyst's context leads with it by default)
+    return { mint: x.mint, symbol: x.symbol ?? '', priceUsd: x.price ?? null, mcap: x.mcap ?? null, chg1h: x.chg?.h1 ?? null, chg24h: x.chg?.h24 ?? null, liq: x.liq ?? null, vol24: x.vol24 ?? null };
   };
   const toNewPairRow = (r: unknown): VisibleRow | null => {
     const x = r as NewPairRow;
@@ -323,9 +328,6 @@ export interface CliArgs {
   noRecorder: boolean;
   /** task-1340: trade-moment sound cues on (muted by default; DEXTERM_SOUND=1 too). */
   sound: boolean;
-  /** task-1328: argv forwarded ONCE to the signer process (caps flags); `live` false = paper only (--no-live / replay). */
-  trade: string[];
-  live: boolean;
   /** task-1358: the workspace to activate at launch (a built-in or ~/.dexterm/workspaces/<name>.json). */
   workspace: string | null;
   /** task-1366: `--price-mode price|mcap` for this run (overrides config.display.priceMode; not saved). */
@@ -417,14 +419,17 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   dexterm update [--off|--on]                 check npm + GitHub for a newer version and print the upgrade command;
                                               --off/--on toggles the once-a-day startup notice (no telemetry)
   dexterm recorder stats|label|prune|export   the history recorder's tables (no network; 'dexterm recorder help')
-  dexterm kb list|show|new|edit|check|reset|path     your knowledge-base entries (~/.dexterm/kb/entries) over the bundled 17
+  dexterm kb list|show|new|edit|check|reset|path     your knowledge-base entries (~/.dexterm/kb/entries) over the bundled 18
   dexterm skill list|show|new|edit|check|reset|path  your analyst skills (~/.dexterm/skills) over the bundled ones (read tools only)
   dexterm narrative [--window 1h|24h] [--summary]  the narrative board over recorded history (no network, no model)
   dexterm backtest [--subject heuristic|pack_verdicts] [--horizon SEC]  honest rug-model metrics over recorded outcomes (no network, no model)
-  dexterm wallet link|unlink|status|panic|resume  link a Phantom wallet via a local bridge (pubkey only); panic disables live trading, resume needs a TTY keypress
+  dexterm ledger trades|positions|summary|equity|compare|export|card|sync|verify  the unified trade ledger: paper, agent desk, autotrade runs (no network; 'dexterm ledger help')
+  dexterm wallet link|unlink|status|panic|resume  link a Phantom wallet via a local bridge (pubkey only); panic halts autotrade + the paper desk, resume needs a TTY keypress
   dexterm plan propose|list|arm|cancel|journal     conditional order plans (entry/ladder/take-profit/moon bag/stop); arming needs a physical keypress
-  dexterm mandate draft|list|arm|revoke            standing capped mandates (fast wallet); arming needs a physical keypress — voice/agents can never arm
+  dexterm mandate draft|list|arm|revoke            standing capped mandates (paper fills); arming needs a physical keypress — voice/agents can never arm
   dexterm follow add|remove|list|stats|trades|mirror|purge  copy trading tier 1: follow a wallet (your list, local labels), its decoded swaps + FIFO PnL + win rate/early-entry; 'mirror' previews a one-key MIRROR TICKET from the wallet's latest buy (inert; arm in the app)
+  dexterm ai [status|engine|model|host|restrictions|probe|ask|agent]  the AI engine: your claude / codex CLI or a free LOCAL model on
+                                              your own Ollama (localhost); restriction profiles observe|propose|paper|full ('dexterm ai help')
   dexterm mcp [install <client>|doctor]            read-only MCP server for your own agent; 'install' writes the config for claude-code|claude-desktop|cursor|codex|generic (asks first, idempotent, backs up); 'doctor' verifies the connection
   dexterm alerts status|enable|disable|set-telegram|set-discord|test  where rule alerts are delivered (desktop / your Telegram / Discord; creds stay local, never logged)
   dexterm watch [--interval S] [--once] [--replay FILE]  run your rules headless and push alerts when the terminal is closed (no signer, proposals only)
@@ -463,8 +468,9 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   --selected N              highlighted row / token index
   --seed N                  fixture PRNG seed (default 7)
   --no-ai                   hide the analyst panel on the token screen
-  --analyst-engine E        auto | claude | codex: which of YOUR installed CLIs runs the analyst (default auto = claude
-                            if installed, else codex; DEXTERM_ANALYST_ENGINE or config analyst.engine too; /engine in chat)
+  --analyst-engine E        auto | claude | codex | ollama: which of YOUR engines runs the analyst (default auto = claude
+                            if installed, else codex, else a local Ollama model; DEXTERM_ANALYST_ENGINE, config analyst.engine
+                            or ai.json too; /engine in chat). ollama = a free local model, see 'dexterm ai help'
 
   --intensity LEVEL         off | normal | fever (default fever: rain, trails, glitch, blink, scanlines at 30 fps;
                             normal: 15 fps, sparser rain, no idle aberration; off = calm: neon theme, no motion)
@@ -483,12 +489,16 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
                             result only; muted by default (also DEXTERM_SOUND=1); ~/.dexterm/sounds holds the WAVs
   --workspace NAME          start in a workspace: default | morning-hud | a file in ~/.dexterm/workspaces/ (task-1358);
                             in the app ctrl+w then w (list) · n/N (next/prev) · s (save as) · m (morning HUD) · o (popups) · d · 1-9
-  --price-mode MODE         price | mcap: show USD price or MARKET CAP (price × supply) on the tables, token screen and both
-                            charts for this run (default: config.json display.priceMode; \$ in the app toggles and saves it)
+  --price-mode MODE         mcap | price: show MARKET CAP (price × a known supply; the default) or USD price on every screen,
+                            the CLI text and in the assistants' language for this run (default: config.json display.priceMode,
+                            mcap; \$ in the app toggles and saves it). --mcap / --price (any command) and
+                            DEXTERM_PRICE_BASIS=mcap|price do the same for one run
+  --mcap / --price          the price basis for this run on ANY command (dexterm --price autotrade run …), not saved
   dexterm workspace list|show|remove|init         the workspace files (no network)
   dexterm theme list|show|init|check              user themes in ~/.dexterm/themes (extends a built-in; contrast + hue guarded)
   dexterm keymap [screen]                         the effective keys (defaults + config.keymap overrides, marked ·)
-  dexterm display [price|mcap]                    show or set the price display mode (market cap = price × supply)
+  dexterm display [mcap|price]                    show or set the price basis (default market cap = price × a known supply)
+  dexterm display markers [on|off]                show or hide the BUY/SELL markers of your fills on both charts
   dexterm rules list|add|remove|enable|disable|check|dry-run|fields
                             "when <cond> [for n ticks] then alert|ticket|ask|popup|tag|sound|watch" rules in config.json (task-1358);
                             parsed never eval'd; mandatory cooldown + max/h; rules only alert or PROPOSE (ctrl+r in the app)
@@ -501,14 +511,10 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   AI SCAN MODE (off by default; observe + analyze only — it can never open a ticket, sign or trade):
 ${SCAN_HELP}
 
-  LIVE TRADING (task-1328; devnet by default; a separate signer process holds the caps and signs via Phantom):
-  --mainnet                 allow MAINNET swaps (real funds) within the caps; without it the signer refuses mainnet
-  --max-usd N               per-trade USD cap (default $5; raising it needs --mainnet; hard ceiling $500)
-  --daily-usd N             daily USD cap (default $20; raising it needs --mainnet; hard ceiling $2000)
-  --max-sol-out N           SOL that may leave the wallet in one tx (default 1, ceiling 5)
-  --max-slippage-bps N      slippage ceiling (default 500, ceiling 1000)
-  --trade-rpc URL           the signer's RPC (default devnet; must be devnet unless --mainnet)
-  --no-live                 paper only: never start the signer process
+  WALLET + LIVE TRADING (dexterm never holds a key and never signs a transaction):
+  live trading happens in the Telegram trading bot of your choice, which holds its own wallet; dexterm sends alerts,
+  signals and run control to your chat through your own bot (dexterm telegram setup). dexterm places no live order.
+  --no-live                 accepted for older scripts; changes nothing (trading in dexterm is paper only)
 ${WALLET_HELP}
 
   LOGIN WITH X (task-1357; your own X app, your limits, your bill; read scopes only, no scraping, dexterm never posts):
@@ -533,17 +539,15 @@ ${X_HELP}
         social (task-1330): T trending in the space · K KOL lists · token screen: s social panel · f filter · x hidden spam
         dexterm kol list | create <name> | add <list> @handle | remove <list> @handle | mute @handle | unmute @handle | enable <list> | disable <list> | import <dir> | import-x
         Login with X (task-1357): dexterm x login · then the SOCIAL panel + TRENDING read X with your own limits · KOL screen: X imports your X lists · o = only this handle
-        token: B/S buy/sell ticket (PAPER; L on the ticket flips LIVE when a wallet is linked) · P positions · w watch
+        token: B/S buy/sell ticket (PAPER) · P positions · w watch
         token: M bubble map (holder graph: clusters by funder / same-slot buys / transfers; colour = rule) · bubble map: M popup · m treemap · z zoom · D deep scan
         demo events on --fixtures: n new pair (glitch) · u pump (gold rain) · d dump (red rain) · x rug flag
         AI scan: Z on/off · R resume scanning after a lock · esc (on the locked coin) cancel the analysis
         any key skips the boot sequence or a blink transition
 
   State: ~/.dexterm/state.json remembers launches (DEXTERM_HOME overrides the directory).
-  DEXTERM_OFFLINE=1 refuses live data (tests and CI). Trading is PAPER by default — a simulated wallet
-  priced from live Jupiter quotes. LIVE (L on a ticket, /wallet link first): a separate signer process
-  quotes, builds, decodes, simulates and enforces the caps; Phantom signs in your browser; dexterm never
-  holds a key. The analyst, voice and scan mode can never open, confirm or sign a live trade.
+  DEXTERM_OFFLINE=1 refuses live data (tests and CI). Trading in dexterm is PAPER only — a simulated wallet
+  priced from live Jupiter quotes. dexterm never holds a key and never signs or sends a transaction.
   RPC: DEXTERM_RPC_URL, else ~/.dexterm/helius.key (Helius, metered with a credit meter), else the public RPC.
   Updates: at most once a day a live run asks npm + GitHub for the newest version (two anonymous GETs, no telemetry)
   and shows one toast if there is one; DEXTERM_NO_UPDATE_CHECK=1 or 'dexterm update --off' turns that off.`;
@@ -558,7 +562,6 @@ export function parseArgs(argv: string[]): CliArgs {
     scan: false, scanConfig: {},
     noRecorder: false,
     sound: false,
-    trade: [], live: true,
     workspace: null, priceMode: null,
     spectateMcp: false, spectateThoughts: null, agentPaper: null,
     help: false, version: false, unknown: [],
@@ -604,7 +607,7 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--tz') a.tz = str();
     else if (k === '--color') { const s = str(); const d = parseColorDepth(s); if (!d) throw new Error(`unknown color depth ${s} (expected truecolor|256|none)`); a.color = d; }
     else if (k === '--no-ai') a.noAi = true;
-    else if (k === '--analyst-engine') { const s = str(); const e = parseEngineChoice(s); if (!e) throw new Error(`unknown analyst engine ${s} (expected auto|claude|codex)`); a.analystEngine = e; }
+    else if (k === '--analyst-engine') { const s = str(); const e = parseEngineChoice(s); if (!e) throw new Error(`unknown analyst engine ${s} (expected auto|claude|codex|ollama)`); a.analystEngine = e; }
     else if (k === '--calm') a.calm = true;
     else if (k === '--intensity') { const s = str(); if (s !== 'off' && s !== 'normal' && s !== 'fever') throw new Error(`unknown intensity ${s} (expected off|normal|fever)`); a.intensity = s; }
     else if (k === '--fps') { const n = num(); if (n < 1 || n > MAX_FPS) throw new Error(`--fps expects 1..${MAX_FPS}`); a.fps = Math.round(n); }
@@ -622,12 +625,9 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (k === '--scan') a.scan = true;
     else if (k === '--no-recorder') a.noRecorder = true;
     else if (k === '--sound') a.sound = true;
-    // task-1328 LIVE trading flags: forwarded verbatim to the signer process, which validates them
-    // (over-ceiling values are refused there; without --mainnet the USD caps only go down).
-    else if (k === '--mainnet') a.trade.push(k);
-    else if (k === '--max-usd' || k === '--daily-usd' || k === '--max-sol-out' || k === '--max-slippage-bps') { a.trade.push(k, String(num())); }
-    else if (k === '--trade-rpc') { a.trade.push('--rpc', str()); }
-    else if (k === '--no-live') a.live = false;
+    // task-1571: dexterm has no live trading of its own; `--no-live` (0.1.6) is accepted and changes nothing.
+    else if (k === '--no-live') { /* paper only is the only mode */ }
+    else if (k === '--price' || k === '--mcap') a.priceMode = k === '--price' ? 'price' : 'mcap'; // task-1537 (main() also takes them before any subcommand)
     else if (k === '--price-mode') { const s = str(); if (!isPriceMode(s)) throw new Error(`--price-mode expects price|mcap, got ${JSON.stringify(s.slice(0, 20))}`); a.priceMode = s; }
     // task-1421: follow an agent driving over MCP (the running terminal moves with it; a read-only stream opens).
     else if (k === '--spectate-mcp') a.spectateMcp = true;
@@ -794,6 +794,8 @@ export function fastLaneEndpoints(rpc: RpcConfig): FastLaneEndpoint[] {
 }
 
 export async function main(argv: string[], io: Io = process as unknown as Io, proc: GuardProcess = process): Promise<number> {
+  // task-1537: `--price` / `--mcap` anywhere = the price basis for this run (every screen, CLI text and agent prompt).
+  argv = takeBasisFlags(argv, io.env as Record<string, string | undefined>);
   // `dexterm mcp` → the read-only MCP server on stdio (SPEC §5.1; `claude mcp add dexterm -- dexterm mcp`),
   // plus `dexterm mcp install <client>` (one-command setup) and `dexterm mcp doctor` (verify the connection).
   if (argv[0] === 'mcp') {
@@ -822,6 +824,13 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { narrativeCommand } = await import('./narrative-cmd.ts');
     return narrativeCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
+  // `dexterm ledger …` → the unified trade ledger (task-1530): reads fold the file + the sources; only `sync` writes. No network, no model, no keys.
+  if (argv[0] === 'ledger') {
+    const { ledgerCommand } = await import('./ledger-cmd.ts');
+    return ledgerCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
+  // `dexterm autotrade validate|list|backtest|sweep …` and `dexterm backtest --subject strategy` → the paper autotrade engine (task-1503). No network, no model, no keys.
+  if (argv[0] === 'autotrade' || argv[0] === 'backtest') { const at = await import('./autotrade-cmd.ts'); if (at.handles(argv)) return at.autotradeCommand(argv, { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin }); }
   // `dexterm backtest [--subject heuristic|pack_verdicts] [--horizon SEC]` → honest rug-model metrics over recorded outcomes (task-1356). No network, no model.
   if (argv[0] === 'backtest') {
     const { backtestCommand } = await import('./backtest-cmd.ts');
@@ -883,6 +892,12 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { alertsCommand } = await import('./alerts-cmd.ts');
     return alertsCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin as unknown as NodeJS.ReadStream });
   }
+  // `dexterm telegram setup|pair|status|approvals|notify|set|test|audit|revoke` → your own bot for the autotrade runner
+  // (task-1527). The token goes in the OS secret store (or a 0600 file), never config/argv/env/logs.
+  if (argv[0] === 'telegram') {
+    const { telegramCommand } = await import('./telegram-cmd.ts');
+    return telegramCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin });
+  }
   // `dexterm watch [--interval S] [--once|--ticks N] [--replay FILE]` → run the rules engine headless and
   // PUSH alerts to the enabled channels so they reach you when the terminal is closed (task-1398). No signer.
   if (argv[0] === 'watch') {
@@ -905,6 +920,11 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
   }
   // `dexterm wallet <link|unlink|status>` → link a Phantom wallet via the loopback bridge (keys never
   // enter dexterm; only the pubkey is stored), unlink it, or show the link + trade caps (task-1310 T1).
+  // task-1571: `dexterm live …` (the 0.1.7 local signer) was removed before release. dexterm holds no key.
+  if (argv[0] === 'live') {
+    io.stderr.write('dexterm live: not available. dexterm never holds a key and never signs; live trading happens in the Telegram trading bot of your choice (dexterm telegram setup sends alerts and run control to your chat)\n');
+    return 2;
+  }
   if (argv[0] === 'wallet') {
     const { runWallet } = await import('./wallet-cmd.ts');
     return runWallet(argv.slice(1), io as unknown as import('./wallet-cmd.ts').WalletIo);
@@ -935,6 +955,11 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
   if (argv[0] === 'voice') {
     const { voiceCommand } = await import('./voice-cmd.ts');
     return voiceCommand(argv.slice(1), { stdin: io.stdin, stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
+  // task-1543: `dexterm ai …` (engine, local model, restriction profile, probe) and `dexterm ask` (a headless question).
+  if (argv[0] === 'ai' || argv[0] === 'ask') {
+    const { aiCommand } = await import('./ai-cmd.ts');
+    return aiCommand(argv[0] === 'ask' ? ['ask', ...argv.slice(1)] : argv.slice(1), { stdin: io.stdin, stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm doctor` → a pre-flight that says whether dexterm will run here and how to fix what won't (task-1305).
   if (argv[0] === 'doctor') {
@@ -1018,9 +1043,8 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
         });
         ctx = new LiveContext(feed.dl, {
           mode: 'live', dbPath: dbOpt, rpc: { provider: rpc.provider, basis: rpc.basis }, record: args.record ? feed.recording ?? undefined : undefined, interval: args.interval, fastEndpoints: fastLaneEndpoints(rpc), onLog: args.verbose ? (l) => io.stderr.write(l) : undefined, allowedSigners: join(dextermHome(io.env), 'allowed_signers'),
-          // task-1328: LIVE trading is available in a real live run (never replay/offline); the signer
-          // process starts lazily on the first LIVE action with exactly these flags.
-          ...(args.live && !io.env.DEXTERM_OFFLINE ? { trade: { signerArgv: args.trade } } : {}),
+          // The wallet link (public key only) is available in a real live run (never replay/offline).
+          ...(!io.env.DEXTERM_OFFLINE ? { trade: {} } : {}),
         });
         // task-1329: the history recorder listens to the data layer's normaliser (zero requests of its own)
         // and keeps snapshots / feed membership / outcome labels in the same --db file. Live mode only (a
@@ -1037,7 +1061,7 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
           // 0.1.5 dev history: PumpPortal / RugCheck creators of new pairs go into the creator index too.
           ctx.newpairs.onCreator = (mint, creator, source, createdAt) => { recorder.recordCreator(mint, creator, source, undefined, createdAt); };
         }
-        if (args.verbose) io.stderr.write(`dexterm: rpc ${rpc.provider} (${rpc.basis}) · db ${dbPath} · recorder ${ctx.recorder ? 'on' : 'off'} · live trading ${args.live && !io.env.DEXTERM_OFFLINE ? 'available' : 'off'}\n`);
+        if (args.verbose) io.stderr.write(`dexterm: rpc ${rpc.provider} (${rpc.basis}) · db ${dbPath} · recorder ${ctx.recorder ? 'on' : 'off'} · paper trading only (dexterm holds no key)\n`);
       }
       if (args.preset && !feed.setPreset(args.preset)) {
         const v = feed.presets().find((p) => p.id === args.preset);
@@ -1092,8 +1116,10 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
       if (t) state.theme = t;
     }
     for (const e of state.custom.themeErrors) io.stderr.write(`dexterm: ${e}\n`);
-    state.priceMode = args.priceMode ?? configPriceMode(state.custom.config); // task-1366: --price-mode wins for the run
+    if (args.priceMode) (io.env as Record<string, string | undefined>).DEXTERM_PRICE_BASIS = args.priceMode; // task-1537: the agents follow the run's basis
+    state.priceMode = args.priceMode ?? configPriceMode(state.custom.config, io.env); // task-1366: --price-mode wins for the run; task-1537: then --price/--mcap/env, config, mcap
     state.chartAxis = configChartAxis(state.custom.config); // task-1472: default MARKET CAP, `A` toggles + saves
+    state.chartMarkers = configChartMarkers(state.custom.config); // task-1483: BUY/SELL markers on both charts (default on)
     if (args.workspace) {
       const r = switchWorkspace(state, args.workspace, []);
       if (!r.ok) { ctx?.close(); feed?.close(); io.stderr.write(`dexterm: ${r.reason}\n`); return 2; }
@@ -1286,6 +1312,15 @@ function followsMove(state: AppState, delta: number): boolean {
   return true;
 }
 
+// task-1508: open (or return to) the AUTOTRADE screen; the strategy list and the runner status are re-read each time.
+function openAutotrade(state: AppState, stack: ScreenKey[]): void {
+  if (state.screen !== 'autotrade') stack.push(state.screen);
+  state.screen = 'autotrade';
+  if (!state.autotradeUi) { state.autotradeUi = newAutotradeUi(autotradeDeps(process.env, autotradeWorkerJobs(process.env))); return; }
+  autotradeReload(state.autotradeUi);
+  autotradeRefreshRunner(state.autotradeUi);
+}
+
 // task-1358 Tier 3: j/k on the RULES screen move the cursor of the active pane (frozen while a rule is being typed).
 function rulesScreenMove(state: AppState, delta: number): boolean {
   if (state.screen !== 'rules' || !state.rulesUi) return false;
@@ -1295,7 +1330,7 @@ function rulesScreenMove(state: AppState, delta: number): boolean {
 
 function plansMove(state: AppState, delta: number): boolean {
   if (state.screen !== 'plans' || !state.plansUi) return false;
-  if (state.plansUi.arming || state.plansUi.riskModal || state.plansUi.liveModal) return true;
+  if (state.plansUi.arming || state.plansUi.riskModal) return true;
   const n = plansRows(state).length;
   if (n <= 0) { state.plansUi.selected = 0; return true; }
   state.plansUi.selected = Math.max(0, Math.min(n - 1, state.plansUi.selected + delta));
@@ -1321,6 +1356,10 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     if (state.screen === 'trending') { const r = pick(trendingRows(state)); return r ? { mint: r.mint, symbol: r.symbol, name: r.symbol, launchpad: 'unknown' as Launchpad, price: null, liq: r.liq, mcap: null } : null; }
     return null;
   };
+  // task-1508 AUTOTRADE (paper): `Q` opens the screen; while it is open it handles its own verbs and movement
+  // (esc on its strategies list falls through to the normal back). Nothing it does reaches live mode or the signer.
+  if (action === 'screen.autotrade') { openAutotrade(state, stack); return; }
+  if (state.screen === 'autotrade' && state.autotradeUi && autotradeAction(state.autotradeUi, action)) return;
   switch (action) {
     case 'quit': return 'quit';
     case 'screen.screener': state.screen = 'screener'; state.selected = 0; break;
@@ -1695,16 +1734,6 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
       if (state.screen !== 'plans') break;
       const svc = state.plansSvc; if (!svc) break;
       if (state.plansUi) { state.plansUi.arming = null; state.plansUi.riskModal = true; state.plansUi.notice = null; }
-      break;
-    }
-    case 'plans.live': {
-      // task-1363: raise the FIRE PATH modal (paper ⇄ live devnet fast wallet). Exactly like arm and gate this
-      // ONLY sets a modal flag; the switch itself happens in the interactive key loop on a captured physical
-      // keypress, and PlanService.useLive refuses any gesture but 'keypress' — so applyAction (a pipe, an
-      // agent, the voice router) can never move fills off paper.
-      if (state.screen !== 'plans') break;
-      const svc = state.plansSvc; if (!svc) break;
-      if (state.plansUi) { state.plansUi.arming = null; state.plansUi.riskModal = false; state.plansUi.liveModal = true; state.plansUi.notice = null; }
       break;
     }
     // task-1360 copy trading Tier 1: the FOLLOWED WALLETS screen. Opening it binds the follow store (+ the live
@@ -2099,37 +2128,40 @@ export function applyScanAnalystAction(state: AppState, raw: Record<string, unkn
  * The analyst engine for a run (0.1.5): `--analyst-engine`, then DEXTERM_ANALYST_ENGINE, then config
  * `analyst.engine`, then auto (claude when installed, else codex). Only the user picks it; models cannot.
  */
-export function analystEngineFor(flag: string | null | undefined, env: NodeJS.ProcessEnv, configured: string | null | undefined, has: (bin: string) => boolean = (b) => analystCliOnPath(b, env)): AnalystEngine {
-  const choice = parseEngineChoice(flag) ?? parseEngineChoice(env.DEXTERM_ANALYST_ENGINE) ?? parseEngineChoice(configured) ?? 'auto';
+export function analystEngineFor(flag: string | null | undefined, env: NodeJS.ProcessEnv, configured: string | null | undefined, has: (bin: string) => boolean = (b) => analystCliOnPath(b, env), aiChoice?: string | null): AnalystEngine {
+  // task-1543: ai.json (provider / surfaces.analyst / DEXTERM_AI_PROVIDER) comes after the analyst's own settings.
+  const choice = parseEngineChoice(flag) ?? parseEngineChoice(env.DEXTERM_ANALYST_ENGINE) ?? parseEngineChoice(configured) ?? parseEngineChoice(aiChoice) ?? 'auto';
   return resolveEngine(choice, has);
 }
 
-/** `/engine [auto|claude|codex]` in the chat box (0.1.5). Null when the input is not this command. */
+/** `/engine [auto|claude|codex|ollama]` in the chat box (0.1.5; ollama task-1543). Null when the input is not this command. */
 export function parseEngineCommand(q: string): { show: true } | { choice: EngineChoice } | { error: string } | null {
   const m = /^\/engine(?:\s+(\S+))?\s*$/i.exec(q.trim());
   if (!m) return null;
   if (!m[1]) return { show: true };
   const c = parseEngineChoice(m[1]);
-  return c ? { choice: c } : { error: `unknown analyst engine "${m[1].slice(0, 16)}" (use /engine auto|claude|codex)` };
+  return c ? { choice: c } : { error: `unknown analyst engine "${m[1].slice(0, 16)}" (use /engine auto|claude|codex|ollama)` };
 }
 
 /**
  * Apply `/engine`: switch the CLI for NEW conversations this run (cached per-coin chats are dropped so the next
  * `a` starts on the chosen engine; a running turn finishes where it started). Returns the line to show.
  */
-export function engineCommand(state: AppState, cmd: NonNullable<ReturnType<typeof parseEngineCommand>>, env: NodeJS.ProcessEnv, has: (bin: string) => boolean = (b) => analystCliOnPath(b, env)): string {
-  const installed = (['claude', 'codex'] as const).filter((b) => has(b));
-  const list = installed.length ? installed.join(' + ') : 'neither claude nor codex';
+export function engineCommand(state: AppState, cmd: NonNullable<ReturnType<typeof parseEngineCommand>>, env: NodeJS.ProcessEnv, has: (bin: string) => boolean = analystEngineHas(env)): string {
+  const installed = (['claude', 'codex', 'ollama'] as const).filter((b) => has(b));
+  const list = installed.length ? installed.join(' + ') : 'no AI engine yet';
   if ('error' in cmd) return cmd.error;
   const cur = state.analystEngine ?? 'claude';
-  if ('show' in cmd) return `analyst engine: ${cur} · installed: ${list} · /engine claude|codex|auto switches (config analyst.engine keeps it)`;
+  if ('show' in cmd) return `analyst engine: ${cur} · installed: ${list} · /engine claude|codex|ollama|auto switches (config analyst.engine keeps it)`;
   const next = resolveEngine(cmd.choice, has);
-  if (cmd.choice !== 'auto' && !has(next)) return `${next} is not installed (installed: ${list}); ${next === 'codex' ? 'npm i -g @openai/codex && codex login' : 'install Claude Code, then run claude once to log in'}`;
+  const how = next === 'codex' ? 'npm i -g @openai/codex && codex login' : next === 'ollama' ? 'install Ollama (https://ollama.com/download), `ollama pull qwen3:8b`, `dexterm ai engine ollama`' : 'install Claude Code, then run claude once to log in';
+  if (cmd.choice !== 'auto' && !has(next)) return `${next} is not ${next === 'ollama' ? 'set up' : 'installed'} (installed: ${list}); ${how}`;
   if (next !== cur) {
     for (const [k, sess] of state.analystByMint ?? []) { if (!sess.busy) state.analystByMint!.delete(k); }
     if (state.analyst && !state.analyst.busy && state.analyst.engine !== next) state.analyst = null;
   }
   state.analystEngine = next;
+  if (next === 'ollama') return 'analyst engine: ollama (a local model on your own Ollama, $0) for new conversations · `dexterm ai engine ollama` keeps it';
   return `analyst engine: ${next} (your own ${next} CLI and login) for new conversations · set analyst.engine in config.json to keep it`;
 }
 
@@ -2146,7 +2178,7 @@ export function createScanSession(state: AppState, mint: string, symbol: string,
     const type = typeof raw.type === 'string' ? raw.type.replace(/[^a-z_]/gi, '').slice(0, 24) : '?';
     hooks.onBlocked?.(type, r.error ?? 'refused');
   };
-  return new AnalystSession({ skill: 'token-dossier', mint, symbol, screenState: ss, onAction, actionTypes: SCAN_ACTION_TYPES, scan: true, ...(state.analystEngine === 'codex' ? { engine: 'codex' as const } : {}) }, hooks.onChange ?? (() => {}), deps);
+  return new AnalystSession({ skill: 'token-dossier', mint, symbol, screenState: ss, onAction, actionTypes: SCAN_ACTION_TYPES, scan: true, ...(state.analystEngine && state.analystEngine !== 'claude' ? { engine: state.analystEngine } : {}) }, hooks.onChange ?? (() => {}), deps);
 }
 
 /** The outcome of applying one analyst UI action: a human label to show, or a rejection reason. */
@@ -2393,11 +2425,11 @@ export function ownHeldSample(state: AppState, now: number): OwnHeldSample | nul
   const r = positionRow(held, markPriceFor(state, mint), state.sol?.price ?? src.solUsd());
   if (!ownOpenedMemo || ownOpenedMemo.mint !== mint || now - ownOpenedMemo.at > 5000) {
     let t: number | null = null;
-    try { t = currentPositionFills([...(live.livePositions?.records(200, mint) ?? []), ...live.wallet.trades(500).filter((x) => x.mint === mint)])[0]?.t ?? null; } catch { t = null; }
+    try { t = currentPositionFills(live.wallet.trades(500).filter((x) => x.mint === mint))[0]?.t ?? null; } catch { t = null; }
     ownOpenedMemo = { mint, at: now, t };
   }
   return {
-    mint, symbol: held.symbol, kind: held.kind === 'live' ? 'live' : 'paper',
+    mint, symbol: held.symbol, kind: 'paper',
     entryUsd: r.avgEntryUsd, markUsd: r.priceUsd, pnlPct: r.unrealizedPct, pnlUsd: r.unrealizedUsd,
     openedAt: ownOpenedMemo.t, targetUsd: r.targetUsd,
   };
@@ -2557,7 +2589,7 @@ export function applyKey(state: AppState, key: Key, stack: ScreenKey[]): Effect 
         if (p?.plansOpen?.()) popups.push('plans');
         const widgets = (p?.openWidgets?.() ?? []).map((w) => w.key); // task-1358 Tier 5: open pack widgets are saved by ref
         const entry = saveWorkspace(ui, {
-          name, screen: state.screen, theme: state.theme.name, intensity: state.vfx.intensity, priceMode: state.priceMode ?? 'price',
+          name, screen: state.screen, theme: state.theme.name, intensity: state.vfx.intensity, priceMode: priceModeOf(state),
           screener: { preset: sc.preset, filter: sc.query ?? null, sort: `${sc.sort.key}:${sc.sort.dir}` },
           token: { tape: !!state.tokenTape, social: !!state.tokenSocial, analyst: state.aiOpen !== false },
           popups, widgets,
@@ -2576,6 +2608,9 @@ export function applyKey(state: AppState, key: Key, stack: ScreenKey[]): Effect 
   // task-1360: typing a wallet address on the FOLLOWED WALLETS screen captures every key until ⏎ / esc.
   // task-1358 Tier 3: typing a rule on the RULES screen captures every key until ⏎ / esc. Every keystroke re-runs the
   // dry-run ("would match N rows right now"); ⏎ parses + saves (never eval'd), a refusal is the notice.
+  // task-1508: the AUTOTRADE screen's typed lines (a strategy id, a file to import, a field value) and the flatten
+  // confirm capture every key until ⏎ / esc, so q and the screen keys never leak out of a half-typed value.
+  if (state.screen === 'autotrade' && state.autotradeUi && autotradeCapturing(state.autotradeUi)) { autotradeKey(state.autotradeUi, key); return; }
   if (state.screen === 'rules' && state.rulesUi && state.rulesUi.input !== null) {
     const ui = state.rulesUi;
     const cur: string = state.rulesUi.input;
@@ -2836,8 +2871,8 @@ const SYNC_ON = '\x1b[?2026h';
 const SYNC_OFF = '\x1b[?2026l';
 
 export function interactive(state: AppState, io: Io, depth: ColorDepth, args: CliArgs, proc: GuardProcess = process): Promise<number> {
-  // 0.1.5: the analyst engine for new conversations (the user's own claude or codex CLI; never a shipped key).
-  state.analystEngine ??= analystEngineFor(args.analystEngine, io.env, state.custom?.config.analyst?.engine);
+  // 0.1.5: the analyst engine for new conversations (the user's own claude or codex CLI, or task-1543 a local Ollama model; never a shipped key).
+  state.analystEngine ??= analystEngineFor(args.analystEngine, io.env, state.custom?.config.analyst?.engine, analystEngineHas(io.env), analystAiChoice(io.env));
   const out = io.stdout;
   const inp = io.stdin;
   const rnd = mulberry32(99);
@@ -3152,7 +3187,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         // task-1340: a send in flight shows the neutral scanning sweep (never a verdict); it clears when the ticket settles.
         if (reason === 'ticket') {
           const ph = live.ticket?.ticket.phase;
-          if (ph === 'filling' || ph === 'signing') { if (v.moment?.kind !== 'inflight') fireInflight(v, live.ticket?.ticket.symbol ?? '', ticketOrigin()); }
+          if (ph === 'filling') { if (v.moment?.kind !== 'inflight') fireInflight(v, live.ticket?.ticket.symbol ?? '', ticketOrigin()); }
           else clearInflight(v);
         }
         drawPending = true;
@@ -3291,7 +3326,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           maybeSpeakVoiceAnswer(session); // task-1282: speak a voice-initiated answer when it settles
           scheduleDraw();
         };
-        const session = new AnalystSession({ skill: p.skill, mint: p.mint, symbol: p.symbol, screenState: buildScreenState(state), model: p.model, onAction, ...(state.analystEngine === 'codex' ? { engine: 'codex' as const } : {}) }, onChange);
+        const session = new AnalystSession({ skill: p.skill, mint: p.mint, symbol: p.symbol, screenState: buildScreenState(state), model: p.model, onAction, ...(state.analystEngine && state.analystEngine !== 'claude' ? { engine: state.analystEngine } : {}) }, onChange);
         if (p.question) session.ask(p.question, buildScreenState(state)); else session.start();
         state.analyst = session;
         state.analystByMint?.set(key, session);
@@ -3434,13 +3469,16 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             livePrice: (mint) => (live.badgeFor(mint) === 'LIVE' ? live.livePrice(mint) : null),
             feed: (mint) => (live.badgeFor(mint) === 'LIVE' ? 'LIVE' : 'POLL'),
             positions: live.positionSource,
-            fills: (mint) => [...(live.livePositions?.records(200, mint) ?? []), ...live.wallet.trades(500).filter((t) => t.mint === mint)],
+            fills: (mint) => live.wallet.trades(500).filter((t) => t.mint === mint),
             solUsd: () => state.sol?.price ?? live.positions.solUsd(),
             imagePath: (v) => popupImagePath(state, v.image),
             priceMode: () => priceModeOf(state), // task-1366
             chartAxis: () => chartAxisOf(state), // task-1472: the popup's Y axis
             setChartAxis: (a) => { say(setChartAxis(state, a), 'info', 3); if (!done) draw(); }, // task-1472: the popup's MCAP | PRICE control
             pnlChip: () => pnlChipFor(state, state.agentHud?.clock() ?? Date.now()), // task-1473 r2: the chip on the chart popup
+            markFills: (mint) => live.chartFills.for(mint), // task-1483: BUY/SELL markers (the paper ledger, no fetch)
+            chartMarkers: () => chartMarkersOn(state),
+            setChartMarkers: (on) => { say(setChartMarkers(state, on ? 'on' : 'off'), 'info', 3); if (!done) draw(); }, // task-1483: the popup's MARKERS control
           } : null,
         });
       }
@@ -3605,7 +3643,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         else {
           try {
             const s = seedForMint(state, live, tk.mint, tk.symbol);
-            live.openTicket({ mint: s.mint, symbol: s.symbol, name: s.name }, tk.side, 'paper');
+            live.openTicket({ mint: s.mint, symbol: s.symbol, name: s.name }, tk.side);
             if (state.screen !== 'ticket') stack.push(state.screen);
             state.screen = 'ticket';
             say(`PAPER ticket for ${tk.symbol}: a rule proposed ${tk.side} ${tk.size} ${tk.unit} — size and confirm it yourself`, 'info', 6);
@@ -3779,7 +3817,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
             // one unless it was a pronoun); ask on unknown or ambiguous (copycat ticker) rather than opening
             // the wrong token (task-1282 rework D1).
             const res = resolveVoiceToken(d.target);
-            if (res.kind === 'ok' && live) { const s = seedForMint(state, live, res.mint); live.openTicket({ mint: s.mint, symbol: s.symbol, name: s.name }, d.side, 'paper'); if (state.screen !== 'ticket') stack.push(state.screen); state.screen = 'ticket'; }
+            if (res.kind === 'ok' && live) { const s = seedForMint(state, live, res.mint); live.openTicket({ mint: s.mint, symbol: s.symbol, name: s.name }, d.side); if (state.screen !== 'ticket') stack.push(state.screen); state.screen = 'ticket'; }
             else if (res.kind === 'ambiguous') ask(`I see ${res.count} tokens called ${d.target}. Open the exact one first, then say ${d.side}.`);
             else if (d.target === '__selected__') ask(live ? `${d.side === 'buy' ? 'Buy' : 'Sell'} what? Nothing is highlighted here — name the ticker or pick a row first.` : 'Paper trading needs live mode.');
             else ask(live ? `I don't see a token called ${d.target} — open it first, then say ${d.side}.` : 'Paper trading needs live mode.');
@@ -3989,7 +4027,9 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         // task-1388 GO-TO prompt: while the "open any coin" input is open it owns the keyboard. Route the key
         // straight to applyKey (which does the capture / open) and skip the voice, calm, demo and keymap
         // handlers below — otherwise a base58 char like v / m / c would toggle voice or calm instead of typing.
-        if (state.goto) {
+        // task-1508: the AUTOTRADE screen's typed lines (an id, a file, a field value) and its flatten confirm own the
+        // keyboard the same way, so v / m / c / n / d / x type instead of toggling voice, calm or a demo event.
+        if (state.goto || (state.screen === 'autotrade' && state.autotradeUi && autotradeCapturing(state.autotradeUi))) {
           const before = state.screen;
           try { applyKey(state, key, stack); }
           catch (e) { state.goto = null; state.screener.notice = `⚠ go-to failed: ${describeError(e)}`; }
@@ -4122,21 +4162,10 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           if (key.name === 'esc') { try { live.ticket.cancel(); } catch (e) { state.screener.notice = `⚠ cancel failed: ${describeError(e)}`; } draw(); continue; }
           // else: fall through to the keymap (quit/navigation remain responsive while filling)
         }
-        // task-1328 LIVE: while the signer builds the plan, esc cancels; while Phantom has the plan
-        // (signing) no key does anything — the signer finishes or times out, and nothing here can
-        // confirm, so navigation keys still fall through to the keymap.
-        if (state.screen === 'ticket' && live?.ticket && live.ticket.ticket.phase === 'planning') {
-          if (key.name === 'esc') { live.ticket.cancelPlan(); draw(); continue; }
-          // task-1368: while Jupiter is rate limiting the signer the ticket waits and retries by itself; r retries now.
-          if (key.name === 'char' && (key.ch === 'r' || key.ch === 'R') && !key.ctrl && !key.alt) { live.ticket.retryPlan(); draw(); continue; }
-        }
-        if (state.screen === 'ticket' && live?.ticket && live.ticket.ticket.phase === 'signing') {
-          if (key.name === 'esc') { state.pendingToast = 'waiting for Phantom — approve or reject it in the browser'; draw(); continue; }
-        }
         // PAPER trade ticket (task-1310): the ticket captures every key (digits/y/esc/tab/…) so the
         // confirm gate can never be satisfied by a stray key, and `q`/`1`-`4` cannot quit or navigate
         // out from under a half-typed order. `filling` is handled above so the user is never trapped.
-        const ticketActive = state.screen === 'ticket' && live?.ticket && live.ticket.ticket.phase !== 'filled' && live.ticket.ticket.phase !== 'error' && live.ticket.ticket.phase !== 'refused' && live.ticket.ticket.phase !== 'filling' && live.ticket.ticket.phase !== 'planning' && live.ticket.ticket.phase !== 'signing';
+        const ticketActive = state.screen === 'ticket' && live?.ticket && live.ticket.ticket.phase !== 'filled' && live.ticket.ticket.phase !== 'error' && live.ticket.ticket.phase !== 'filling';
         if (ticketActive && live?.ticket) {
           let eff: ReturnType<typeof live.ticket.key>;
           try { eff = live.ticket.key({ name: key.name, ch: key.ch, ctrl: key.ctrl, alt: key.alt }); }
@@ -4199,43 +4228,6 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         // 'keypress'}) — which the engine takes ONLY from a real keypress, journals, and auto-expires in 24h;
         // restoreGate() puts it back. There is no path here for a pipe/agent (TTY-only loop, no way to raise
         // the modal except a person pressing G), and signer caps/allow-lists/panic are unaffected either way.
-        // task-1363 — the FIRE PATH modal: paper ⇄ LIVE (devnet, the capped fast wallet). Same captured-keypress
-        // discipline as arm/gate: enter/y switches, esc cancels, every other key is swallowed. Going LIVE needs
-        // the run's signer process (never started in replay/offline/--no-live), the signer on DEVNET with a fast
-        // wallet loaded (checked by LivePlanExecutor.ready), and no armed/filled plans; PlanService.useLive
-        // takes ONLY a keypress gesture and journals the switch. Nothing here signs: fills still go through the
-        // signer's own policy, simulation and caps, and the fast wallet never signs for the main wallet.
-        if (state.screen === 'plans' && state.plansUi?.liveModal) {
-          const ui = state.plansUi;
-          if (key.name === 'esc') { ui.liveModal = false; ui.notice = 'fire path unchanged'; draw(); continue; }
-          const confirmKey = key.name === 'enter' || (key.name === 'char' && !key.ctrl && !key.alt && (key.ch === 'y' || key.ch === 'Y'));
-          if (confirmKey) {
-            const svc = state.plansSvc;
-            ui.liveModal = false;
-            if (!svc) { ui.notice = 'no plan service'; draw(); continue; }
-            if (svc.mode() === 'live') {
-              try { svc.usePaper(); ui.notice = 'fire path: PAPER — fills are simulated again'; }
-              catch (e) { ui.notice = `switch refused: ${describeError(e)}`; }
-              draw(); continue;
-            }
-            const port = live?.ensureSigner() ?? null;
-            if (!port) { ui.notice = 'LIVE fills need the signer process: start dexterm live (not replay/offline/--no-live)'; draw(); continue; }
-            if (svc.engine.openPlans().length) { ui.notice = `switch refused: cancel or finish ${svc.engine.openPlans().length} open plan(s) first`; draw(); continue; }
-            const ex = new LivePlanExecutor({ signer: port, clock: { now: () => Date.now(), sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)) } as never, solUsd: () => state.sol?.price ?? live?.positions.solUsd() ?? null, onChange: () => { if (!done) { plansTick(); draw(); } }, log: (l) => args.verbose && io.stderr.write(`  plans-live    ${l}\n`) });
-            ui.notice = 'checking the signer and the fast wallet…';
-            void ex.ready().then((r) => {
-              if (done) return;
-              if (!r.ok) { ui.notice = `LIVE refused: ${r.why}`; draw(); return; }
-              try { svc.useLive(ex, { gesture: 'keypress' }); ui.notice = `fire path: ${ex.describe(r.fastWallet)} · balance ${r.balanceLamports === null ? '?' : (Number(r.balanceLamports) / 1e9).toFixed(4)} SOL · L again for paper`; }
-              catch (e) { ui.notice = `switch refused: ${describeError(e)}`; }
-              draw();
-            });
-            draw();
-            continue;
-          }
-          draw();
-          continue;
-        }
         if (state.screen === 'plans' && state.plansUi?.riskModal) {
           const ui = state.plansUi;
           if (key.name === 'esc') { ui.riskModal = false; ui.notice = 'left the gate as it was'; draw(); continue; }
@@ -4271,11 +4263,19 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
               draw();
               continue;
             }
-            // 0.1.5: `/engine [auto|claude|codex]` switches the analyst CLI for new conversations; never sent to a model.
+            // 0.1.5: `/engine [auto|claude|codex|ollama]` switches the analyst engine for new conversations; never sent to a model.
             const en0 = q.startsWith('/') ? parseEngineCommand(q) : null;
             if (en0) {
               state.aiInput = '';
               say(engineCommand(state, en0, io.env), typeof en0 === 'object' && 'error' in en0 ? 'warn' : 'info', 6);
+              draw();
+              continue;
+            }
+            // task-1537: `/display mcap|price` (also `/basis …`, `/set basis …`) sets the price basis; never sent to a model.
+            const dc0 = q.startsWith('/') ? parseDisplayCommand(q) : null;
+            if (dc0) {
+              state.aiInput = '';
+              say('error' in dc0 ? dc0.error : 'mode' in dc0 ? setPriceMode(state, dc0.mode, '/display') : priceModeNotice(state), 'error' in dc0 ? 'warn' : 'info', 6);
               draw();
               continue;
             }
@@ -4355,14 +4355,15 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         const sc = state.screener;
         const editing = state.screen === 'screener' && sc.mode !== 'table';
         const plain = key.name === 'char' && !key.ctrl && !key.alt && key.ch !== undefined;
-        if (!editing && plain && key.ch === 'c') {
+        // task-1508: on the AUTOTRADE screen `c` marks strategies to compare (calm stays reachable from any other screen).
+        if (!editing && plain && key.ch === 'c' && state.screen !== 'autotrade') {
           // calm toggle: off ↔ the last active tier
           if (isCalm(v)) { v.intensity = lastIntensity; v.baseline = lastIntensity === 'fever' ? 0.12 : 0; }
           else { lastIntensity = v.intensity; v.intensity = 'off'; v.trail.clear(); }
           flusher.invalidate();
           continue;
         }
-        if (!editing && plain && sc.source === 'fixtures' && Object.hasOwn(DEMO_KEYS, key.ch as string)) {
+        if (!editing && plain && sc.source === 'fixtures' && state.screen !== 'autotrade' && Object.hasOwn(DEMO_KEYS, key.ch as string)) {
           const kind = DEMO_KEYS[key.ch as string];
           try {
             const text = demoEvent(state, kind, rnd);
@@ -4406,7 +4407,7 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       if (state.screen === 'narrative') syncNarrativePopup(); // board recompute reaches the popup
       if (state.screen === 'plans') syncPlansPopup(); // arm / cancel / tick status changes reach the popup
       syncWidgets(); // task-1358 Tier 5: open pack widgets follow the terminal (throttled per widget + topic)
-      // task-1328: `/wallet …` — performed here because link opens a browser and probe opens a LIVE ticket.
+      // task-1328: `/wallet …` — performed here because link opens a browser.
       if (state.pendingWallet) {
         const wc = state.pendingWallet; state.pendingWallet = null;
         if (!live) say('wallet commands need live mode', 'warn', 5);
@@ -4414,7 +4415,6 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
           if (wc === 'link') say('opening your browser to link a wallet (sign-a-message only; no transaction)…', 'info', 8);
           void live.walletCommand(wc).then((line) => {
             if (done) return;
-            if (wc === 'probe' && live.ticket && live.ticket.ticket.mode === 'live') { if (state.screen !== 'ticket') { stack.push(state.screen); state.screen = 'ticket'; } }
             say(line, wc === 'panic' ? 'warn' : 'info', 8);
             scheduleDraw();
           }).catch((e) => { say(`wallet ${wc} failed: ${describeError(e)}`, 'warn', 6); scheduleDraw(); });
@@ -4493,6 +4493,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         if (v.frame % tickEvery === 0) {
           // task-1397: the "new version available" toast, once, after the boot and never over the welcome card.
           if (state.updateNotice && state.screen !== 'boot' && !state.overlay) { say(state.updateNotice, 'info', 8); state.updateNotice = null; }
+          // task-1508: the autotrade screen re-reads the paper runner's status file every 2 s while it is open.
+          if (state.screen === 'autotrade' && state.autotradeUi) autotradeTick(state.autotradeUi);
           if (feed) {
             if (!state.paused && Date.now() - lastRefresh >= LIVE_REFRESH_MS) refresh();
             // live screens keep their own cadence (task-1298): token / watchlist every 10 s, new pairs recompute ages/rows at the 2 Hz tick

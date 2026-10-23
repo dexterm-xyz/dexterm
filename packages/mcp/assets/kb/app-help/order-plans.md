@@ -28,6 +28,6 @@ sources:
 date: 2026-10-16
 ---
 
-`dexterm plan list|add|remove|arm|disarm` sets conditional order plans (e.g. take-profit / stop levels). Voice and agents can only PROPOSE a plan; ARMING one needs your physical keypress, and the caps and panic-stop stay signer-side. Nothing here lets a model sign or raise a cap.
+`dexterm plan list|add|remove|arm|disarm` sets conditional order plans (e.g. take-profit / stop levels). Voice and agents can only PROPOSE a plan; ARMING one needs your physical keypress, and plans fill on PAPER (dexterm places no live order). Nothing here lets a model sign or raise a cap.
 
 CLI: `dexterm plan`.

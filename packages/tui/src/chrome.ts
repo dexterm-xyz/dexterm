@@ -9,7 +9,7 @@ import type { Toast } from './fx.ts';
 // 'ticket' (PAPER trade ticket) and 'positions' (PAPER portfolio) are task-1310 secondary screens:
 // reached from the token screen / a global key, not tabs, so SCREENS (the 1-4 tab bar) is unchanged.
 // 'trending' (TRENDING IN THE SPACE, key T) and 'kol' (KOL lists, key K) are task-1330 secondary screens.
-export type ScreenKey = 'screener' | 'newpairs' | 'watchlist' | 'analyst' | 'token' | 'boot' | 'ticket' | 'positions' | 'trending' | 'kol' | 'bubbles' | 'narrative' | 'plans' | 'follows' | 'rules';
+export type ScreenKey = 'screener' | 'newpairs' | 'watchlist' | 'analyst' | 'token' | 'boot' | 'ticket' | 'positions' | 'trending' | 'kol' | 'bubbles' | 'narrative' | 'plans' | 'follows' | 'rules' | 'autotrade';
 
 export interface ScreenTab {
   key: ScreenKey;

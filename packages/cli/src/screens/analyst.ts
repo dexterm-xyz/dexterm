@@ -11,6 +11,7 @@ import { headerModel } from '../state.ts';
 import type { FixtureToken } from '../fixtures.ts';
 import { screenerView } from '../screener/view.ts';
 import { renderAnalystSession } from './analyst-session.ts';
+import { priceModeOf } from '../display.ts';
 import { resolveAnalystResults } from '../analyst/results.ts';
 
 type ConvoLine =
@@ -38,7 +39,7 @@ export function renderAnalyst(c: Canvas, state: AppState): void {
       frame: state.vfx.frame, code: state.vfx.code, calm: isCalm(state.vfx),
       input: state.aiInput ?? '', inputFocused: focused,
       scroll: state.aiScroll, revealAll: state.aiRevealAll,
-      results, resultsCursor: state.analyst.resultsCursor, resultsActive,
+      results, resultsCursor: state.analyst.resultsCursor, resultsActive, priceMode: priceModeOf(state), // task-1537
       inputHint: focused ? 'type your question…  ⏎ send · esc blur · analysis not advice'
         : results.length ? 'i ask · ↑↓ pick coin · ⏎ open · o ticket · esc back'
           : 'i ask · ⏎ focus · ↑↓ pick coin · PgUp/Dn scroll',
@@ -52,7 +53,7 @@ export function renderAnalyst(c: Canvas, state: AppState): void {
   if (state.screener.source !== 'fixtures') {
     const live = state.aiFocused === true;
     const eng = state.analystEngine ?? 'claude'; // 0.1.5: the user's own CLI that will answer (claude | codex)
-    const b = c.box(0, top, chatW, bottom - top, { title: `✦ ANALYST · ${eng}`, titleFg: t.ai, caption: `read-only · local ${eng} CLI · on demand`, captionFg: t.dim, border: bc });
+    const b = c.box(0, top, chatW, bottom - top, { title: `✦ ANALYST · ${eng}`, titleFg: t.ai, caption: `read-only · local ${eng === 'ollama' ? 'ollama model' : `${eng} CLI`} · on demand`, captionFg: t.dim, border: bc });
     const bbg = b.bg; const bin = b.w - 2; let by = b.y + 1;
     const say2 = (s: string): void => { for (const w2 of wrap(s, bin - 2)) { if (by >= b.y + b.h - 3) break; c.text(b.x + 2, by, w2, { fg: t.muted, bg: bbg }, bin - 2); by += 1; } };
     say2('No conversation yet.'); by += 1;

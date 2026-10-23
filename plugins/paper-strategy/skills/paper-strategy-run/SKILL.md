@@ -1,7 +1,7 @@
 ---
 name: paper-strategy-run
 description: Run a PAPER-only early-momentum hunt over the dexterm MCP tools — watch new pairs and early movers, vet each candidate on evidence, enter at a fixed size, scale out at targets, narrate each step. Use for "run the paper strategy", "paper trade a fresh coin".
-version: 0.5.0
+version: 0.6.1
 kind: skill
 paper_only: true
 tools:
@@ -56,13 +56,13 @@ Call `paper_pnl` once and read your caps: per-trade, per-coin, total, max open p
 Run this loop while you are flat: one full pass about every 90 seconds (`show_in_screener` + `screen_state` only move the terminal and read it locally). Use the `now` field in tool results to keep time. While you hold a position, stop hunting entirely (see section 5).
 
 1. **New pairs.** Call `switch_screen {screen: "newpairs"}`, then `screen_state`. Its `visible` rows are the live PumpPortal launches, newest first. Each row has `ageSec`, `mcap`, `bonding` (bonding-curve %), `chg5m`, `liq`, `buys` and `sells`. Look for launches that are already pulling real buyers.
-2. **Early movers.** Call `show_in_screener` with `preset: "trench"`, `sort: {key: "m5", dir: "desc"}` and `filter: "liq >= 10K vol1h > 15K !flag:mint !flag:freeze"`. Then call `screen_state` to read the rows on screen. Do this pass a second time with `sort: {key: "h1", dir: "desc"}`, or with `preset: "graduating"`.
-   **Fresh pools.** On alternate passes, call `show_in_screener` with `preset: "new"`, `sort: {key: "m5", dir: "desc"}` and `filter: "liq >= 10K age < 2h !flag:mint !flag:freeze"`, then `screen_state`. These are launches that just got a real pool (a graduation or a fresh AMM listing): the earliest coins that can carry a $10k-liquidity entry.
+2. **Early movers.** Call `show_in_screener` with `preset: "trench"`, `sort: {key: "m5", dir: "desc"}` and `filter: "liq >= 30K vol1h > 15K !flag:mint !flag:freeze"`. Then call `screen_state` to read the rows on screen. Do this pass a second time with `sort: {key: "h1", dir: "desc"}`, or with `preset: "graduating"`.
+   **Fresh pools.** On alternate passes, call `show_in_screener` with `preset: "new"`, `sort: {key: "m5", dir: "desc"}` and `filter: "liq >= 30K age < 2h !flag:mint !flag:freeze"`, then `screen_state`. These are launches that just got a real pool (a graduation or a fresh AMM listing): the earliest coins whose pool can carry your entry (see the liquidity box). Use `30K` in both filters at a $500 entry; scale it with your entry size (section 3).
 3. **Narrative.** Call `narrative_board {window: "1h"}` about every other pass. A coin in a narrative that is heating up beats an equal coin in one that is not.
 4. **Shortlist** at most 3 coins that are moving early:
    - The 5m change is clearly positive (about +5% or more).
    - Buys outnumber sells.
-   - Age is a ranking hint, not a checklist box: prefer about 3 minutes to 24 hours, younger first. A coin at least ~2 minutes old that already shows $10k+ liquidity and real wallets on its tape goes to the vet; say its age when you do. **Early runners in their first minutes are what you are hunting:** when buys clearly beat sells, vet them first.
+   - Age is a ranking hint, not a checklist box: prefer about 3 minutes to 24 hours, younger first. A coin at least ~2 minutes old that already clears the liquidity floor (section 3) and shows real wallets on its tape goes to the vet; say its age when you do. **Early runners in their first minutes are what you are hunting:** when buys clearly beat sells, vet them first.
    - Its tape is live: trades in the last minute or two. A coin with no fresh trades is skipped without a full vet.
 
    **"Already moved" is not a reason to skip or reject.** A coin that is already up big on the 5m or 1h still goes to the vet; the checklist decides. Runners that ran +300% after a rejection in earlier sessions were skipped for timing, not for safety.
@@ -88,14 +88,15 @@ Put the candidate on screen first, with `open_token`, so the watcher sees what y
 
 Enter only if ALL of these hold:
 
-- [ ] **Rug/safety:** no mint or freeze authority, and the `analyze_token` verdict is not AVOID. None of these flags: `serial_rugger`, `wash_tape`, `bundled_over_15pct`, `dev_holds_over_10pct`, or a rugcheck score or risk that says danger.
+- [ ] **Rug/safety:** no mint or freeze authority, and the `analyze_token` verdict is not AVOID. None of these flags: `serial_rugger`, `wash_tape`, `bundled_over_15pct`, `dev_holds_over_10pct`, or a rugcheck score or risk that says danger. The box also fails on **young and vertical**: the coin is under about 1 hour old (`analyze_token` `age_sec` under 3600) and already up +250% or more on the 1h (take the higher of `chg_h1_pct` and the screener row). Both pools that matched were pulled within minutes of the entry.
 - [ ] **Holders:** the top-10 share (ex-LP) is under ~35%, and no single non-LP wallet holds more than ~8%. If holder data is unavailable, say so and require stronger tape: more distinct wallets and a lower top-2 share.
-- [ ] **Liquidity:** at least $10k, and the paper price impact for your size is inside the cap.
+- [ ] **Liquidity:** at least 60 times your entry size and never under $10k (**$30k at a $500 entry**), and the paper price impact for your size is inside the cap. A thinner pool fails this box even when everything else is strong: at this size, every entry into a $10k–$30k pool in the recorded runs lost money or barely moved, and a single wallet can drain a pool that small. The box also fails on:
+  - **Price sources split:** `get_token` `pair.mcapResolved` shows the Jupiter and DexScreener market caps more than ~5x apart, or `flagged: true`. One source already sees a drained pool.
 - [ ] **Early momentum, real buyers:** in the last 5m, buys beat sells across at least ~25 distinct wallets, and the top-2 wallets are under ~30% of volume. The price is at or above the 1m VWAP and making higher lows. It is not one candle that just went +100%.
 - [ ] **Dev and LARP:** no known prior rugs from the creator (unknown on keyless is allowed). `larp_check` raises no drainer or wallet-connect marker, and the site is not a default or site-builder page. Soft flags count against the coin.
 
 Reject a coin only on a box above that failed, and name the box. Each of these alone is not a failed box; mention it, but it does not reject the coin:
-- how far it has already run;
+- how far it has already run (except young and vertical, in the rug/safety box);
 - how far it sits below its high;
 - a copycat ticker;
 - a low organic score.
@@ -114,10 +115,14 @@ Before you confirm, state the exit plan in one line. This is a hunt for a runner
 - **Wide trail on the last half:** after TP2, exit the rest if the price falls about 40% from its peak since entry. There are no tight stops and no breakeven stop.
 - **Thesis-break exit, the only other exit:** exit everything only when the evidence on the coin's own reads shows the thesis is broken. Name the evidence and the tool that showed it:
   - liquidity pulled (pool liquidity collapses on `get_token`);
+  - **a fast drain:** pool liquidity on `get_token` is down 30% or more from its highest read in the last ~5 minutes;
+  - **the price sources split:** `get_token` `pair.mcapResolved` shows the Jupiter and DexScreener market caps more than ~5x apart, or `flagged: true`. This is not a data oddity. Jupiter reads the chain and DexScreener lags, so treat it as the pull already happening;
   - the dev dumping, seen in the tape;
   - a rug signal (a new mint or freeze authority, or a danger verdict).
 
-  A price drop on its own, sellers winning a few candles, or a slow minute is not a thesis break.
+  A price drop on its own, sellers winning a few candles, a slow minute or a slow liquidity drift over many minutes is not a thesis break.
+
+  **On a thesis-break signal, your very next call is `paper_close {mint, fraction: 1}`.** Do not take a confirming read first: every read spends the Jupiter limit your sell quote needs.
 - **Session wrap-up:** close what is left at the wrap-up, as in section 6.
 
 You may move the targets for the coin's volatility if you have a reason; say the reason. Never add a percentage stop or a time stop.
@@ -127,7 +132,7 @@ You may move the targets for the coin's volatility if you have a reason; say the
 1. Call `open_token` on the held coin. **Stay on its token screen while you hold it**, so the watcher sees the chart and the position panel.
 2. **While holding, use only `get_token`, `get_candles` and `get_trades` on the held coin**, plus the paper tools. Do not call `screener_query`, `narrative_board`, `analyze_token`, `get_dossier` or `show_in_screener` until you are flat again. They spend the Jupiter limit your sell quote needs.
 3. Read the held coin about every 30–45 seconds (judge the time by `now`), one read per check. A runner needs time, not a fast loop, and the reads share the Jupiter limit with your sell quote.
-   - `get_token` gives the live price and the pool liquidity. Compare the price with your entry and your peak since entry; watch the liquidity for a pull.
+   - `get_token` gives the live price and the pool liquidity. Compare the price with your entry and your peak since entry. Note the liquidity on every read and compare it with the highest liquidity you read in the last ~5 minutes (the fast-drain check), and check `pair.mcapResolved` (the price-source check).
    - `get_candles {interval: "1m", limit: 5}` gives the structure. The **close of the last, still-forming candle** is also a live price.
    - `get_trades {window: "m5"}` comes from the GeckoTerminal tape, not Jupiter. Read it about every third check, and right away on a sharp drop, to see whether the creator from your `get_dev_history` read (or one wallet) is dumping.
 4. **Trigger exits on the freshest live price you have**: the `get_token` price or the last candle's close, whichever you read most recently. Do not trigger on a candle high that has already passed. Sell the moment that price is at or above your target; do not wait for a better print or for a second read to confirm it.
@@ -137,6 +142,7 @@ You may move the targets for the coin's volatility if you have a reason; say the
    - The trail exit, a thesis-break exit or the wrap-up close is `fraction: 1`.
 6. When you take profit, say it plainly: "Coin is +104% from my entry. Taking a quarter off as planned."
 7. On a drawdown, say what you see and that you are holding, unless a thesis-break signal shows on the coin's reads: "Coin is -35% from entry. Liquidity is unchanged and the dev has not sold, so I am holding."
+8. **Stale-thesis review at about 30 minutes.** If the coin has not confirmed by then (it never reached about +25%), write a one-line review: is the tape still live with buyers, and is liquidity holding against its 5-minute high? This is a judgment call, not a stop. Staleness alone is not an exit. In the recorded runs, the two best trades were flat or red at 30 minutes and ran later, between about 37 and 70 minutes in. Exit only on a thesis break.
 
 Other rules:
 - Call `switch_screen {screen: "positions"}` once after each exit, then go back to the coin or the hunt.
@@ -155,3 +161,9 @@ About 2 minutes before the session ends, close anything still open. Then call `p
 - the PAPER PnL, labelled as simulated: one example, not a result.
 
 Do not change the theme, intensity, workspace or price mode. Do not open pop-up windows.
+
+## Changelog
+
+- **0.6.1** (task-1469, after run42): young and vertical (under ~1 h old and +250% or more on the 1h) fails the rug/safety box. It matched run40 KAI and run42 Rosy, both pulled within minutes, and none of the other 13 recorded entries. It was proposed after run40 and confirmed by run42. The thresholds sit close to real entries on both sides (run35 ARENA: 0.79 h, +240%; run36 PUNANI: 1.18 h, +271%), so treat them as tuned on a small sample.
+- **0.6.0** (task-1469, round 5): tuned on an offline replay of the recorded held-coin reads from runs 20 to 34 (9 positions). Changes: the liquidity floor is 60 times the entry size ($30k at $500; it was $10k) in the vet and the screener filters; a price-sources split fails the liquidity box; fast drain and price-sources split are new thesis breaks, with an immediate close; and a 30-minute stale-thesis review (judgment, not a stop). Held-coin polling is unchanged (30 to 45 s). The TROAD and aDOGymous pulls (run27, run33) landed between two reads about 40 s apart, so faster polling would not have caught them, and extra reads cost the sell quote its Jupiter limit. Not adopted: a hard 30-minute exit (it would have cut both best trades) and LP-lock or top-holder limits (both rugs had 100% locked LP and a top-10 under 9%).
+- **0.5.0**: fixed-size entries at the per-trade cap.

@@ -6,7 +6,7 @@
 // Workspaces hold NO keys, NO trading settings and NO code: the schema is additional:false and a pack or a
 // Jarvis proposal that tries to smuggle anything else is refused by name (schema.ts). Switching a workspace
 // is a UI action: it can navigate, re-theme and open read-only popups; it can never arm, sign or confirm.
-import { validate, type SchemaError, POPUP_KINDS, WORKSPACE_SCREENS, type Intensity, type PriceMode, type WidgetSpec } from './schema.ts';
+import { validate, type SchemaError, DEFAULT_PRICE_MODE, POPUP_KINDS, WORKSPACE_SCREENS, type Intensity, type PriceMode, type WidgetSpec } from './schema.ts';
 import { breakpoint, solve, treeFor, widgetsIn, widgetSpec, type ScreenLayout, type Rect, type Solved, type Tree } from './layout.ts';
 
 export type PopupKind = (typeof POPUP_KINDS)[number];
@@ -162,7 +162,7 @@ export interface WorkspaceSnapshot {
 export function captureWorkspace(name: string, snap: WorkspaceSnapshot): Workspace {
   const start = (WORKSPACE_SCREENS as readonly string[]).includes(snap.screen) ? (snap.screen as WorkspaceScreen) : 'screener';
   const ws: Workspace = { name, description: `saved from the ${snap.screen} screen`, start, theme: snap.theme, intensity: snap.intensity };
-  if (snap.priceMode && snap.priceMode !== 'price') ws.priceMode = snap.priceMode;
+  if (snap.priceMode && snap.priceMode !== DEFAULT_PRICE_MODE) ws.priceMode = snap.priceMode; // task-1537: the default is mcap
   if (snap.screens) ws.screens = structuredClone(snap.screens);
   const sc: NonNullable<Workspace['screener']> = {};
   if (snap.screener?.preset) sc.preset = snap.screener.preset;

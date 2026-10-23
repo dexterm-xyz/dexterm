@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER
+╭─ my-scalp · v1.0.0 · PAPER · ✓ valid ────────────────────────────────╮╭─ VALIDATION ─────────────────────────────────╮
+│ ENTRY ─────────────────────────────────────────────────────────────  ││ ✓ valid: every field and the cross-field     │
+│▎ screen                        liq >= 30K vol5m >= 5K !flag:mint !…  ││   rules pass                                 │
+│  ageHours/min                  0                                     ││ ! /exits/profiles scalp may re-profile to    │
+│  ageHours/max                  6                                     ││   runner, which this strategy does not       │
+│  safety/maxTop10Pct            35                                    ││   include (that edge is unused)              │
+│  safety/maxDevPct              5                                     ││ ! /exits/profiles swing may re-profile to    │
+│  safety/requireNoMintAuthority true                                  ││   runner, which this strategy does not       │
+│  safety/requireNoFreezeAuthor… true                                  ││   include (that edge is unused)              │
+│  safety/maxMcapSplitX          5                                     ││                                              │
+│  safety/youngVertical/maxAgeH… 1                                     ││                                              │
+│  safety/youngVertical/maxH1Pct 250                                   ││                                              │
+│  safety/unknownHolders         reject                                ││                                              │
+│  triggers/0/kind               momentum                              ││                                              │
+│  triggers/0/m5MinPct           3                                     ││                                              │
+│  triggers/0/buySellMin         1.2                                   │╰──────────────────────────────────────────────╯
+│  triggerMode                   any                                   │╭─ EXIT PROFILES ──────────────────────────────╮
+│  decide                        agent                                 ││ ● Scalp (quick play)                         │
+│  candidateTtlSec               300                                   ││   stop -25% ┤ ── entry ── +30% ½ ── +60% ¼   │
+│ EXITS ─────────────────────────────────────────────────────────────  ││   trail 15% after +20% · 20m exit            │
+│  default                       scalp                                 ││   Swing                                      │
+│  profiles/0                    builtin:scalp                         ││   no stop ┤ ── entry ── +50% ⅓ ── +100% ⅓    │
+│  profiles/1                    builtin:swing                         ││   trail 25% after +40% · 90m review          │
+│ RISK ──────────────────────────────────────────────────────────────  ││                                              │
+│  perTrade/maxLossPctOfBankroll 10                                    ││                                              │
+│  perTrade/assumedLossPctNoStop 100                                   ││                                              │
+│  dailyLossHaltPct              10                                    ││                                              │
+│  drawdown/sizeDownAtPct        15                                    ││                                              │
+│  drawdown/sizeDownMult         0.5                                   ││                                              │
+│  drawdown/recoverBelowPct      8                                     ││                                              │
+│  drawdown/haltAtPct            25                                    ││                                              │
+│  maxConcurrent                 2                                     ││                                              │
+│  maxExposurePct                25                                    ││                                              │
+│  lossStreak/losses             3                                     ││                                              │
+│  lossStreak/cooldownMin        60                                    ││                                              │
+╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+  tab  view   ↑↓  field   ⏎  change   s  save   u  undo   b  backtest   w  sweep   esc  back

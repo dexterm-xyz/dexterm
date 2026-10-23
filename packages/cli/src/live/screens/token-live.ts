@@ -24,7 +24,7 @@ import { launchIntelCells, holderTags } from '../intel.ts';
 import { devBookOf, devRows } from '../dev-history.ts';
 import { EX_POOL_TAGS } from '@dexterm/data';
 import { layoutFor } from '../../custom.ts';
-import { chartMode, chartTitle, priceModeOf, chartAxisOf, mcapAt, positionPriceCells, type PriceMode } from '../../display.ts';
+import { chartMode, chartTitle, priceModeOf, chartAxisOf, chartMarkersOn, mcapAt, positionPriceCells, levelCell, supplyRatio, type PriceMode } from '../../display.ts';
 
 type Level = 'ok' | 'warn' | 'bad' | 'na';
 
@@ -132,7 +132,10 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   // timeframe tabs sit on the top border, left of the caption (same spot as the fixture screen)
   let tx = cb.x + cb.w - 2 - (chartCap.length + 4) - INTERVALS.reduce((s, f) => s + f.length + 1, 0);
   for (const f of INTERVALS) tx = c.text(tx, cb.y - 1, f, f === v.interval ? { fg: t.accent, bg: cb.bg, b: true } : { fg: t.dim, bg: cb.bg }) + 1;
-  if (v.candles.length) candleChart(c, cb.x + 1, cb.y, cb.w - 2, cb.h, v.candles, { bg: cb.bg, interval: v.interval, scale: cm.scale ?? undefined, axisFmt: cm.axisFmt });
+  // task-1483: BUY / SELL markers for every paper + live fill of this coin (the ledgers, no fetch) and the open position's
+  // average entry as a dashed line (the position row's own figure); `display.chartMarkers off` hides them.
+  const trades = chartMarkersOn(state) ? { fills: state.live?.chartFills?.for(v.mint) ?? [], avgEntry: prow && prow.avgEntryUsd !== null ? { usd: prow.avgEntryUsd, source: held?.kind ?? src?.kind ?? 'paper' } : null } : null;
+  if (v.candles.length) candleChart(c, cb.x + 1, cb.y, cb.w - 2, cb.h, v.candles, { bg: cb.bg, interval: v.interval, scale: cm.scale ?? undefined, axisFmt: cm.axisFmt, trades });
   else c.textC(cb.x, cb.y + Math.floor(cb.h / 2), cb.w, cp.state === 'loading' ? 'loading candles…' : `no candles · ${cp.reason ?? 'source did not answer'}`, { fg: t.muted, bg: cb.bg, i: true });
   y += chartH;
   if (prow && src) {
@@ -305,7 +308,7 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
         c.text(hb.x + 1, hy, 'TAPE', { fg: t.dim, bg: hb.bg });
         c.textR(hb.x + 1, hy, hb.w - 2, tp.state === 'ok' || tp.fetchedAt !== null ? `geckoterminal · 20s poll${tp.stale || tp.state === 'error' ? ' · stale' : ''}` : panelCaption(tp, now, 'tape unavailable'), { fg: tp.state === 'error' && tp.fetchedAt === null ? t.warn : t.dim, bg: hb.bg });
         hy += 1;
-        hy += tradeTape(c, hb.x + 1, hy, hb.w - 2, hb.y + hb.h - hy, v.trades, now, { bg: hb.bg });
+        hy += tradeTape(c, hb.x + 1, hy, hb.w - 2, hb.y + hb.h - hy, v.trades, now, { bg: hb.bg, priceFmt: (p) => levelCell(priceModeOf(state), supplyRatio(v.price, v.mcap), p) }); // task-1537
       } else if (flow) {
         c.text(hb.x + 1, hy, 'BUY/SELL FLOW', { fg: t.dim, bg: hb.bg });
         c.textR(hb.x + 15, hy, hb.w - 16, flow.caption(v.mint, now), { fg: t.dim, bg: hb.bg });
@@ -319,7 +322,7 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
   }
   if (showAi) {
     // task-1473: in an auto mode (following an agent / AI scan) the panel is the BRAIN VIEW; otherwise the analyst
-    const facts = factsFromView(v, { top10: brainTop10, dev: brainDev, larpVerdict: state.larpByMint?.get(v.mint)?.verdict ?? null, price: shownPx });
+    const facts = factsFromView(v, { top10: brainTop10, dev: brainDev, larpVerdict: state.larpByMint?.get(v.mint)?.verdict ?? null, price: shownPx, fills: trades?.fills ?? null });
     const brain = brainFor(state, facts, isCalm(state.vfx), state.live?.scanMeterLabel?.() ?? '');
     if (brain) renderBrainPanel(c, mainW, top, aiW, bottom - top, brain.model, brain.opts);
     else analystPlaceholder(c, mainW, top, aiW, bottom - top, v, state);
@@ -373,8 +376,8 @@ function positionPanel(c: Canvas, x: number, y: number, w: number, r: HeldRow, k
   const uAmt = usd ? (r.unrealizedUsd !== null ? signedUsd(r.unrealizedUsd) : null) : (r.unrealizedSol !== null ? `${signedSol(r.unrealizedSol)} SOL` : null);
   cols.push({ label: 'UNREALIZED', value: uAmt === null ? dash : `${uAmt}${r.unrealizedPct !== null ? ` ${signedPctOf(r.unrealizedPct)}` : ''}`, st: { fg: pnlColor(r.unrealizedSol), bg, b: true }, prio: 0 });
   if (r.realizedSol !== 0) cols.push({ label: 'REALIZED', value: usd && r.realizedUsd !== null ? signedUsd(r.realizedUsd) : `${signedSol(r.realizedSol)} SOL`, st: { fg: pnlColor(r.realizedSol), bg }, prio: 2 });
-  if (r.stopUsd !== null) cols.push({ label: 'STOP', value: `${fmtPrice(r.stopUsd)}${r.stopDistPct !== null ? ` ${signedPctOf(r.stopDistPct)}` : ''}`, st: { fg: t.down, bg }, prio: 3 });
-  if (r.targetUsd !== null) cols.push({ label: 'TARGET', value: `${fmtPrice(r.targetUsd)}${r.targetDistPct !== null ? ` ${signedPctOf(r.targetDistPct)}` : ''}`, st: { fg: t.up, bg }, prio: 3 });
+  if (r.stopUsd !== null) cols.push({ label: 'STOP', value: `${levelCell(mode, supply, r.stopUsd)}${r.stopDistPct !== null ? ` ${signedPctOf(r.stopDistPct)}` : ''}`, st: { fg: t.down, bg }, prio: 3 });
+  if (r.targetUsd !== null) cols.push({ label: 'TARGET', value: `${levelCell(mode, supply, r.targetUsd)}${r.targetDistPct !== null ? ` ${signedPctOf(r.targetDistPct)}` : ''}`, st: { fg: t.up, bg }, prio: 3 });
   const gap = 3;
   const widthOf = (list: Col[]) => list.reduce((s, k) => s + Math.max(k.label.length, k.value.length) + gap, -gap);
   const inner = box.w - 2;

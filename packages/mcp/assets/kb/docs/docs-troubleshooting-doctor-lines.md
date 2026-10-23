@@ -31,6 +31,10 @@ date: 2026-10-16
 | `! Claude CLI: not found` | `claude` is not on PATH | only the analyst needs it: install Claude Code and run `claude` once to log in. Everything else works. |
 | `! Codex CLI: … not logged in` | the optional Codex engine is installed but logged out | `codex login`, or keep the analyst on Claude. |
 | `! Codex CLI: … older than 0.163.0` | the read-only lock needs a newer codex | `npm i -g @openai/codex@latest`. |
+| `! Ollama (local AI): no AI engine on this machine yet` | neither Claude Code, Codex nor a local model is set up | the free local way: install Ollama, `ollama pull qwen3:8b`, `dexterm ai engine ollama` (local model (https://dexterm.xyz/docs/ollama)). |
+| `! Ollama (local AI): not reachable` | you chose the local engine and Ollama is not running | open the Ollama app or run `ollama serve`. |
+| `! Ollama (local AI): … is not pulled` | the chosen model is not on this machine | `ollama pull <model>`. |
+| `! Ollama (local AI): … cannot call tools` / `… context` | the model is below the bar for your profile | `dexterm ai probe --json`; pull a stronger tool-capable model or lower the profile. |
 | `! Helius RPC: no key` | no key configured | optional. Holders and some safety fields show `needs key`; see configuration (https://dexterm.xyz/docs/configuration#the-optional-free-rpc-key). |
 | `✗ Data sources: unreachable …` | a required host did not answer | check your connection, VPN or firewall. If only some hosts fail they may be blocked on your network. `--fixtures` or `DEXTERM_OFFLINE=1` browse offline demo data. |
 | `! Data sources: … PumpPortal …` | only the new-pairs host is down | the rest works; new pairs may be blocked on your network. |

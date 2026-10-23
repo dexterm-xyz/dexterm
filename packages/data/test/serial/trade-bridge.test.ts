@@ -1,8 +1,8 @@
 // task-1310 T1 — the loopback wallet bridge + a FAKE-PHANTOM end-to-end (no funds, no network, no real
 // wallet). A scripted node "wallet" acts exactly where Phantom would: it reads the page the bridge
-// served, produces a REAL Ed25519 signature over the dexterm challenge (link) and echoes a signed-tx
-// blob (sign), and POSTs the result back. Proves: the full link + sign round trip, the Ed25519 proof
-// verifying, single-use token, Host/loopback gate, timeout, and replay refusal.
+// served, produces a REAL Ed25519 signature over the dexterm challenge (link), and POSTs the result back.
+// Proves: the full link round trip, the Ed25519 proof verifying, single-use token, Host/loopback gate,
+// timeout, and replay refusal. task-1571: the bridge only links (the transaction sign page is gone).
 // task-1424: a real loopback server raced against real timers, so the file runs in the serial lane. The
 // bridge lifetimes the requests must fit inside (was 300-400 ms) are 1.5 s: a loaded machine could spend
 // 300 ms on four loopback POSTs and close the server mid-test. Every asserted outcome is unchanged.
@@ -27,10 +27,6 @@ const originHeaders = (url: string) => ({ 'content-type': 'application/json', or
 function extractPre(html: string, id: string): string {
   const m = html.match(new RegExp(`<pre id="${id}">([\\s\\S]*?)</pre>`));
   return m ? m[1] : '';
-}
-function extractTx(html: string): string {
-  const m = html.match(/const TX=("([^"]*)")/);
-  return m ? JSON.parse(m[1]) as string : '';
 }
 
 /** Capture the URL the bridge opens, without actually acting on it — lets a test drive the server. */
@@ -61,23 +57,6 @@ laneTest('e2e LINK: fake Phantom connect + signMessage proof verifies, dexterm l
   assert.equal(res.publicKeyBase64, b64(kp.pub));
   assert.equal(res.provider, 'stub');
   assert.ok(res.roundTripMs >= 0);
-});
-
-laneTest('e2e SIGN: fake Phantom returns a signed tx over the loopback round trip', {}, async () => {
-  const unsigned = Buffer.from('an unsigned versioned transaction').toString('base64');
-  let seenTx = '';
-  const bridge = new WalletBridge({ timeoutMs: 4000, open: async (url) => {
-    const page = await (await fetch(url)).text();
-    seenTx = extractTx(page);
-    const t = new URL(url).searchParams.get('t');
-    // A real wallet signs; the fake echoes a 64-byte "signature" + the tx bytes as the "signed" tx.
-    const signed = Buffer.concat([Buffer.alloc(64, 7), Buffer.from(seenTx, 'base64')]).toString('base64');
-    await fetch(`${new URL(url).origin}/sign/result`, { method: 'POST', headers: originHeaders(url), body: JSON.stringify({ t, signedTx: signed, provider: 'stub' }) });
-  } });
-  const res = await bridge.signTransaction({ unsignedTxBase64: unsigned, label: 'buy USDC' });
-  assert.equal(seenTx, unsigned, 'the page carried the exact unsigned tx to the wallet');
-  assert.ok(res.signedTxBase64.length > 0);
-  assert.ok(Buffer.from(res.signedTxBase64, 'base64').subarray(64).equals(Buffer.from(unsigned, 'base64')), 'the signed tx wraps the original');
 });
 
 laneTest('REJECT: a tampered signature does not verify; the bridge does not resolve', {}, async () => {
@@ -211,10 +190,10 @@ laneTest('DEFECT 7 / R2 MED#3: `{"t":{"toString":1}}` and 200 fuzzed JSON bodies
   // task-1376: 203 sequential POSTs (each on a new connection: `Connection: close`) raced a 1.5 s bridge timeout on a
   // loaded machine, so the server closed mid-fuzz and a POST saw -1. The bridge now lives far longer than the fuzz
   // can take, and the test ends each exchange itself with the GENUINE wallet result instead of waiting for the timer.
-  for (const route of ['link', 'sign'] as const) {
+  for (const route of ['link'] as const) {
     const cap = urlCapture();
     const bridge = new WalletBridge({ timeoutMs: 60_000, open: cap.open });
-    const p = (route === 'link' ? bridge.link() : bridge.signTransaction({ unsignedTxBase64: 'AQID' })).then(() => 'resolved', (e: unknown) => (e instanceof Error ? e.message : String(e)));
+    const p = bridge.link().then(() => 'resolved', (e: unknown) => (e instanceof Error ? e.message : String(e)));
     const url = await cap.url;
     const origin = new URL(url).origin;
     const post = (body: string) => fetch(`${origin}/${route}/result`, { method: 'POST', headers: originHeaders(url), body }).then((r) => r.status, () => -1);
@@ -234,12 +213,7 @@ laneTest('DEFECT 7 / R2 MED#3: `{"t":{"toString":1}}` and 200 fuzzed JSON bodies
     const pending = Symbol('pending');
     assert.equal(await Promise.race([p, new Promise((r) => setTimeout(() => r(pending), 50))]), pending, `${route}: nothing fuzzed resolved the exchange`);
     // Close the bridge explicitly: the real wallet answer still resolves it (the fuzz neither resolved nor burnt it).
-    if (route === 'link') await fakePhantomLink(url, keypair());
-    else {
-      const t = new URL(url).searchParams.get('t');
-      const signed = Buffer.concat([Buffer.alloc(64, 7), Buffer.from('AQID', 'base64')]).toString('base64');
-      await fetch(`${origin}/sign/result`, { method: 'POST', headers: originHeaders(url), body: JSON.stringify({ t, signedTx: signed, provider: 'stub' }) });
-    }
+    await fakePhantomLink(url, keypair());
     assert.equal(await p, 'resolved', `${route}: the genuine result after the fuzz resolves and closes the bridge`);
   }
 });

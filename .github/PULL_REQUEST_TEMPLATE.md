@@ -4,7 +4,7 @@
 
 ## Safety boundaries
 
-- [ ] This change does not let dexterm hold a user's wallet key, sign or send without the user's keypress and wallet approval, bypass or move the signer's caps, give a model or agent a path to the signer, or add telemetry.
+- [ ] This change does not let dexterm hold, read or create a private key, build, sign or send a transaction, give a model, agent or chat a path to a real order, or add telemetry.
 - [ ] Untrusted text (token metadata, fetched pages, feeds) still goes through the prompt firewall.
 - [ ] No new third-party runtime dependency. (Dev tooling changes are listed below.)
 

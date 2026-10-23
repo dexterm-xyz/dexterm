@@ -67,6 +67,7 @@ keys:
   - ctrl+w o
   - ctrl+w d
   - ctrl+r
+  - Q
 actions:
   - quit
   - screen.screener
@@ -113,6 +114,7 @@ actions:
   - workspace.popups
   - workspace.default
   - screen.rules
+  - screen.autotrade
 tools:
   - get_dossier
   - kb_search
@@ -176,6 +178,7 @@ Keys on this screen:
   `^W o` — open workspace popups
   `^W d` — default workspace
   `^R` — rules
+  `Q` — autotrade (paper)
   `type` — ask a follow-up · ⏎ send · esc clear/back
   `c` — calm mode (effects off)
   `?` — this help

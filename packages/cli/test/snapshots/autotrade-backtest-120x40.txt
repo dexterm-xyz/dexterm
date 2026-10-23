@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER   backtesting scalp v1.0.0 on the last 14 days …
+╭─ BACKTEST · scalp · PAPER · recorded history, modelled fills ────────────────────────────────────────────────────────╮
+│ 17 trades · win rate 41.2% (95% 21.6–64.0%) · net -$3.09 (-0.3%)                                                     │
+│ max drawdown 5.2% · profit factor 0.97 · best +58.7% · worst -37.1%                                                  │
+│ stuck 0 · open at end 0 · candidates 17 · rugs 0 · cost back 0 · net without the best trade -$31.46                  │
+│ per entry -0.2% (bootstrap 95% -14.1% … +13.7%) · exit multiples P50 0.98× · P90 1.45× · max 1.59×                   │
+│ n < 20: read the counts, not the rates                                                                               │
+│ equity  ▇▇▇▇▆▇▇█▇▆▆▇▇▇▇▆▅▅▄▃▇▇▇▇▇▇▇▆▆▅▅▅▆▅▄▄▃▃▂▁▁▁▂▅▄▃▃▅▅▇▇▇▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇▇▆▆▆▆▇▇▇▆▅▄▄▃▄▂▄▆▅██▇▇                   │
+│                                                                                                                      │
+│ BY EXIT RULE                          BY PROFILE                            BY TRIGGER                               │
+│ stop                   4     -$61.95  scalp                 17      -$3.11  trigger:momentum      17      -$3.11     │
+│ time                   7     -$28.48                                                                                 │
+│ trail                  6     +$87.32                                                                                 │
+│                                                                                                                      │
+│ clamps fired: none                                                                                                   │
+│ refusals: precheck:per-coin-max-entries 36 · precheck:per-coin-cooldown 9 · precheck:loss-streak-cooldown 7 · prech… │
+│                                                                                                                      │
+│ ╭─ LIMITS (read before trusting any number) ───────────────────────────────────────────────────────────────────────╮ │
+│ │ · Price path = recorder snapshots (~2-min cadence while listed, written on >= 5% moves or every 30 min), not ca… │ │
+│ │ · Fills are modelled (constant-product impact on half the recorded liquidity + fee + slippage + network fee), n… │ │
+│ │ · Survivorship: only coins the app recorded (on a screen or in a feed) are in the tape; coins nobody saw are ab… │ │
+│ │ · Rugs: when liquidity falls under the exit floor the bag cannot be sold (stuck) and is valued at 0 unless liqu… │ │
+│ │ · Early entries look later than they are: a young pair enters the tape only once a feed lists it, and pairs tha… │ │
+│ │ · Narrative, followed-wallet, social and dev-sell signals are not in the recorded history, so those triggers an… │ │
+│ │ · Mechanical entries (no agent): a lockstep backtest has no agent latency and no agent judgement; agent backtes… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  tab  view   b  run again   w  sweep (held-out)   esc  back   q  quit

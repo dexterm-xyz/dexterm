@@ -36,9 +36,9 @@ test('kb: edit copies the bundled entry into ~/.dexterm, the user edit is in eff
     const entry = merged.entries.find((x) => x.id === 'lp-burn-vs-lock')!;
     assert.equal(entry.origin, 'user');
     assert.match(entry.body, /wait for the LP burn tx/);
-    assert.equal(merged.bundled, 17);
+    assert.equal(merged.bundled, 18);
     const l = io(env); await kbSkillCommand('kb', ['list'], l);
-    assert.match(l.out, /17 bundled · 1 user: 1 override, 0 new · 0 skipped/);
+    assert.match(l.out, /18 bundled · 1 user: 1 override, 0 new · 0 skipped/);
     assert.match(l.out, /lp-burn-vs-lock\s+user \(overrides bundled\)/);
     const p = io(env); await kbSkillCommand('kb', ['path', 'lp-burn-vs-lock'], p);
     assert.equal(p.out.trim(), file);
@@ -158,7 +158,7 @@ test('doctor: KB + skills line shows bundled/user/overridden counts and warns on
     };
     let c = (await runDoctor(base)).checks.find((x) => x.name === 'KB + skills')!;
     assert.equal(c.status, 'pass');
-    assert.match(c.detail, /KB 17 bundled · 0 user \(0 overridden, 0 new\) · skills 4 bundled · 0 user/);
+    assert.match(c.detail, /KB 18 bundled · 0 user \(0 overridden, 0 new\) · skills 4 bundled · 0 user/);
     await kbSkillCommand('kb', ['edit', 'glossary'], io(env, editWith((t) => t + '\nmore\n')));
     await kbSkillCommand('kb', ['new', 'my-notes'], io(env));
     fs.writeFileSync(path.join(dir, 'skills.md'), 'ignored: not in the skills dir');
@@ -166,7 +166,7 @@ test('doctor: KB + skills line shows bundled/user/overridden counts and warns on
     fs.writeFileSync(path.join(dir, 'skills', 'broken.md'), '---\nname: broken\n---\n');
     c = (await runDoctor(base)).checks.find((x) => x.name === 'KB + skills')!;
     assert.equal(c.status, 'warn');
-    assert.match(c.detail, /KB 17 bundled · 2 user \(1 overridden, 1 new\)/);
+    assert.match(c.detail, /KB 18 bundled · 2 user \(1 overridden, 1 new\)/);
     assert.match(c.detail, /skipped skill broken/);
     assert.match(c.fix!, /dexterm skill check/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }

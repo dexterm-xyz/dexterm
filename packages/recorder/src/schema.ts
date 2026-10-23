@@ -12,8 +12,12 @@
 //   - `mints` is a per-mint summary the sweep scheduler reads instead of scanning snapshots.
 //   - feed_members is keyed on (t, feed, rank): the refresh tick is the run.
 //   - chain_events and verdicts are created here (one schema owner) but written by R-02 / L-01.
+//
+// v2 (task-1504, AUTOTRADE-SPEC §3): `autotrade_ticks` (position-grade samples every 5–10 s for the few coins
+// that are watched, open, a candidate or held; written by the tick lane in ticks.ts) and `autotrade_candles_1m`
+// (1-minute OHLC built from those samples). Both are additive: a v1 file gains the two tables on open.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const HORIZONS_SEC = [3600, 7200, 21600, 86400, 259200] as const;
 export type HorizonSec = (typeof HORIZONS_SEC)[number];
@@ -147,4 +151,33 @@ CREATE TABLE IF NOT EXISTS creators (
   created_at  INTEGER                    -- the coin's creation time when the source gave one
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS creators_creator ON creators (creator, first_t);
+
+-- task-1504 (AUTOTRADE-SPEC §3): position-grade ticks. One row per (mint, poll) for focus coins, written
+-- every sample (no change detection), from DexScreener tokens/v1 batches. price_usd NULL = the poll got no
+-- pair back for the mint (pool gone or not indexed): a held coin's rug shows up here as NULL rows.
+CREATE TABLE IF NOT EXISTS autotrade_ticks (
+  mint            TEXT NOT NULL,
+  t               INTEGER NOT NULL,          -- unix ms the answer was fetched
+  role            TEXT NOT NULL,             -- why it was polled: 'held' | 'open' | 'candidate' | 'watch'
+  price_usd REAL, liquidity_usd REAL, mcap REAL, fdv REAL,
+  vol_m5 REAL, vol_h1 REAL,
+  buys_m5 INTEGER, sells_m5 INTEGER,
+  chg_m5 REAL, chg_h1 REAL,
+  pair_address    TEXT,
+  pair_created_at INTEGER,
+  PRIMARY KEY (mint, t)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS autotrade_ticks_t ON autotrade_ticks (t);
+
+-- 1-minute candles for the same coins, built from the ticks (sampled: high/low are of the 5–10 s samples,
+-- not of every trade). t = the minute's start; n = samples in the minute.
+CREATE TABLE IF NOT EXISTS autotrade_candles_1m (
+  mint  TEXT NOT NULL,
+  t     INTEGER NOT NULL,
+  o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL,
+  liq_c REAL, mcap_c REAL,
+  n     INTEGER NOT NULL,
+  PRIMARY KEY (mint, t)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS autotrade_candles_1m_t ON autotrade_candles_1m (t);
 `;

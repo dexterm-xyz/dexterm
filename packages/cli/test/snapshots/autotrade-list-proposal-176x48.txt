@@ -1,0 +1,48 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst          strategies · recorded history · paper runner status   SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER
+╭─ STRATEGIES · 6 (6 presets, 0 yours) ────────────────────────────────────────────── paper only · your files: ~/.dexterm/strategies · presets are read-only (d makes a copy) ─╮
+│    STRATEGY              SOURCE  MODE   VERSION  HASH              PROFILES                                                      LAST BACKTEST · net · dd · n                │
+│▎   moonbag               preset  paper  v1.0.0   67fc4c95f08620eb  moonbag                                                       not backtested                              │
+│    runner                preset  paper  v1.0.0   82b98b1cd31f6699  runner swing                                                  not backtested                              │
+│    sample-dip-ladder     preset  paper  v1.0.0   607ba6bf86cf82a9  dip-trail swing                                               not backtested                              │
+│    scalp                 preset  paper  v1.0.0   70d65ef11ab72be0  scalp swing                                                   not backtested                              │
+│    swing                 preset  paper  v1.0.0   be171962d0568f46  swing runner scalp                                            not backtested                              │
+│    yolo ⚠                preset  paper  v1.0.0   f7857ca3bacffb77  yolo                                                          not backtested                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+│                                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ moonbag · Moonbag (early entry, free bag) ────────────────────────────────────────────────────────╮╭─ PROPOSALS FROM CHAT · 1 ── o reviews · applied only by your keypress ─╮
+│ screen    liq >= 20K vol5m >= 3K !flag:mint !flag:freeze                                           ││ scalp aaaaaaaaaaaaaaaa → bbbbbbbbbbbbbbbb                       LOOSER │
+│ age       0–2 h · momentum · decide agent                                                          ││  - /exits/profiles/0/trailingStop/trailPct 15                          │
+│ sizing    pct 2% · cap 3% / $50 · book $1000                                                       ││  + /exits/profiles/0/trailingStop/trailPct 25                          │
+│ risk      3 open · 10% exposure · day halt −10% · dd ½ at 25%, halt 40% · 8/day                    ││  ✓ valid · faster exits                                                │
+│ exits ●   moonbag: no stop ┤ ── entry ── +100% cost back (≤60%) · bag trail 55% · hold ≤ 7d        ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+│                                                                                                    ││                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+  tab  view   ⏎/e  edit   n  new   d  copy   c  compare   b  backtest   w  sweep   x/i  export/import   o  chat proposal   r  runner   esc  back   q  quit

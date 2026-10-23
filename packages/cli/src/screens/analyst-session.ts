@@ -15,6 +15,8 @@ export interface ResolvedResultRow {
 
 export interface AnalystRenderOpts {
   frame: number;
+  /** task-1537: the results table leads with MCAP (the default basis); 'price' keeps PRICE first. */
+  priceMode?: 'price' | 'mcap';
   code: string;
   calm: boolean;
   /** Extra context chips (e.g. holders:20, rugcheck). */
@@ -54,7 +56,7 @@ export function renderAnalystSession(c: Canvas, x: number, y: number, w: number,
   // Narrow panels (token screen) drop the model so cost · latency · tools still fits beside the title.
   const full = s.status === 'error' ? 'analyst unavailable' : s.footer;
   // 0.1.5: a codex conversation says so in the title; claude panels keep the original default.
-  const title = opts.title ?? (s.engine === 'codex' ? '✦ ANALYST · codex' : '✦ ANALYST · claude');
+  const title = opts.title ?? (s.engine === 'codex' ? '✦ ANALYST · codex' : s.engine === 'ollama' ? '✦ ANALYST · ollama' : '✦ ANALYST · claude');
   const caption = title.length + full.length + 10 <= w ? full : full.split(' · ').slice(0, 3).join(' · ');
   const capFg = s.status === 'error' ? t.warn : t.dim;
   const box = c.box(x, y, w, h, { title, titleFg: t.ai, caption, captionFg: capFg, border: bc });
@@ -200,7 +202,7 @@ export function renderAnalystSession(c: Canvas, x: number, y: number, w: number,
   // mcap/age + the analyst's one-line reason), navigable with ↑↓ and ⏎-to-jump. The numbers come from
   // live data (resolved by the caller from the app's data layer, never from the model's text).
   if (opts.results?.length && cy < inputY - 1) {
-    cy = renderResultsTable(c, box, bg, cy, inputY, inner, opts.results, opts.resultsCursor ?? 0, opts.resultsActive ?? false);
+    cy = renderResultsTable(c, box, bg, cy, inputY, inner, opts.results, opts.resultsCursor ?? 0, opts.resultsActive ?? false, opts.priceMode !== 'price');
   }
   if (s.candidates.length && cy < inputY - 1) {
     cy += 1;
@@ -261,14 +263,17 @@ function fmtAge(min: number | null): string {
 function renderResultsTable(
   c: Canvas, box: { x: number; y: number; w: number; h: number; bg: string }, bg: string,
   startY: number, inputY: number, inner: number,
-  rows: ResolvedResultRow[], cursor: number, active: boolean,
+  rows: ResolvedResultRow[], cursor: number, active: boolean, mcapFirst = true,
 ): number {
   const t = c.theme;
   let cy = startY + 1;
   if (cy >= inputY - 1) return cy;
   // Column plan: [symbol, price, 24h, liq, vol, mcap, age] then the reason fills the rest. Drop from
   // the right as width shrinks so a narrow panel still shows symbol + price + change + a reason.
-  const full: Array<[string, number]> = [['SYMBOL', 10], ['PRICE', 9], ['24H', 8], ['LIQ', 8], ['VOL', 8], ['MCAP', 8], ['AGE', 5]];
+  // task-1537: in the market-cap basis MCAP takes PRICE's slot (the headline number) and PRICE moves to MCAP's
+  const full: Array<[string, number]> = mcapFirst
+    ? [['SYMBOL', 10], ['MCAP', 9], ['24H', 8], ['LIQ', 8], ['VOL', 8], ['PRICE', 8], ['AGE', 5]]
+    : [['SYMBOL', 10], ['PRICE', 9], ['24H', 8], ['LIQ', 8], ['VOL', 8], ['MCAP', 8], ['AGE', 5]];
   let cols = full.slice();
   // keep trimming trailing columns until the header + a minimal reason (12) fits
   while (cols.length > 3 && cols.reduce((a, [, w]) => a + w + 1, 0) + 12 > inner - 2) cols.pop();

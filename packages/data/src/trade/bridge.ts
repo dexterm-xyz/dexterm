@@ -7,9 +7,7 @@
 // Security posture (mirrors research/popup-host/server/server.mjs §5):
 //   * listens on 127.0.0.1 only; never 0.0.0.0 / ::. task-1368 (g): on a FIXED preferred port
 //     (`WALLET_BRIDGE_PORT`, random only when it is busy) — Phantom remembers trust PER ORIGIN, and a
-//     random port made every page a brand-new origin: the sign page then called signTransaction on an
-//     origin Phantom had never connected and got 4100 ("not authorized"). The sign page now connects
-//     first and checks the account; the stable origin lets that connect resolve silently next time.
+//     random port made every page a brand-new origin, so Phantom asked to connect every time.
 //   * a single-use, random 32-byte TOKEN in the URL; a second use is refused (replay-proof).
 //   * strict Host check on every request; strict Origin + JSON content-type + 16 KB body cap on POST.
 //   * remote address must be loopback; anything else gets an empty 404.
@@ -24,7 +22,7 @@
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../clock.ts';
@@ -34,19 +32,6 @@ import { verifyEd25519 } from './tx-decode.ts';
 
 const TOKEN_TTL_MS = 120_000;
 
-/**
- * task-1328: the tx-sign page needs @solana/web3.js in the BROWSER (Phantom's signTransaction takes a
- * VersionedTransaction object). The vendored IIFE bundle (packages/data/vendor/solana-web3, MIT,
- * sha256-pinned by the tests) is inlined into the page under the CSP nonce — no CDN, no remote script.
- * Read lazily and cached; a missing file leaves the page in its "needs the shell" state (closed).
- */
-export const SOLANA_WEB3_VENDOR = new URL('../../vendor/solana-web3/index.iife.min.js', import.meta.url);
-let web3Bundle: string | null | undefined;
-export function solanaWeb3Bundle(): string | null {
-  if (web3Bundle !== undefined) return web3Bundle;
-  try { web3Bundle = readFileSync(SOLANA_WEB3_VENDOR, 'utf8'); } catch { web3Bundle = null; }
-  return web3Bundle;
-}
 const MAX_BODY = 16 * 1024;
 const LOOPBACK = new Set(['127.0.0.1', '::ffff:127.0.0.1', '::1']);
 
@@ -105,7 +90,7 @@ export interface WalletBridgeOptions {
 
 /**
  * The wallet bridge's preferred loopback port: `http://127.0.0.1:41291` is the ORIGIN Phantom stores
- * its trust for (link and sign share it). Unassigned by IANA; the X login callback is 41287.
+ * its trust for. Unassigned by IANA; the X login callback is 41287.
  */
 export const WALLET_BRIDGE_PORT = 41291;
 
@@ -113,13 +98,6 @@ export interface LinkResult {
   /** base58 Solana address — the only thing dexterm persists. */
   publicKey: string;
   publicKeyBase64: string;
-  provider: string;
-  roundTripMs: number;
-}
-
-export interface SignResult {
-  /** The signed transaction the wallet returned (base64, ready to submit). */
-  signedTxBase64: string;
   provider: string;
   roundTripMs: number;
 }
@@ -239,7 +217,7 @@ function oneShot<T>(args: {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
         res.end(JSON.stringify({ ok: out.error === undefined, error: out.error ?? null }));
         // Resolve (and close every connection) only once the page has its answer: `finish` now tears
-        // the socket down, and the page's "✓ signed" line reads this response.
+        // the socket down, and the page's "✓ linked" line reads this response.
         if (out.error === undefined) {
           const done = () => finish(() => resolve(out.value as T));
           res.once('finish', done); res.once('close', done);
@@ -362,34 +340,6 @@ export class WalletBridge {
     });
   }
 
-  /**
-   * Hand an unsigned transaction to the wallet for signing and resolve with the signed bytes. dexterm
-   * never holds a key; the browser approval IS the physical confirmation (SPEC §6.5). The unsigned tx
-   * is the plan the user already confirmed; a popup-host lane can swap the page for a chromeless window.
-   */
-  signTransaction(args: { unsignedTxBase64: string; expectPublicKey?: string; label?: string }): Promise<SignResult> {
-    const started = this.clock.now();
-    return oneShot<SignResult>({
-      route: 'sign',
-      open: this.open,
-      timeoutMs: this.timeoutMs,
-      clock: this.clock,
-      preferredPort: this.port,
-      page: ({ port, nonce: cspNonce, portNote }) => signPage(port, cspNonce, args.unsignedTxBase64, args.expectPublicKey ?? '', args.label ?? 'swap', portNote),
-      onResult: (body) => {
-        // task-1368 (g): the page reports which account signed (base58). When the caller named the
-        // linked wallet, a different account is refused HERE too — the page's own check is UX, this is
-        // the gate (the signer also verifies the signature over the bytes; this is belt and braces).
-        const account = str(body.publicKey);
-        if (args.expectPublicKey && account !== '' && account !== args.expectPublicKey) return { error: `signed by a different wallet account (${sanitize(account, 8)}…), not the linked wallet` };
-        const signed = str(body.signedTx);
-        if (signed.length === 0) return { error: 'wallet returned no signed transaction' };
-        if (signed.length > 4096) return { error: 'signed transaction too large' };
-        if (!/^[A-Za-z0-9+/=]+$/.test(signed)) return { error: 'signed transaction is not base64' };
-        return { value: { signedTxBase64: signed, provider: sanitize(body.provider ?? 'unknown', 24), roundTripMs: this.clock.now() - started } };
-      },
-    });
-  }
 }
 
 // --------------------------------------------------------------------------- inlined browser pages
@@ -425,51 +375,5 @@ if(!(sig instanceof Uint8Array)||sig.length!==64)throw new Error('no 64-byte sig
 const rp=await fetch('http://127.0.0.1:'+PORT+'/link/result',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({t:${JSON.stringify('__T__')},publicKey:b64(pkb),signature:b64(sig),challenge:challenge,provider:name})});
 const j=await rp.json();if(j.ok){$('r').textContent='✓ linked. Return to dexterm.';$('r').className='ok';$('s').textContent='done';}else{$('r').textContent='✗ '+(j.error||'rejected');$('r').className='bad';$('go').disabled=false;}}
 catch(e){$('r').textContent='✗ '+(e&&e.message||e);$('r').className='bad';$('s').textContent='';$('go').disabled=false;}}
-$('go').addEventListener('click',run);poll(0);})();</script></body></html>`.replace('"__T__"', `new URLSearchParams(location.search).get('t')`);
-}
-
-function signPage(port: number, nonce: string, unsignedTxB64: string, expectPk: string, label: string, portNote = ''): string {
-  const web3 = solanaWeb3Bundle();
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>dexterm · sign</title>
-<style nonce="${nonce}">body{font:14px/1.5 -apple-system,system-ui,sans-serif;background:#07090d;color:#d7dbe0;margin:0;padding:2rem}
-.card{max-width:640px;margin:auto;background:#0d1016;border:1px solid #1d2430;border-radius:12px;padding:1.5rem}
-h1{font-size:1.1rem;color:#7fd1ff}button{font:inherit;background:#531;border:1px solid #a62;color:#fec;border-radius:8px;padding:.5rem 1rem;cursor:pointer}
-.ok{color:#5de28a}.bad{color:#ff6b6b}.warn{color:#e2b85d}.muted{color:#7a828e}code{word-break:break-all}</style></head><body><div class="card">
-<h1>✦ dexterm · approve ${esc(label)}</h1>
-<p>Your terminal already showed you this trade and you pressed confirm. Approve it in your wallet to sign. dexterm submits the signed transaction; it never holds your key.</p>
-${portNote ? `<p class="warn">${esc(portNote)}</p>\n` : ''}<p id="p" class="warn">looking for a wallet…</p>
-<p><button id="go" disabled>Approve in wallet</button> <span id="s"></span></p>
-<p id="r"></p>
-<p class="muted">linked wallet: <code>${esc(expectPk || 'any')}</code> · connected: <code id="a">–</code></p></div>
-${web3 ? `<script nonce="${nonce}">${web3}\n;window.dexSolana=solanaWeb3;</script>` : ''}
-<script nonce="${nonce}">(()=>{'use strict';const $=i=>document.getElementById(i),PORT=${port},EXPECT=${JSON.stringify(expectPk)};
-const TX=${JSON.stringify(unsignedTxB64)};const b64=u=>btoa(String.fromCharCode.apply(null,u));
-const short=k=>k&&k.length>12?k.slice(0,4)+'…'+k.slice(-4):String(k||'?');
-// task-1368 (g): Phantom's error codes in plain English. 4100 = this origin was never connected (or the
-// user revoked it): the fix is the Connect prompt, not a retry of the signature.
-function explain(e){const code=e&&(e.code!==undefined?e.code:(e.error&&e.error.code));const msg=(e&&e.message)||String(e);
-if(code===4100)return 'Phantom has not authorized this page (4100). Press Approve again and accept the Connect prompt; if none appears, open Phantom → Settings → Trusted apps, allow 127.0.0.1:'+PORT+', then confirm the trade again in dexterm. Nothing was signed.';
-if(code===4001)return 'you rejected the request in Phantom; nothing was signed. Confirm again in dexterm to retry.';
-if(code===-32603)return 'Phantom could not process the transaction (internal error): '+msg;
-return msg;}
-function bytes(b){const s=atob(b),a=new Uint8Array(s.length);for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i);return a;}
-let prov=null,name='none';function find(){if(window.phantom&&window.phantom.solana&&window.phantom.solana.isPhantom)return[window.phantom.solana,'phantom'];if(window.solana&&window.solana.isPhantom)return[window.solana,'phantom'];if(window.solana)return[window.solana,window.solana.isStubWallet?'stub':'solana'];return[null,'none'];}
-function poll(n){[prov,name]=find();if(prov){$('p').textContent='wallet: '+name;$('p').className='ok';$('go').disabled=false;if(name==='stub')run();return;}if(n>40){$('p').textContent='No Solana wallet found.';$('p').className='bad';return;}setTimeout(()=>poll(n+1),100);}
-async function run(){$('go').disabled=true;$('s').textContent='connecting to your wallet…';try{
-// Real Phantom needs @solana/web3.js on the page to rebuild the VersionedTransaction before signTransaction().
-// The dexterm wallet shell (popup-host lane) provides it as window.dexSolana; see scripts/ for the manual path.
-if(!window.dexSolana||!window.dexSolana.VersionedTransaction)throw new Error('tx signing needs the dexterm wallet shell (window.dexSolana). See scripts/phantom-devnet.md.');
-// task-1368 (g): CONNECT FIRST. signTransaction() on an origin Phantom has not connected is a 4100, so
-// the page used to fail on every fresh (random-port) origin. connect() resolves silently on a trusted
-// origin and prompts once on a new one; then the connected account must be the wallet dexterm linked.
-const res=await prov.connect();const pk=(res&&res.publicKey)||prov.publicKey;const account=pk?(typeof pk.toBase58==='function'?pk.toBase58():String(pk)):'';
-if(!account)throw new Error('the wallet connected without a public key; nothing was signed');$('a').textContent=account;
-if(EXPECT&&account!==EXPECT)throw new Error('Phantom is on account '+short(account)+' but dexterm linked '+short(EXPECT)+'. Switch accounts in Phantom and press Approve again, or re-link with "dexterm wallet link". Nothing was signed.');
-$('s').textContent='approve in your wallet…';
-const vt=window.dexSolana.VersionedTransaction.deserialize(bytes(TX));const signed=await prov.signTransaction(vt);
-const out=b64(signed.serialize());const rp=await fetch('http://127.0.0.1:'+PORT+'/sign/result',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({t:${JSON.stringify('__T__')},signedTx:out,provider:name,publicKey:account})});
-const j=await rp.json();if(j.ok){$('r').textContent='✓ signed. Return to dexterm.';$('r').className='ok';$('s').textContent='done';}else{$('r').textContent='✗ '+(j.error||'rejected');$('r').className='bad';$('go').disabled=false;}}
-catch(e){$('r').textContent='✗ '+explain(e);$('r').className='bad';$('s').textContent='';$('go').disabled=false;}}
 $('go').addEventListener('click',run);poll(0);})();</script></body></html>`.replace('"__T__"', `new URLSearchParams(location.search).get('t')`);
 }

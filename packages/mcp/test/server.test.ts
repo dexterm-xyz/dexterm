@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { selfTest, firewall, TOOLS, McpTools } from '../src/index.ts';
 import { pageSignals, type SafeFetchResult } from '@dexterm/data';
 
-test('selfTest reports the bundled KB (17 entries), cases and the tool surface', () => {
+test('selfTest reports the bundled KB (18 entries), cases and the tool surface', () => {
   const s = selfTest();
-  assert.equal(s.kbEntries, 17);
+  assert.equal(s.kbEntries, 18);
   assert.equal(s.tools, TOOLS.length);
   assert.ok((s.cases as number) >= 10);
   assert.ok((s.kbIds as string[]).includes('common-rug-patterns'));

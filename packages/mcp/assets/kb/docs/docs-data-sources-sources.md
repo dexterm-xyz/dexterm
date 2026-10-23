@@ -35,6 +35,7 @@ date: 2026-10-16
 | security checks | RugCheck + GoPlus | none | one may be `unavailable`, the other covers |
 | new pairs | PumpPortal `subscribeNewToken` + `subscribeMigration`, Jupiter `recent` poll, RugCheck `new_tokens` | Helius: per-curve bonding % | rows from the poll; bonding is a create-time estimate |
 | watchlist prices | DexScreener + Jupiter, persisted in SQLite | Jupiter free key: higher rate | fully keyless |
+| autotrade ticks and 1m candles (opt-in, `dexterm record run --focus-ticks`) | DexScreener `tokens/v1`, batches of 30 coins per call | none | backtests use the coarser recorder snapshots only |
 | fast-lane live price | public RPC WebSocket `accountSubscribe` on the pump.fun bonding curve, price computed on-chain | free Helius key: lower latency, higher limits (used first) | the polled price (POLL badge) |
 | paper quotes | Jupiter `swap/v1/quote` (quote only; no build, no execute) | Jupiter free key: lower latency | fully keyless |
 | product vetting | the token's own site, RDAP, the GitHub API | none | a claim stays unverifiable |

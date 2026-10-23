@@ -30,4 +30,4 @@ date: 2026-10-16
 
 **Quitting takes long.** It should take under a second. If it does not, report it with `--verbose` output; the shutdown signal cancels every pending wait.
 
-**Something that looks like dexterm asks for a seed phrase or a wallet connection.** It is not dexterm. The app never asks for keys; see security and trust (https://dexterm.xyz/trust/).
+**Something that looks like dexterm asks for a seed phrase or a private key.** It is not dexterm. The app never asks for keys and never asks you to sign a transaction; see security and trust (https://dexterm.xyz/trust/).

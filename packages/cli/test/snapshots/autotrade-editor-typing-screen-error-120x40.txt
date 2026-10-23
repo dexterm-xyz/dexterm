@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER
+╭─ my-scalp · v1.0.0 · PAPER · ✗ 1 problem ────────────────────────────╮╭─ VALIDATION · with the value you are typing ─╮
+│ ENTRY ─────────────────────────────────────────────────────────────  ││ ✗ /entry/screen unknown field "vol5x" (try   │
+│▎ screen                        liq >= 30K vol5m >= 5K !flag:mint !…  ││   vol24, vol6h, vol1h, vol5m, liq, mcap,     │
+│  ageHours/min                  0                                     ││   fdv, …) (column 48)                        │
+│  ageHours/max                  6                                     ││ ! /exits/profiles scalp may re-profile to    │
+│  safety/maxTop10Pct            35                                    ││   runner, which this strategy does not       │
+│  safety/maxDevPct              5                                     ││   include (that edge is unused)              │
+│  safety/requireNoMintAuthority true                                  ││ ! /exits/profiles swing may re-profile to    │
+│  safety/requireNoFreezeAuthor… true                                  ││   runner, which this strategy does not       │
+│  safety/maxMcapSplitX          5                                     ││   include (that edge is unused)              │
+│  safety/youngVertical/maxAgeH… 1                                     ││                                              │
+│  safety/youngVertical/maxH1Pct 250                                   ││                                              │
+│  safety/unknownHolders         reject                                ││                                              │
+│  triggers/0/kind               momentum                              ││                                              │
+│  triggers/0/m5MinPct           3                                     ││                                              │
+│  triggers/0/buySellMin         1.2                                   │╰──────────────────────────────────────────────╯
+│  triggerMode                   any                                   │╭─ EXIT PROFILES ──────────────────────────────╮
+│  decide                        agent                                 ││ ● Scalp (quick play)                         │
+│  candidateTtlSec               300                                   ││   stop -25% ┤ ── entry ── +30% ½ ── +60% ¼   │
+│ EXITS ─────────────────────────────────────────────────────────────  ││   trail 15% after +20% · 20m exit            │
+│  default                       scalp                                 ││   Swing                                      │
+│  profiles/0                    builtin:scalp                         ││   no stop ┤ ── entry ── +50% ⅓ ── +100% ⅓    │
+│  profiles/1                    builtin:swing                         ││   trail 25% after +40% · 90m review          │
+│ RISK ──────────────────────────────────────────────────────────────  ││                                              │
+│  perTrade/maxLossPctOfBankroll 10                                    ││                                              │
+│  perTrade/assumedLossPctNoStop 100                                   ││                                              │
+│  dailyLossHaltPct              10                                    ││                                              │
+│  drawdown/sizeDownAtPct        15                                    ││                                              │
+│  drawdown/sizeDownMult         0.5                                   ││                                              │
+│  drawdown/recoverBelowPct      8                                     ││                                              │
+│  drawdown/haltAtPct            25                                    ││                                              │
+╰──────────────────────────────────────────────────────────────────────╯│                                              │
+╭─ set /entry/screen ──────────────────────────────────────────────────╮│                                              │
+│ liq >= 30K vol5m >= 5K !flag:mint !flag:freeze vol5x >= 5K█          ││                                              │
+│                                                ^ ✗ unknown field "…  ││                                              │
+╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+  ⏎  set   esc  cancel   ctrl+u  clear

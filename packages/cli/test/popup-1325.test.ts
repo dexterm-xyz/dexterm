@@ -322,7 +322,7 @@ test('position on the chart comes from the REAL task-1323 selector (PositionsLiv
   const mgr = (o: PopupManagerOptions): PopupManager => { onEvent = o.onEvent; return { native: true, reason: 'x', hotkeyRegistered: false, port: 1, async open(req) { pushes.push(req.data as ChartVM); return { id: 'p1', kind: 'chart', native: true, setData: (d) => pushes.push(d as ChartVM), close() {}, show() {}, hide() {}, focus() {}, alwaysOnTop() {} }; }, setData() {}, close() {}, async shutdown() {} }; };
   const tp = new TokenPopups({
     theme: THEMES.cyberspace, env: { DEXTERM_HOME: '/nonexistent-1325' }, createManager: mgr, now: () => now,
-    source: { series: () => null, livePrice: () => null, feed: () => 'POLL', positions, fills: (m) => wallet.trades(500).filter((t) => t.mint === m), solUsd: () => 150 },
+    source: { series: () => null, livePrice: () => null, feed: () => 'POLL', positions, fills: (m) => wallet.trades(500).filter((t) => t.mint === m), solUsd: () => 150, chartAxis: () => 'price' }, // task-1537: pins the price row (mcap cells: display-1366)
   });
   const v = emptyView({ mint: PMINT, symbol: 'POS', name: 'pos', launchpad: 'pump.fun' }, '1h');
   v.price = 0.04; // USD per token

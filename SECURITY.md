@@ -1,6 +1,6 @@
 # Security policy
 
-dexterm is a local terminal app that reads public market data and can trade without custody: trading is simulated (paper) by default, a real trade is signed by your own wallet, your wallet's keys never enter dexterm, and the caps are enforced in a separate signer process. It also opens WebSockets, runs loopback HTTP servers for the chart window and the wallet bridge, fetches token websites on request, and feeds untrusted text to a language model. Bugs in any of that matter to us.
+dexterm is a local terminal app that reads public market data and never holds a key and never signs: trading in dexterm is simulated (paper), and live trading happens in a Telegram trading bot of your choice, outside dexterm. It can talk to your own Telegram bot (alerts, run control, paper approvals). It also opens WebSockets, runs loopback HTTP servers for the chart window and the wallet-link page, fetches token websites on request, and feeds untrusted text to a language model. Bugs in any of that matter to us.
 
 ## Report a vulnerability
 
@@ -27,10 +27,10 @@ We do not currently pay bounties. We will never contact you first by DM about a 
 In scope:
 
 - anything that lets a remote party read or change local state, or run code;
-- anything that gets a transaction signed or sent without your keypress (and, for a Phantom trade, your wallet approval), gets one past the signer's caps, or reads your linked wallet's key (dexterm should never see it) or the devnet fast-wallet key;
-- the signer process: its caps and ledgers, its authenticated pipe to the terminal, the transaction checks it runs before anything is signed;
-- the wallet bridge: the one-shot loopback pages, their tokens, Host/Origin checks and CSP;
-- any path from a model, voice command, agent or token metadata to arming a plan, raising a cap or reaching the signer;
+- anything that makes dexterm build, sign or send a transaction, or hold, read or ask for a private key or seed phrase (it should have no code that can);
+- the wallet link: the one-shot loopback page, its token, Host/Origin checks and CSP, and the signed-message check;
+- the Telegram connector: the bot token (keychain only, redacted everywhere), pairing, the allow-listed chat, the command list, and anything that lets chat make a run less safe or reach anything but the paper book;
+- any path from a model, voice command, agent, chat message or token metadata to arming a plan or raising a limit;
 - the loopback chart server and the native shell: ticket, token, Host/Origin checks, CSP, navigation pinning;
 - the prompt firewall: untrusted text (token metadata, fetched pages, feeds) escaping its wrapping or steering the analyst into actions;
 - the SSRF-safe page fetcher (private ranges, redirects, content types, size caps);

@@ -24,7 +24,7 @@ sources:
 date: 2026-10-16
 ---
 
-The first launch shows the full glitch boot and then a one-screen welcome card: what dexterm is, the keys that get you around, and the safety stance (non-custodial, your keys never enter dexterm, trading is PAPER by default, not financial advice). Press any key to enter the live screener. Later launches boot in about a second.
+The first launch shows the full glitch boot and then a one-screen welcome card: what dexterm is, the keys that get you around, and the safety stance (non-custodial, no wallet and no keys, trading is PAPER, not financial advice). Press any key to enter the live screener. Later launches boot in about a second.
 
 - `?` on any screen shows every key for that screen.
 - `q` quits. The terminal is always restored, even after a crash or a signal.

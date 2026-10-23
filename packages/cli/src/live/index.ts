@@ -3,10 +3,10 @@
 // registry and (when the Helius key is configured) the credit meter. Screens stay pure renderers: the
 // context owns the loaders and tells the UI loop when to redraw.
 import {
-  PumpPortalClient, PUMPPORTAL_WS, WatchlistStore, PaperWallet, PaperExecutor, FastLane, WalletLinkStore, WalletBridge, KillSwitch, CapLedger, SignerClient,
-  defaultLiveLedgerPath, defaultLinkPath, defaultPanicPath, defaultCapLedgerPath, shortPubkey,
+  PumpPortalClient, PUMPPORTAL_WS, WatchlistStore, PaperWallet, PaperExecutor, FastLane, WalletLinkStore, WalletBridge, KillSwitch,
+  defaultLinkPath, defaultPanicPath, shortPubkey,
   type DataLayer, type FixtureStore, type StreamRecording, type RpcConfig, type CreditMeter, type WsFactory, type TradeExecutor, type FastLaneEndpoint, type Lane, type PricePoint, type LinkedWallet,
-  type SignerPort, type BridgeOpener,
+  type BridgeOpener,
 } from '@dexterm/data';
 import type { WalletCommand } from '../wallet-command.ts';
 import type { CandleInterval } from '@dexterm/data';
@@ -17,17 +17,18 @@ import type { Side } from '@dexterm/data';
 import { TokenLive, INTERVALS, type TokenView, type TokenSeed } from './token.ts';
 import { NewPairsLive, type NewPairRow, type NewPairsLiveOptions } from './newpairs.ts';
 import { WatchlistLive, type WatchCandidate } from './watchlist.ts';
-import { TradeTicketLive, PositionsLive, LivePositions, CombinedPositions, POSITIONS_REFRESH_MS } from './trade.ts';
+import { TradeTicketLive, PositionsLive, POSITIONS_REFRESH_MS } from './trade.ts';
 import { IntelLive } from './intel.ts';
 import { LiveSignalsLive, type SignalInputs } from './signals.ts';
 import { CopyLive } from './copy.ts';
+import { ChartFills } from './chart-fills.ts';
 import type { SettledTx } from '@dexterm/tui';
 import type { LiveSignal } from '@dexterm/data';
 
 export { TokenLive, INTERVALS, panelCaption, emptyView, type TokenView, type TokenSeed, type PanelStatus } from './token.ts';
 export { NewPairsLive, latencyStats, percentile, RECENT_POLL_MS, NEW_TOKENS_POLL_MS, ENRICH_POLL_MS, type NewPairRow, type NewPairsStatus, type LatencyStats } from './newpairs.ts';
 export { WatchlistLive, WATCH_REFRESH_MS, type WatchViewRow, type WatchCandidate } from './watchlist.ts';
-export { TradeTicketLive, PositionsLive, LivePositions, CombinedPositions, POSITIONS_REFRESH_MS } from './trade.ts';
+export { TradeTicketLive, PositionsLive, POSITIONS_REFRESH_MS } from './trade.ts';
 export { IntelLive, popupBubbleVM, unavailableText, INTEL_AUTOSCAN_DELAY_MS, type IntelEntry, type IntelScanSeed } from './intel.ts';
 export { LiveSignalsLive, buildObservation, SIGNALS_LOG_MAX, type SignalInputs } from './signals.ts';
 export { renderTokenLive } from './screens/token-live.ts';
@@ -74,18 +75,15 @@ export interface LiveContextOptions {
    * injected store). Tests inject the mock server's endpoints + a store under a temp dir; `off` disables it.
    */
   x?: { store?: XTokenStore; endpoints?: XEndpoints; transport?: XTransport; env?: NodeJS.ProcessEnv; off?: boolean; tokenPollMs?: number; kolPollMs?: number };
-  /**
-   * LIVE trading (task-1328): the argv the signer PROCESS is started with (the user's caps flags,
-   * forwarded once) and, for tests, a factory for the signer port / the bridge opener / file paths.
-   * Absent `trade` = paper only.
-   */
   /** task-1360 copy trading: test seams for the follow store path and a scripted history source. */
   copy?: { followsPath?: string | null; env?: NodeJS.ProcessEnv; history?: import('@dexterm/data/copy').HistorySource | null; pollMs?: number };
+  /**
+   * The wallet link (public key only, task-1571: dexterm holds no key and signs nothing): for tests, the bridge
+   * opener and the link / panic file paths.
+   */
   trade?: {
-    signerArgv?: string[];
-    createSigner?: () => SignerPort;
     open?: BridgeOpener;
-    paths?: { liveLedger?: string; link?: string; panic?: string; capLedger?: string };
+    paths?: { link?: string; panic?: string };
   };
 }
 
@@ -98,17 +96,14 @@ export class LiveContext {
   readonly watch: WatchlistLive;
   /** PAPER trading (task-1310): the simulated wallet, its executor and the two screens' bindings. */
   readonly wallet: PaperWallet;
-  /** The linked (non-custodial) wallet pubkey, or null. Shown in the status bar (T1). */
+  /** The linked wallet's PUBLIC key, or null. Shown in the status bar (display only; nothing signs with it). */
   linkedWallet: LinkedWallet | null = null;
   readonly executor: TradeExecutor;
   readonly positions: PositionsLive;
-  /** LIVE positions from the signer's ledger file (read-only); null when live trading is off for this run. */
-  readonly livePositions: LivePositions | null;
-  /** Paper + live behind the task-1323 PositionSource (token screen row, popup chart). */
-  readonly positionSource: CombinedPositions;
-  /** The signer process handle once started (lazily, on the first LIVE action). Never respawned. */
-  signer: SignerPort | null = null;
-  private signerFailed: string | null = null;
+  /** The paper ledger behind the task-1323 PositionSource (token screen row, popup chart). */
+  readonly positionSource: PositionsLive;
+  /** task-1483: every paper fill per mint (memoised 1 s) for the chart BUY/SELL markers. */
+  readonly chartFills: ChartFills;
   private readonly trade: NonNullable<LiveContextOptions['trade']> | null;
   private readonly linkStore: WalletLinkStore;
   ticket: TradeTicketLive | null = null;
@@ -129,8 +124,8 @@ export class LiveContext {
   /** task-1360 copy trading Tier 1: the follow store + wallet tracker (alerts on a followed wallet's buys/sells). */
   readonly copy: CopyLive;
   /**
-   * task-1340 trade moments: set by the UI loop; the ticket calls it once per SETTLED outcome (paper fill, live
-   * fill, refusal, failure) and never for a quote, plan or in-flight send. Effects + sound hang off this only.
+   * task-1340 trade moments: set by the UI loop; the ticket calls it once per SETTLED outcome (paper fill or
+   * failure) and never for a quote or an in-flight fill. Effects + sound hang off this only.
    */
   onSettled: (tx: SettledTx) => void = () => {};
   /**
@@ -233,12 +228,8 @@ export class LiveContext {
     this.linkedWallet = this.linkStore.get();
     this.executor = new PaperExecutor(this.wallet, { clock: dl.clock });
     this.positions = new PositionsLive(dl, this.wallet, { now: this.now, onChange: () => emit('positions') });
-    // task-1328: live positions read the signer's ledger file (read-only). Present whenever live trading
-    // is configured for the run, so a position booked by a previous run shows even before the signer starts.
-    this.livePositions = this.trade
-      ? new LivePositions(this.trade.paths?.liveLedger ?? defaultLiveLedgerPath(), { now: this.now, mark: (m) => this.positions.markOf(m), solUsd: () => this.positions.solUsd() ?? this.solUsd })
-      : null;
-    this.positionSource = new CombinedPositions(this.positions, this.livePositions);
+    this.positionSource = this.positions;
+    this.chartFills = new ChartFills({ paper: (n) => this.wallet.trades(n) }, this.now);
     this.intel = new IntelLive(dl, { now: this.now, onChange: () => { this.syncIntelRows(); this.observeSignals(); emit('intel'); }, isWatched: (mint) => this.watch.has(mint) });
     // task-1404: the live holder/rug signals engine. A fired signal sets a transient notice and redraws; the
     // token screen shows the recent signals, and the rules engine reads `signals.fields()` so each is an alert trigger.
@@ -247,37 +238,13 @@ export class LiveContext {
     this.copy = new CopyLive(opts.mode === 'live' ? dl : null, { onChange: (r) => emit(r), solUsd: () => this.solUsd, env: opts.copy?.env, followsPath: opts.copy?.followsPath, history: opts.copy?.history, pollMs: opts.copy?.pollMs });
   }
 
-  /** Open a trade ticket (PAPER by default; `L` flips it LIVE when a wallet is linked). Replaces any open ticket. */
-  openTicket(seed: { mint: string; symbol: string; name?: string; decimals?: number }, side: Side, mode: 'paper' | 'live' = 'paper'): TradeTicketLive {
-    const live = this.trade ? {
-      signer: () => this.ensureSigner(),
-      linked: () => this.linkedWallet,
-      onFill: () => { this.livePositions?.invalidate(); this.onChange('positions'); },
-    } : undefined;
+  /** Open a PAPER trade ticket. Replaces any open ticket. */
+  openTicket(seed: { mint: string; symbol: string; name?: string; decimals?: number }, side: Side): TradeTicketLive {
     const t = new TradeTicketLive(this.dl, this.wallet, this.executor, { mint: seed.mint, symbol: seed.symbol, decimals: seed.decimals, side, mode: 'paper' }, {
-      now: this.now, onChange: () => this.onChange('ticket'), live, onSettled: (tx) => this.onSettled(tx),
-      livePositionRaw: (mint) => { const p = this.livePositions?.positions().find((x) => x.mint === mint); return p?.tokensRaw ?? 0n; },
+      now: this.now, onChange: () => this.onChange('ticket'), onSettled: (tx) => this.onSettled(tx),
     });
     this.ticket = t;
-    if (mode === 'live') t.setMode('live');
     return t;
-  }
-
-  /**
-   * The signer process (task-1328), started on first use with the run's caps argv. A signer that
-   * failed to start or died is never respawned: LIVE stays off until dexterm restarts (fail closed).
-   */
-  ensureSigner(): SignerPort | null {
-    if (!this.trade || this.signerFailed) return this.signer;
-    if (!this.signer) {
-      try {
-        this.signer = this.trade.createSigner ? this.trade.createSigner() : new SignerClient({ argv: this.trade.signerArgv ?? [], log: this.onLog ? (l) => this.onLog?.(`  signer        ${l}\n`) : undefined });
-      } catch (e) {
-        this.signerFailed = e instanceof Error ? e.message : String(e);
-        return null;
-      }
-    }
-    return this.signer;
   }
 
   /** `/wallet …` typed in the app (task-1328). Returns the line to show. */
@@ -285,24 +252,19 @@ export class LiveContext {
     const paths = this.trade?.paths ?? {};
     switch (cmd) {
       case 'status': {
-        const linked = this.linkedWallet ? `linked: ${shortPubkey(this.linkedWallet.publicKey)}` : 'no wallet linked (/wallet link)';
+        const linked = this.linkedWallet ? `linked: ${shortPubkey(this.linkedWallet.publicKey)} (public key only)` : 'no wallet linked (/wallet link)';
         const ks = new KillSwitch(paths.panic ?? defaultPanicPath()).engaged();
-        const s = this.signer?.alive ? await this.signer.status().catch(() => null) : null;
-        if (s) {
-          const caps = s.caps;
-          return `${linked} · signer ${s.network.toUpperCase()} (${s.rpcHost}) · $${caps.perTradeUsd}/trade $${caps.dailyUsd}/day · spent $${s.spentTodayUsd.toFixed(2)}${s.panic || s.ledgerLocked ? ' · ⛔ PANICKED' : ''}`;
-        }
-        return `${linked} · signer ${this.signer ? (this.signerFailed ?? 'stopped') : 'not started (starts on the first LIVE plan)'}${ks ? ' · ⛔ PANICKED' : ''}${this.trade ? '' : ' · live trading off in this run'}`;
+        return `${linked}${ks ? ' · ⛔ PANICKED' : ''} · dexterm holds no key and signs nothing`;
       }
       case 'link': {
-        if (!this.trade) return 'live trading is off in this run';
-        const bridge = new WalletBridge(this.trade.open ? { open: this.trade.open } : {});
+        if (!this.trade) return 'wallet link is off in this run (replay / offline)';
+        const bridge = new WalletBridge(this.trade?.open ? { open: this.trade.open } : {});
         try {
           const res = await bridge.link();
-          const rec = this.linkStore.set(res.publicKey, { network: 'devnet' });
+          const rec = this.linkStore.set(res.publicKey);
           this.linkedWallet = rec;
           this.onChange('wallet');
-          return `linked: ${shortPubkey(rec.publicKey)} (public key only) · L on a ticket for LIVE`;
+          return `linked: ${shortPubkey(rec.publicKey)} (public key only; dexterm never signs with it)`;
         } catch (e) {
           return `wallet link failed: ${e instanceof Error ? e.message : String(e)}`;
         }
@@ -310,25 +272,15 @@ export class LiveContext {
       case 'unlink': {
         const had = this.linkStore.clear();
         this.linkedWallet = null;
-        if (this.ticket?.ticket.mode === 'live') this.ticket.setMode('paper');
         this.onChange('wallet');
         return had ? 'unlinked' : 'no wallet was linked';
       }
       case 'panic': {
-        // Local first (the kill-switch FILE every signer re-reads + the shared ledger lock), then the signer.
+        // The kill-switch FILE every autotrade runner and the paper agent desk re-read.
         const ks = new KillSwitch(paths.panic ?? defaultPanicPath());
         ks.engage('panic from dexterm UI', this.now());
-        try { const l = new CapLedger({ path: paths.capLedger ?? defaultCapLedgerPath(), clock: this.dl.clock }); try { l.lock('panic from dexterm UI', this.now()); } finally { l.close(); } } catch { /* the file alone disables trading */ }
-        if (this.signer?.alive) await this.signer.panic('panic from dexterm UI').catch(() => {});
-        if (this.ticket?.ticket.mode === 'live') { this.ticket.ticket.phase = 'refused'; this.ticket.ticket.message = '⛔ PANIC — live signing disabled'; }
         this.onChange('wallet');
-        return '⛔ PANIC: live signing disabled everywhere · re-enable only from a shell: dexterm wallet resume';
-      }
-      case 'probe': {
-        if (!this.trade) return 'live trading is off in this run';
-        const t = this.openTicket({ mint: this.WSOL, symbol: 'SOL', decimals: 9 }, 'buy');
-        const why = t.startProbe();
-        return why ?? 'devnet probe: review the plan, then Y to sign the wrap-and-unwrap in Phantom (fees only)';
+        return '⛔ PANIC: autotrade runs and the paper agent desk halted · clear it only from a shell: dexterm wallet resume';
       }
     }
     return '';
@@ -566,7 +518,6 @@ export class LiveContext {
     try { this.wallet.close(); } catch { /* ignore */ }
     try { this.recorder?.close(); } catch { /* ignore */ }
     try { this.social.close(); } catch { /* ignore */ }
-    try { this.signer?.close(); } catch { /* ignore */ }
     try { this.intel.close(); } catch { /* ignore */ }
     try { this.copy.stop(); } catch { /* ignore */ }
   }

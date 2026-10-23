@@ -242,19 +242,16 @@ test('tracked adapter: transfers, airdrops, LP-like moves and token-to-token swa
 
 // ---------------------------------------------------------------------------------------------- app glue
 
-function fakeLive(o: { paper?: ReturnType<typeof paperRecord>[]; liveRows?: ReturnType<typeof lossInput>['fills']; mark?: [number, number] | null } = {}) {
-  const loss = lossInput();
-  const rows = o.liveRows ? loss.fills.map((f, i) => ({ id: i, t: f.t, network: 'mainnet', signature: f.sig, mint: MINT_GLYPH, symbol: 'GLYPH', side: f.side, solDelta: String(BigInt(Math.round(f.solDelta * 1e9))), tokenDelta: String(f.tokenDelta), priceSol: 0, usd: null, decimals: 9, feeLamports: '15000', realizedLamports: '0', kind: 'swap' })) : [];
+function fakeLive(o: { paper?: ReturnType<typeof paperRecord>[]; mark?: [number, number] | null } = {}) {
   return {
     wallet: { trades: () => [...(o.paper ?? [])].sort((a, b) => b.t - a.t) },
-    livePositions: { records: (_n: number, mint?: string) => rows.filter((r) => !mint || r.mint === mint).map((r) => ({ ...r, t: r.t, mint: r.mint, symbol: r.symbol })), fills: (mint: string) => rows.filter((r) => r.mint === mint) },
     positions: { markOf: () => o.mark?.[0] ?? null, markAt: () => o.mark?.[1] ?? null, solUsd: () => 150 },
     linkedWallet: { publicKey: WALLET },
     token: null,
   };
 }
 
-test('H opens the preview on token / positions / follows and builds from the right ledger (LIVE wins over PAPER)', async () => {
+test('H opens the preview on token / positions / follows and builds from the right ledger', async () => {
   for (const screen of ['token', 'positions', 'follows']) assert.equal(DEFAULT_KEYMAP.resolve(parseKeys('H')[0], screen), 'pnl.card', screen);
   assert.ok(!DEFAULT_KEYMAP.resolve(parseKeys('H')[0], 'screener'), 'not bound where there is nothing to card');
   const state = makeFixtureState({});
@@ -263,16 +260,14 @@ test('H opens the preview on token / positions / follows and builds from the rig
   assert.match(openPnl(state)!, /run dexterm live/, 'fixtures mode has no fills to card');
 
   const paper = [paperRecord(1, NOW - 2 * HOUR, 'buy', 0.5, 2_000_000), paperRecord(2, NOW - HOUR, 'sell', 0.6, 2_000_000)];
-  state.live = fakeLive({ paper, liveRows: lossInput().fills }) as never;
+  state.live = fakeLive({ paper }) as never;
   state.screen = 'positions';
   assert.equal(openPnl(state), null);
   assert.equal(state.overlay, 'pnl');
-  assert.deepEqual(state.pnl!.choices.map((c) => c.mint), [MINT_NEON, MINT_GLYPH], 'newest activity first');
+  assert.deepEqual(state.pnl!.choices.map((c) => c.mint), [MINT_NEON], 'the paper ledger\'s coins (task-1571: there is no live ledger)');
   await loadPnl(state, NOW);
   assert.equal(state.pnl!.stats!.input.source, 'paper'); assert.equal(fmtPnlPct(state.pnl!.stats!.pnlPct), '+20.0%');
-  assert.deepEqual(pnlKey(state.pnl!, { name: 'right' }), { kind: 'reload' });
-  await loadPnl(state, NOW);
-  assert.equal(state.pnl!.stats!.input.source, 'live'); assert.equal(state.pnl!.stats!.input.wallet, WALLET);
+  assert.deepEqual(pnlKey(state.pnl!, { name: 'right' }), { kind: 'none' }, 'one coin: nothing to step to');
 
   // toggles and share keys; esc closes
   const ui = state.pnl!;
@@ -298,7 +293,7 @@ test('H opens the preview on token / positions / follows and builds from the rig
   // the token screen cards the open coin only, and refuses a coin with no fills
   state.screen = 'token';
   (state.live as unknown as { token: unknown }).token = { view: { mint: MINT_DRIFT, symbol: 'DRIFT', name: 'Drift Sample', image: null, price: null, panels: { market: { fetchedAt: null } } } };
-  assert.match(openPnl(state)!, /no paper or live fills for this coin/);
+  assert.match(openPnl(state)!, /no paper fills for this coin/);
   state.screen = 'screener';
   assert.match(openPnl(state)!, /token, positions \(P\) or followed wallets \(U\)/);
 
@@ -346,28 +341,4 @@ test('the preview overlay draws the stamped card when the terminal fits it, its 
   renderPnlOverlay(err, state);
   assert.match(canvasText(err).join('\n'), /no card: no recorded fills/);
   void MIN; void saveCard;
-});
-
-test('LivePositions.fills reads the signer ledger read-only with network + signature (swaps only) → a LIVE card', async () => {
-  const { LiveLedger } = await import('@dexterm/data');
-  const { LivePositions } = await import('../src/live/trade.ts');
-  const { liveCardInput } = await import('../src/pnl-card.ts');
-  const dir = tmp();
-  try {
-    const path = join(dir, 'live-trades.sqlite');
-    const l = new LiveLedger({ path });
-    const fill = (t: number, side: 'buy' | 'sell', sol: bigint, tok: bigint) => ({
-      t, mint: MINT_GLYPH, symbol: 'GLYPH', side, decimals: 9, solDelta: side === 'buy' ? -sol : sol, tokenDelta: side === 'buy' ? tok : -tok,
-      grossLamports: sol, feeLamports: 15_000n, priceSol: 0, priceUsd: null, priceImpactPct: null, slippageBps: 50, route: [], realizedLamports: 0n, paper: true as const,
-    });
-    l.record({ fill: fill(NOW - HOUR, 'buy', 1_000_000_000n, 1_000_000_000_000n), network: 'mainnet', signature: SIG1, usd: null });
-    l.record({ fill: fill(NOW - HOUR + 1, 'buy', 1n, 1n), network: 'mainnet', signature: 'probe-sig', usd: null, kind: 'probe' });
-    l.record({ fill: fill(NOW - MIN, 'sell', 1_300_000_000n, 1_000_000_000_000n), network: 'mainnet', signature: SIG2, usd: null });
-    l.close();
-    const rows = new LivePositions(path).fills(MINT_GLYPH);
-    assert.deepEqual(rows.map((r) => r.signature), [SIG2, SIG1], 'newest first, the probe excluded');
-    const s = computeCard(liveCardInput(rows, { mint: MINT_GLYPH, wallet: WALLET }), NOW);
-    assert.equal(s.input.network, 'mainnet'); assert.equal(fmtPnlPct(s.pnlPct), '+30.0%');
-    assert.deepEqual(new LivePositions(join(dir, 'missing.sqlite')).fills(MINT_GLYPH), [], 'no ledger file reads as no fills');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

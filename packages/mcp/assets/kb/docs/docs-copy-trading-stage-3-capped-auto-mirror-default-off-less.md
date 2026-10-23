@@ -32,7 +32,7 @@ sources:
 date: 2026-10-16
 ---
 
-`A` on a followed wallet raises the **AUTO-MIRROR** prompt. Turning it on is a held physical keypress, and it is refused unless the plan engine's own "this is less safe" popup (`G` on the `O` screen, keypress-only, 24 h expiry) is active. That one gesture drafts and arms a **copy mandate** in the plan engine, the signer trust domain: buy-only, `maxTier: hands-free`, with exactly the policy's caps, clamped to the engine's hard ceilings.
+`A` on a followed wallet raises the **AUTO-MIRROR** prompt. Turning it on is a held physical keypress, and it is refused unless the plan engine's own "this is less safe" popup (`G` on the `O` screen, keypress-only, 24 h expiry) is active. That one gesture drafts and arms a **copy mandate** in the plan engine: buy-only, `maxTier: hands-free`, with exactly the policy's caps, clamped to the engine's hard ceilings.
 
 Every later buy by that wallet then runs the Stage 2 checks and, if they pass, is proposed and armed automatically with the **weakest confirmation tier**. The engine therefore sizes it at **¼ of the per-trade cap** (the same rule a spoken confirmation gets) and re-checks the per-trade, per-coin, total and daily-loss caps, the allow-list and the panic state at arming and on every fill. On top, the policy keeps a per-wallet **daily cap** (the mandate's total), **max open mirrors**, a **cooldown** between mirrors, a **size factor** against the leader, and an **auto-disarm streak**: that many refused or failed mirrors in a row turn it off.
 

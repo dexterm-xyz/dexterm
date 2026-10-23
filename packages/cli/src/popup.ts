@@ -9,14 +9,14 @@
 // changed, otherwise just the last two bars ("tail"), so a live tick costs the page one `series.update`.
 // When the coin is held (task-1323 PositionSource) the VM carries the position row + entry/stop/target levels
 // and the fills of the current position from the paper ledger. Read-only: nothing here can trade.
-import { createPopupManager, loadConfig, nativeShellAvailable, TerminalDock, CHART_INTERVALS, type DockPlacement, type PopupConfig, type PopupManager, type PopupManagerOptions, type ChartVM, type ChartChip, type TokenDetailVM, type ThemeTokens, type ChartPrefs, type ChartPosition, type ChartFill, type PositionCell, type ChartIndicator, type ServerEvent, type BubbleVM, type NarrativeBoardVM, type PlansVM, type FeedVM, type WidgetPage, type WidgetTopic, type WidgetPayload } from '@dexterm/popup';
+import { createPopupManager, loadConfig, nativeShellAvailable, TerminalDock, CHART_INTERVALS, type DockPlacement, type PopupConfig, type PopupManager, type PopupManagerOptions, type ChartVM, type ChartChip, type TokenDetailVM, type ThemeTokens, type ChartPrefs, type ChartPosition, type ChartFill, type ChartMarks, type ChartMarkFill, CHART_MARKS_MAX, type PositionCell, type ChartIndicator, type ServerEvent, type BubbleVM, type NarrativeBoardVM, type PlansVM, type FeedVM, type WidgetPage, type WidgetTopic, type WidgetPayload } from '@dexterm/popup';
 import type { Candle, CandleInterval } from '@dexterm/data';
 import type { Theme } from '@dexterm/tui';
 import { fmtPrice, fmtNum } from '@dexterm/tui';
 import type { TokenView } from './live/token.ts';
 import { positionRow, type HeldPosition, type HeldRow, type PositionSource } from './live/trade.ts';
 import { signedUsd, signedPctOf, fmtUsdFine, sol as fmtSol, signedSol } from './screens/positions.ts';
-import { supplyRatio, positionPriceCells, type PriceMode, type ChartAxis } from './display.ts';
+import { supplyRatio, positionPriceCells, levelCell, type PriceMode, type ChartAxis } from './display.ts';
 import { chipSegments, type PnlChipVM } from './screens/pnl-chip.ts';
 
 /** The subset of the popup controller the interactive loop (and AppState) depends on. */
@@ -107,6 +107,14 @@ export interface ChartExtras {
   image?: string | null;
   /** task-1366: the terminal's price display mode (default price). */
   priceMode?: PriceMode;
+  /** task-1483: every paper + live fill of this coin (oldest first) and whether the markers are on. Absent = no marks layer. */
+  marks?: { on: boolean; fills: readonly ChartMarkFill[] } | null;
+}
+
+/** task-1483: the VM's markers layer: the newest CHART_MARKS_MAX fills (oldest first), and how many older ones were left out. */
+export function chartMarksFrom(on: boolean, fills: readonly ChartMarkFill[]): ChartMarks {
+  const keep = fills.length > CHART_MARKS_MAX ? fills.slice(-CHART_MARKS_MAX) : fills;
+  return { on, fills: keep.map((f) => ({ t: f.t, side: f.side, source: f.source, priceUsd: f.priceUsd, tokens: f.tokens, sol: f.sol })), truncated: fills.length - keep.length };
 }
 
 const finitePos = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
@@ -137,8 +145,8 @@ export function positionCells(r: HeldRow, mode: PriceMode = 'price', supply: num
   const uAmt = usd ? (r.unrealizedUsd !== null ? signedUsd(r.unrealizedUsd) : null) : (r.unrealizedSol !== null ? `${signedSol(r.unrealizedSol)} SOL` : null);
   cells.push({ label: 'UNREALIZED', value: uAmt === null ? '—' : `${uAmt}${r.unrealizedPct !== null ? ` ${signedPctOf(r.unrealizedPct)}` : ''}`, tone: tone(r.unrealizedSol) });
   if (r.realizedSol !== 0) cells.push({ label: 'REALIZED', value: usd && r.realizedUsd !== null ? signedUsd(r.realizedUsd) : `${signedSol(r.realizedSol)} SOL`, tone: tone(r.realizedSol) });
-  if (r.stopUsd !== null) cells.push({ label: 'STOP', value: `${fmtPrice(r.stopUsd)}${r.stopDistPct !== null ? ` ${signedPctOf(r.stopDistPct)}` : ''}`, tone: 'down' });
-  if (r.targetUsd !== null) cells.push({ label: 'TARGET', value: `${fmtPrice(r.targetUsd)}${r.targetDistPct !== null ? ` ${signedPctOf(r.targetDistPct)}` : ''}`, tone: 'up' });
+  if (r.stopUsd !== null) cells.push({ label: 'STOP', value: `${levelCell(mode, supply, r.stopUsd)}${r.stopDistPct !== null ? ` ${signedPctOf(r.stopDistPct)}` : ''}`, tone: 'down' });
+  if (r.targetUsd !== null) cells.push({ label: 'TARGET', value: `${levelCell(mode, supply, r.targetUsd)}${r.targetDistPct !== null ? ` ${signedPctOf(r.targetDistPct)}` : ''}`, tone: 'up' });
   return cells;
 }
 
@@ -214,7 +222,7 @@ export function chartVMFromView(v: TokenView, x: ChartExtras = {}): ChartVM {
   vm.feed = x.feed ?? 'POLL';
   vm.livePrice = x.feed === 'LIVE' && finitePos(x.livePrice) ? x.livePrice : null;
   vm.trades = v.trades.map((t) => ({ t: t.t, side: t.side, usd: t.usd, price: t.price })); // no wallet addresses
-  const mode: PriceMode = x.priceMode === 'mcap' ? 'mcap' : 'price';
+  const mode: PriceMode = x.priceMode === 'price' ? 'price' : 'mcap'; // task-1537: market cap unless the host says price
   const supply = mode === 'mcap' ? supplyRatio(v.price, v.mcap) : null;
   vm.position = x.held ? chartPositionFrom(x.held, tick, x.solUsd ?? null, x.positionKind ?? 'paper', x.fills ?? [], mode, supply) : null;
   vm.prefs = x.prefs ?? DEFAULT_CHART_PREFS;
@@ -223,6 +231,7 @@ export function chartVMFromView(v: TokenView, x: ChartExtras = {}): ChartVM {
   // task-1366: display only — the bars stay USD prices; the page formats the axis as price × supply in mcap mode
   vm.priceMode = mode;
   vm.supply = supply;
+  if (x.marks) vm.marks = chartMarksFrom(x.marks.on, x.marks.fills); // task-1483
   return vm;
 }
 
@@ -263,6 +272,12 @@ export interface ChartSource {
   setChartAxis?(axis: ChartAxis): void;
   /** task-1473 r2: the app's PnL chip right now (state.ts pnlChipFor), or null. */
   pnlChip?(): PnlChipVM | null;
+  /** task-1483: every paper + live fill of this mint, oldest first (LiveContext.chartFills: the two ledgers, memoised). */
+  markFills?(mint: string): readonly ChartMarkFill[];
+  /** task-1483: display.chartMarkers right now. */
+  chartMarkers?(): boolean;
+  /** task-1483: the popup's MARKERS control asked to show / hide them: set + persist (display only). */
+  setChartMarkers?(on: boolean): void;
 }
 
 /** task-1473 r2: the chip as the chart page draws it (same segments as the terminal). */
@@ -519,6 +534,12 @@ export class TokenPopups implements PopupController {
         if (this.lastView) this.push(this.lastView);
         return;
       }
+      case 'chart.markers': { // task-1483: a display preference the terminal saves; nothing else
+        if (typeof p.on !== 'boolean') return;
+        this.source?.setChartMarkers?.(p.on);
+        if (this.lastView) this.push(this.lastView);
+        return;
+      }
       case 'chart.painted': {
         const ms = Number(p.ms);
         if (p.kind === 'first' && this.metrics.openedAt !== null && this.metrics.openToFirstPaintMs === null) this.metrics.openToFirstPaintMs = this.now() - this.metrics.openedAt;
@@ -581,7 +602,8 @@ export class TokenPopups implements PopupController {
       prefs: this.prefs,
       now: this.now(),
       image: src.imagePath?.(view) ?? null,
-      priceMode: src.chartAxis?.() ?? src.priceMode?.() ?? 'price', // task-1472: the chart axis drives the popup
+      priceMode: src.chartAxis?.() ?? src.priceMode?.() ?? 'mcap', // task-1472: the chart axis drives the popup
+      marks: src.markFills ? { on: src.chartMarkers?.() ?? true, fills: src.markFills(view.mint) } : null, // task-1483
     });
     vm.chip = chartChipFrom(src.pnlChip?.() ?? null); // task-1473 r2
     const key = vm.seriesKey ?? null;

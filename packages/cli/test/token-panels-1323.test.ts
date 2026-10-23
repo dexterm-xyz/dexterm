@@ -398,7 +398,8 @@ test('token screen, HELD coin: a POSITION row under the chart with size, value, 
   assert.match(lines[title], /paper ledger · SOL \$150\.00/);
   assert.match(lines[title + 1], /SIDE +SIZE +VALUE +AVG ENTRY +PRICE +UNREALIZED/);
   // 5000 FLOW at $0.036 = $180; cost 1.000005 SOL ($150.00) → +$30.00 / +20.0 %
-  assert.match(lines[title + 2], /LONG +5\.00K FLOW +\$180\.00 +\$0\.0300 +\$0\.0360 +\+\$30\.00 \+20\.0%/);
+  // task-1537: market cap is the default; FLOW has no known supply, so AVG ENTRY / PRICE stay prices marked ᵖ
+  assert.match(lines[title + 2], /LONG +5\.00K FLOW +\$180\.00 +\$0\.0300ᵖ +\$0\.0360ᵖ +\+\$30\.00 \+20\.0%/);
   assert.doesNotMatch(lines[title + 1], /(?<!UN)REALIZED|STOP|TARGET/, 'no realized/stop/target clutter when there is none');
   assert.match(lines[title + 3], /^╰/);
   assert.match(lines[title + 4], /ON-CHAIN/, 'the stats panels follow directly');
@@ -409,7 +410,7 @@ test('token screen, HELD coin: the row moves with the live tick the header shows
   h.setTick(0.045);
   const out = render(h);
   assert.match(out.split('\n')[3], /\$0\.0450 +LIVE/, 'header shows the fast-lane tick');
-  assert.match(out, /LONG +5\.00K FLOW +\$225\.00 +\$0\.0300 +\$0\.0450 +\+\$75\.00 \+50\.0%/, 'same tick prices the position');
+  assert.match(out, /LONG +5\.00K FLOW +\$225\.00 +\$0\.0300ᵖ +\$0\.0450ᵖ +\+\$75\.00 \+50\.0%/, 'same tick prices the position'); // ᵖ: no supply (task-1537)
 });
 
 test('token screen, NOT held: nothing extra — no position panel, chart keeps its full height', () => {

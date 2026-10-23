@@ -8,7 +8,7 @@ import { lamportsToSol, rawToTokens, positionPnl } from '@dexterm/data';
 import type { AppState } from '../state.ts';
 import { headerModel } from '../state.ts';
 import type { PositionsView } from '../trade.ts';
-import { priceModeOf, supplyRatio, FALLBACK_MARK } from '../display.ts';
+import { priceModeOf, supplyRatio, supplyForMint, FALLBACK_MARK } from '../display.ts';
 
 export function sol(n: number, digits = 4): string {
   return `${n >= 0 ? '' : '-'}${Math.abs(n).toFixed(digits)}`;
@@ -83,7 +83,7 @@ export function renderPositions(c: Canvas, state: AppState): void {
   // task-1366: mcap mode reads AVG / PRICE as market cap = SOL price × SOL/USD × the token's CURRENT supply (from the
   // screener rows); a token without a supply (or no SOL/USD yet) keeps its SOL price, marked ᵖ. PnL stays SOL.
   const mode = priceModeOf(state);
-  const supplyOf = (mint: string): number | null => { const row = state.screener.rows.find((x) => x.mint === mint); return row ? supplyRatio(row.price, row.mcap) : null; };
+  const supplyOf = (mint: string): number | null => supplyForMint(state, mint); // task-1537: + the open token view and pump.fun's 1B
   const mcCell = (pSol: number | null, mint: string): string => {
     if (pSol === null) return '—';
     if (mode !== 'mcap') return fmtPriceBare(pSol);
@@ -122,31 +122,10 @@ export function renderPositions(c: Canvas, state: AppState): void {
     py += 1;
   }
 
-  // task-1328: LIVE positions (the signer's ledger file, read-only), only when there are any.
-  const liveSrc = state.live?.livePositions ?? null;
-  const livePos = liveSrc ? liveSrc.positions().filter((p) => p.tokensRaw > 0n) : [];
   y += half;
-  if (livePos.length > 0) {
-    const lh = Math.min(livePos.length + 3, Math.max(5, Math.floor((bottom - y) * 0.4)));
-    const lb = c.box(0, y, c.w, lh, { title: '◉ LIVE POSITIONS', titleFg: t.up, caption: 'confirmed on-chain fills · signer ledger' });
-    let ly = lb.y;
-    for (const p of livePos) {
-      if (ly >= lb.y + lb.h) break;
-      const mark = liveSrc?.held(p.mint)?.markSol ?? null;
-      const pnl = positionPnl(p, mark);
-      let cx = c.text(lb.x + 1, ly, `$${p.symbol}`, { fg: t.text, bg: lb.bg, b: true });
-      cx = c.text(cx + 2, ly, fmtNum(rawToTokens(p.tokensRaw, p.decimals)), { fg: t.muted, bg: lb.bg });
-      cx = c.text(cx + 2, ly, `cost ${sol(pnl.costSol)} SOL`, { fg: t.dim, bg: lb.bg });
-      if (pnl.avgEntrySol !== null) cx = c.text(cx + 2, ly, `avg ${fmtPriceBare(pnl.avgEntrySol)}`, { fg: t.dim, bg: lb.bg });
-      if (pnl.unrealizedSol !== null) c.text(cx + 2, ly, `uPnL ${signedSol(pnl.unrealizedSol)} SOL${pnl.unrealizedPct !== null ? ` ${fmtPct(pnl.unrealizedPct * 100)}` : ''}`, { fg: pnl.unrealizedSol >= 0 ? t.up : t.down, bg: lb.bg, b: true });
-      c.textR(lb.x + 1, ly, lb.w - 2, `${shortAddr(p.mint, 4)} · LIVE`, { fg: t.up, bg: lb.bg });
-      ly += 1;
-    }
-    y += lh;
-  }
 
   // history
-  const hb = c.box(0, y, c.w, bottom - y, { title: 'TRADE HISTORY', caption: `${v.history.length} paper fills${liveSrc ? ` · ${liveSrc.records(50).length} live` : ''}` });
+  const hb = c.box(0, y, c.w, bottom - y, { title: 'TRADE HISTORY', caption: `${v.history.length} paper fills` });
   let yy = hb.y;
   for (const h of v.history) {
     if (yy >= hb.y + hb.h) break;
@@ -156,7 +135,9 @@ export function renderPositions(c: Canvas, state: AppState): void {
     let cx = c.text(hb.x + 1, yy, fmtAgeSec(Math.max(0, Math.round((state.now.getTime() - h.t) / 1000))).padStart(4), { fg: t.dim, bg: hb.bg });
     cx = c.text(cx + 1, yy, h.side === 'buy' ? '▲ BUY ' : '▼ SELL', { fg: sideColor, bg: hb.bg, b: true });
     cx = c.text(cx + 1, yy, `$${h.symbol}`, { fg: t.text, bg: hb.bg, b: true });
-    cx = c.text(cx + 1, yy, `${fmtNum(gotTokens)} @ ${fmtPriceBare(h.priceSol)} SOL`, { fg: t.muted, bg: hb.bg });
+    // task-1537: a fill reads as the market cap it filled at (the coin's current known supply), the SOL price kept
+    const hsup = mode === 'mcap' ? supplyOf(h.mint) : null;
+    cx = c.text(cx + 1, yy, `${fmtNum(gotTokens)} @ ${hsup !== null && v.solPriceUsd ? `${fmtMcap(h.priceSol * v.solPriceUsd * hsup)} mcap (${fmtPriceBare(h.priceSol)} SOL)` : `${fmtPriceBare(h.priceSol)} SOL`}`, { fg: t.muted, bg: hb.bg });
     cx = c.text(cx + 2, yy, `${signedSol(solAmt)} SOL`, { fg: solAmt >= 0 ? t.up : t.muted, bg: hb.bg });
     if (h.side === 'sell') c.text(cx + 2, yy, `pnl ${signedSol(lamportsToSol(h.realizedLamports))}`, { fg: h.realizedLamports >= 0n ? t.up : t.down, bg: hb.bg });
     c.textR(hb.x + 1, yy, hb.w - 2, `${shortAddr(h.mint, 4)} · PAPER`, { fg: t.dim, bg: hb.bg });

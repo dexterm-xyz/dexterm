@@ -1,0 +1,97 @@
+{
+  "kind": "strategy",
+  "schema": "dexterm-strategy/1",
+  "id": "swing",
+  "name": "Swing (intraday trend)",
+  "version": "1.0.0",
+  "description": "An intraday trend on a coin that has already held a pool for an hour or more: medium size, thirds at +50% and +100%, a 25% trail, a 90-minute review and thesis-break exits instead of a hard stop.",
+  "mode": "paper",
+  "bankroll": {
+    "startUsd": 1000
+  },
+  "entry": {
+    "screen": "liq >= 30K vol1h > 15K !flag:mint !flag:freeze",
+    "ageHours": {
+      "min": 1,
+      "max": 168
+    },
+    "safety": {
+      "maxTop10Pct": 35,
+      "maxDevPct": 5,
+      "requireNoMintAuthority": true,
+      "requireNoFreezeAuthority": true,
+      "maxMcapSplitX": 5,
+      "youngVertical": {
+        "maxAgeHours": 1,
+        "maxH1Pct": 250
+      },
+      "unknownHolders": "reject"
+    },
+    "triggers": [
+      {
+        "kind": "screen"
+      }
+    ],
+    "triggerMode": "any",
+    "decide": "agent",
+    "candidateTtlSec": 300
+  },
+  "exits": {
+    "default": "swing",
+    "profiles": [
+      "builtin:swing",
+      "builtin:runner",
+      "builtin:scalp"
+    ]
+  },
+  "sizing": {
+    "mode": "pct",
+    "pct": 10,
+    "maxPctOfBankroll": 15,
+    "maxUsd": 500,
+    "minUsd": 5
+  },
+  "risk": {
+    "perTrade": {
+      "maxLossPctOfBankroll": 10,
+      "assumedLossPctNoStop": 100
+    },
+    "dailyLossHaltPct": 15,
+    "drawdown": {
+      "sizeDownAtPct": 25,
+      "sizeDownMult": 0.5,
+      "recoverBelowPct": 15,
+      "haltAtPct": 40
+    },
+    "maxConcurrent": 2,
+    "maxExposurePct": 35,
+    "lossStreak": {
+      "losses": 3,
+      "cooldownMin": 60
+    },
+    "maxEntriesPerDay": 8,
+    "perCoin": {
+      "maxEntries": 1,
+      "cooldownMin": 30
+    }
+  },
+  "agent": {
+    "model": "sonnet",
+    "maxSessions": 2,
+    "budgetUsdPerSession": 0.5,
+    "budgetUsdPerDay": 10,
+    "maxTurns": 60,
+    "deltaEverySec": 15,
+    "decideWithinSec": 90,
+    "sessionMaxMin": 240,
+    "onTimeout": "skip"
+  },
+  "execution": {
+    "slippageBps": 100,
+    "feeBps": 30,
+    "networkFeeUsd": 0.02,
+    "latencyMs": 3000,
+    "maxPriceImpactPct": 8,
+    "minExitLiquidityUsd": 2000
+  }
+}

@@ -1,7 +1,7 @@
 // dexterm popup — chart v2 pure helpers (task-1325). No DOM, no network, no globals besides the export.
 // Inlined into the chart page (before chart.js) under the page's CSP nonce; test/chart-lib.test.ts loads the
 // same file through node:vm to unit-test the math. Everything here works on OUR data only: the ChartVM's
-// candles (from the terminal's cached/derived series), its trade tape and its position fills.
+// candles (from the terminal's cached/derived series), its trade tape and the ledgers' fills (task-1483 markers).
 (function (root) {
   'use strict';
   const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'];
@@ -121,28 +121,141 @@
     return out.sort((x, y) => x.time - y.time);
   }
 
-  /**
-   * Position fill markers (paper ledger fills of the current position) at their fill time and exact fill
-   * price when known. Fills outside the loaded series are skipped (the row still shows the position).
-   */
-  function fillMarkers(fills, periodMs, barTimes, colors) {
+  // ---- task-1483 BUY / SELL markers: a mirror of @dexterm/tui markers.ts (test/chart-lib parity-tests the two). Fills
+  // are bucketed to the bars on screen by their REAL time (bar.t, UTC ms); a fill older than the first bar, newer than
+  // the last, or in a period with no bar is omitted and counted, never moved onto a neighbour.
+  const EPS = 1e-9;
+  function cleanFills(fills) {
     const out = [];
-    let lastBar = -Infinity;
-    for (const t of barTimes) if (t > lastBar) lastBar = t;
     for (const f of fills || []) {
-      if (!f || !fin(f.t) || (f.side !== 'buy' && f.side !== 'sell')) continue;
-      let time = barTimeOf(f.t, periodMs);
-      // A fill newer than the last candle (the candle feed lags 1–2 min) sits on the forming/last bar, the way
-      // a trading chart shows a fresh execution — up to 3 periods ahead; older gaps are skipped.
-      if (!barTimes.has(time) && time > lastBar && time - lastBar <= (3 * periodMs) / 1000) time = lastBar;
-      if (!barTimes.has(time)) continue;
-      const text = `${f.side === 'buy' ? 'BUY' : 'SELL'} ${fin(f.sol) ? fmtSol(f.sol) : ''}`.trim();
-      const m = { time, shape: f.side === 'buy' ? 'arrowUp' : 'arrowDown', color: f.side === 'buy' ? colors.buy : colors.sell, text, size: 1.4, id: `fill-${f.side}-${f.t}` };
-      if (fin(f.priceUsd) && f.priceUsd > 0) { m.position = f.side === 'buy' ? 'atPriceBottom' : 'atPriceTop'; m.price = f.priceUsd; }
-      else m.position = f.side === 'buy' ? 'belowBar' : 'aboveBar';
-      out.push(m);
+      if (!f || !fin(f.t) || (f.side !== 'buy' && f.side !== 'sell') || (f.source !== 'paper' && f.source !== 'live')) continue;
+      if (!fin(f.tokens) || f.tokens <= 0) continue;
+      out.push({ t: f.t, side: f.side, source: f.source, priceUsd: fin(f.priceUsd) && f.priceUsd > 0 ? f.priceUsd : null, tokens: f.tokens, sol: fin(f.sol) && f.sol >= 0 ? f.sol : null });
     }
-    return out.sort((x, y) => x.time - y.time);
+    return out.map((f, i) => [f, i]).sort((a, b) => a[0].t - b[0].t || a[1] - b[1]).map(([f]) => f);
+  }
+  /** Replay per source (average-cost ledger rule): partial / closing flags, the open average entry, closed round trips. */
+  function replayFills(fills) {
+    const st = { paper: { held: 0, cost: 0, costOk: true, trip: null }, live: { held: 0, cost: 0, costOk: true, trip: null } };
+    const out = [], trips = [];
+    for (const f of cleanFills(fills)) {
+      const s = st[f.source]; const before = s.held;
+      if (f.side === 'buy') {
+        if (s.held <= EPS) { s.held = 0; s.cost = 0; s.costOk = true; s.trip = { openT: f.t, bTok: 0, bUsd: 0, bOk: true, sTok: 0, sUsd: 0, sOk: true }; }
+        s.held += f.tokens;
+        if (f.priceUsd === null) s.costOk = false; else s.cost += f.tokens * f.priceUsd;
+        if (s.trip) { s.trip.bTok += f.tokens; if (f.priceUsd === null) s.trip.bOk = false; else s.trip.bUsd += f.tokens * f.priceUsd; }
+        out.push({ ...f, heldBefore: before, heldAfter: s.held, partial: before > EPS, closes: false });
+        continue;
+      }
+      const sold = Math.min(f.tokens, s.held);
+      const frac = s.held > EPS ? sold / s.held : 1;
+      s.cost -= s.cost * frac;
+      s.held = Math.max(0, s.held - f.tokens);
+      const closes = s.held <= f.tokens * 1e-9 || s.held <= EPS;
+      if (closes) s.held = 0;
+      if (s.trip) { s.trip.sTok += f.tokens; if (f.priceUsd === null) s.trip.sOk = false; else s.trip.sUsd += f.tokens * f.priceUsd; }
+      out.push({ ...f, heldBefore: before, heldAfter: s.held, partial: !closes, closes });
+      if (closes) {
+        if (s.trip) trips.push({ source: f.source, openT: s.trip.openT, closeT: f.t, entryUsd: s.trip.bOk && s.trip.bTok > 0 ? s.trip.bUsd / s.trip.bTok : null, exitUsd: s.trip.sOk && s.trip.sTok > 0 ? s.trip.sUsd / s.trip.sTok : null });
+        s.trip = null; s.cost = 0; s.costOk = true;
+      }
+    }
+    const avg = (src) => { const s = st[src]; return s.held > EPS && s.costOk && s.cost > 0 ? s.cost / s.held : null; };
+    return { fills: out, avgEntry: { paper: avg('paper'), live: avg('live') }, trips };
+  }
+  function indexIn(times, t) { let lo = 0, hi = times.length - 1; while (lo <= hi) { const mid = (lo + hi) >> 1; const v = times[mid]; if (v === t) return mid; if (v < t) lo = mid + 1; else hi = mid - 1; } return -1; }
+  /** Markers for the bars (`barTimes` = the bars' real UTC ms, ascending): one per (bar, side, source). */
+  function chartMarkers(fills, periodMs, barTimes) {
+    const rp = replayFills(fills);
+    const res = { markers: [], before: 0, after: 0, gap: 0, avgEntry: rp.avgEntry, trips: [] };
+    if (!(periodMs > 0) || !barTimes.length) { res.before = rp.fills.length; return res; }
+    const first = barTimes[0], last = barTimes[barTimes.length - 1];
+    const by = new Map();
+    for (const f of rp.fills) {
+      const b = Math.floor(f.t / periodMs) * periodMs;
+      if (b < first) { res.before++; continue; }
+      if (b > last) { res.after++; continue; }
+      const index = indexIn(barTimes, b);
+      if (index < 0) { res.gap++; continue; }
+      const key = `${b}|${f.side}|${f.source}`;
+      let m = by.get(key);
+      if (!m) { m = { side: f.side, source: f.source, bucket: b, index, t: f.t, tLast: f.t, priceUsd: null, tokens: 0, sol: 0, count: 0, partial: false, closes: false, pTok: 0, pUsd: 0, solOk: true }; by.set(key, m); }
+      m.count++; m.tLast = f.t; m.tokens += f.tokens;
+      if (f.sol === null) m.solOk = false; else m.sol += f.sol;
+      if (f.priceUsd !== null) { m.pTok += f.tokens; m.pUsd += f.tokens * f.priceUsd; }
+      if (f.partial) m.partial = true;
+      if (f.closes) m.closes = true;
+    }
+    const order = (m) => (m.side === 'buy' ? 0 : 1) * 2 + (m.source === 'live' ? 1 : 0);
+    res.markers = [...by.values()].map(({ pTok, pUsd, solOk, ...m }) => ({ ...m, priceUsd: pTok > 0 ? pUsd / pTok : null, sol: solOk ? m.sol : null }))
+      .sort((a, b) => a.index - b.index || order(a) - order(b));
+    res.trips = rp.trips.filter((r) => Math.floor(r.closeT / periodMs) * periodMs >= first && Math.floor(r.openT / periodMs) * periodMs <= last);
+    return res;
+  }
+  /**
+   * Re-bucket on zoom: when bars are narrower than `minPx`, markers of the same side + source in each run of `k` bars
+   * merge into one (token-weighted price, summed size and count, at the run's last bar), so glyphs never pile up.
+   */
+  function clusterMarkers(markers, barSpacingPx, minPx = 14) {
+    const k = fin(barSpacingPx) && barSpacingPx > 0 ? Math.max(1, Math.ceil(minPx / barSpacingPx)) : 1;
+    if (k === 1) return markers.map((m) => ({ ...m, span: 1 }));
+    const by = new Map();
+    for (const m of markers) {
+      const g = Math.floor(m.index / k);
+      const key = `${g}|${m.side}|${m.source}`;
+      const c = by.get(key);
+      if (!c) { by.set(key, { ...m, span: k, pTok: m.priceUsd !== null ? m.tokens : 0, pUsd: m.priceUsd !== null ? m.tokens * m.priceUsd : 0 }); continue; }
+      c.index = Math.max(c.index, m.index); c.bucket = Math.max(c.bucket, m.bucket);
+      c.t = Math.min(c.t, m.t); c.tLast = Math.max(c.tLast, m.tLast);
+      c.count += m.count; c.tokens += m.tokens; c.sol = c.sol === null || m.sol === null ? null : c.sol + m.sol;
+      if (m.priceUsd !== null) { c.pTok += m.tokens; c.pUsd += m.tokens * m.priceUsd; }
+      c.partial = c.partial || m.partial; c.closes = c.closes || m.closes;
+    }
+    return [...by.values()].map(({ pTok, pUsd, ...m }) => ({ ...m, priceUsd: pTok > 0 ? pUsd / pTok : null })).sort((a, b) => a.index - b.index);
+  }
+  /** Solid ▲ / ▼ = live, hollow △ / ▽ = paper; B / S always (reads without colour). */
+  function markerGlyph(side, source) { return source === 'paper' ? (side === 'buy' ? '△' : '▽') : (side === 'buy' ? '▲' : '▼'); }
+  function markerLetter(side) { return side === 'buy' ? 'B' : 'S'; }
+  /**
+   * Pixel geometry of one marker: the triangle's tip sits ON the fill price (a buy points up from below, a sell points
+   * down from above); with no price it sits against the bar (below the low / above the high). `x` = the bar's centre.
+   */
+  function markerShape(side, x, y, size = 6) {
+    const s = size, buy = side === 'buy';
+    const base = buy ? y + s * 1.6 : y - s * 1.6;
+    const tri = [[x, y], [x - s, base], [x + s, base]];
+    const labelY = buy ? base + 9 : base - 9;
+    return { tri, labelX: x, labelY, hit: { x0: x - s - 3, x1: x + s + 3, y0: Math.min(y, labelY) - 7, y1: Math.max(y, labelY) + 7 } };
+  }
+  /** The hover tooltip lines for a marker (time, price — mcap and price on an mcap axis — size, source). */
+  function markerTooltip(m, display, timeFmt) {
+    const f = axisFormatter(display);
+    const px = m.priceUsd === null ? 'price not recorded' : display && display.mode === 'mcap' ? `MC ${f(m.priceUsd)} (${fmtPrice(m.priceUsd)})` : fmtPrice(m.priceUsd);
+    const when = m.count > 1 ? `${timeFmt(m.t)} – ${timeFmt(m.tLast)}` : timeFmt(m.t);
+    const kind = m.side === 'buy' ? (m.partial ? 'BUY (added)' : 'BUY') : (m.closes ? 'SELL (closed)' : 'SELL (partial)');
+    return [
+      `${markerGlyph(m.side, m.source)}${markerLetter(m.side)} ${kind}${m.count > 1 ? ` ×${m.count}` : ''}`,
+      when,
+      `${m.count > 1 && m.priceUsd !== null ? 'avg ' : ''}${px}`,
+      `${fmtTokens(m.tokens)} tokens${m.sol !== null ? ` · ${fmtSol(m.sol)}` : ''}`,
+      m.source === 'paper' ? 'PAPER · simulated ledger' : 'LIVE · confirmed on-chain fill',
+    ];
+  }
+  function fmtTokens(n) { return !fin(n) ? '—' : n >= 1e12 ? `${(n / 1e12).toFixed(2)}T` : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}K` : n >= 1 ? String(Math.round(n * 100) / 100) : n.toPrecision(3); }
+  /** "△B ▽S paper  ▲B ▼S live" for the sources on screen; "+N fills off-chart (…)" for what was omitted. */
+  function markerLegend(markers) {
+    const has = (s) => markers.some((m) => m.source === s);
+    return [has('paper') ? '△B ▽S paper' : '', has('live') ? '▲B ▼S live' : ''].filter(Boolean).join('  ');
+  }
+  function omittedNote(s) {
+    const n = s.before + s.after + s.gap;
+    if (!n) return '';
+    const why = [];
+    if (s.before) why.push(`${s.before} earlier`);
+    if (s.after) why.push(`${s.after} newer than the last candle`);
+    if (s.gap) why.push(`${s.gap} in a period with no candle`);
+    return `+${n} fill${n === 1 ? '' : 's'} off-chart (${why.join(', ')})`;
   }
 
   /** LWC price format for a price magnitude: enough decimals for memecoin prices (down to 1e-12). */
@@ -278,6 +391,6 @@
     return bars[i].time + f * (bars[i + 1].time - bars[i].time);
   }
 
-  const api = { setTzOffset, chartTime, INTERVALS, PERIOD_MS, INDICATORS, STYLES, SCALES, toBars, mergeTail, ema, sma, vwap, volumes, barTimeOf, tapeMarkers, fillMarkers, priceFormatFor, fmtPrice, fmtAxis, fmtUsd, fmtPct, fmtSol, legendFor, fmtMcapAxis, fmtCompact, fmtCompactUsd, displayOf, axisFormatter, MCAP_LABEL, MCAP_FALLBACK, indexOfTime, logicalOf, timeOfLogical };
+  const api = { setTzOffset, chartTime, INTERVALS, PERIOD_MS, INDICATORS, STYLES, SCALES, toBars, mergeTail, ema, sma, vwap, volumes, barTimeOf, tapeMarkers, cleanFills, replayFills, chartMarkers, clusterMarkers, markerGlyph, markerLetter, markerShape, markerTooltip, markerLegend, omittedNote, priceFormatFor, fmtPrice, fmtAxis, fmtUsd, fmtPct, fmtSol, legendFor, fmtMcapAxis, fmtCompact, fmtCompactUsd, displayOf, axisFormatter, MCAP_LABEL, MCAP_FALLBACK, indexOfTime, logicalOf, timeOfLogical };
   root.DTChart = Object.freeze(api);
 })(typeof window !== 'undefined' ? window : globalThis);

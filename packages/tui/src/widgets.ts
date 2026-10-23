@@ -7,6 +7,7 @@ import { Canvas, type Style } from './canvas.ts';
 import { mix, luminance, type Hex } from './color.ts';
 import { fmtUsd, fmtPct, fmtNum, fmtPrice, fmtPriceBare, fmtCompactUsd, compactDecimalsFor, fmtAgeSec, shortAddr, clamp } from './fmt.ts';
 import { launchpadColor } from './theme.ts';
+import { chartMarkers, markerGlyph, markerLetter, markerLabel, markerLegend, markerRow, omittedNote, MARKER_PERIOD_MS, type ChartTradeFill, type FillSource, type MarkerSet, type TradeMarker } from './markers.ts';
 import type { Candle, CandleInterval, Launchpad } from '@dexterm/data';
 
 export const BLOCKS = '▁▂▃▄▅▆▇█';
@@ -126,6 +127,31 @@ export interface CandleOpts {
    * number of additional decimals the axis needs so two ticks never read the same (fmtCompact honours it).
    */
   axisFmt?: (n: number, extra?: number) => string;
+  /**
+   * task-1483: BUY / SELL markers from the ledgers' fills (paper and live), placed at their fill time and price on the
+   * bars on screen (markers.ts decides what is on screen; the rest is omitted and counted, never moved), plus a dashed
+   * line at the open position's average entry. Display only. Absent / empty = the chart is drawn exactly as before.
+   */
+  trades?: CandleTradeMarks | null;
+}
+
+/** task-1483: what the candle chart marks: the fills, and the open position's average entry (the ledger's figure). */
+export interface CandleTradeMarks {
+  fills: readonly ChartTradeFill[];
+  /** The open position's average entry, USD per token, and its ledger; null / absent = flat (no line). */
+  avgEntry?: { usd: number; source: FillSource } | null;
+  /** Shade closed round trips entry → exit (default true). */
+  band?: boolean;
+}
+
+/** task-1483: what candleChart drew for the trade marks (tests and the screen's notes read it). */
+export interface CandleMarkInfo {
+  set: MarkerSet;
+  /** Markers drawn, with the cell of their glyph. */
+  drawn: Array<{ marker: TradeMarker; col: number; row: number }>;
+  /** Markers on screen whose price fell outside the plotted range or had no free row (not clamped). */
+  offPlot: number;
+  avgRow: number | null;
 }
 
 /** task-1472: the price axis never prints scientific notation: subscript zeros below 0.01 (0.0₅493), like fmtPrice. */
@@ -141,7 +167,7 @@ function fmtPriceAxis(p: number): string {
  * 3-column bodies with a centered wick, half-block tops/bottoms, ━ for dojis. Newest at right.
  * Bodies brighten with recency, glow ▐ into the gap column, and tint the row above/below 12 %.
  */
-export function candleChart(c: Canvas, x: number, y: number, w: number, h: number, candles: readonly Candle[], opts: CandleOpts = {}): void {
+export function candleChart(c: Canvas, x: number, y: number, w: number, h: number, candles: readonly Candle[], opts: CandleOpts = {}): CandleMarkInfo | null {
   const t = c.theme;
   const bg = opts.bg || t.panel;
   const axisW = 10;
@@ -149,7 +175,7 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
   const timeH = 1;
   const plotW = w - axisW;
   const plotH = h - volH - timeH;
-  if (plotW < 10 || plotH < 4 || candles.length === 0) return;
+  if (plotW < 10 || plotH < 4 || candles.length === 0) return null;
   const CW = 4; // 3-col body with centered wick + 1-col gap
   const n = Math.min(candles.length, Math.floor(plotW / CW));
   const data = candles.slice(-n);
@@ -158,6 +184,16 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
   const baseFmt = opts.axisFmt ?? fmtPriceAxis;
   let lo = Infinity, hi = -Infinity, vmax = 0;
   for (const k of data) { lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); vmax = Math.max(vmax, k.v); }
+  // task-1483: the trade marks for the bars on screen. Their prices (and the avg entry) widen the range when they sit
+  // within 3× of the last close, like the popup's levels; a farther price is left off the plot rather than squashing it.
+  const tm = opts.trades && (opts.trades.fills.length || opts.trades.avgEntry) ? opts.trades : null;
+  const period = MARKER_PERIOD_MS[String(opts.interval || '1h')] ?? 3600e3;
+  const set = tm ? chartMarkers(tm.fills, { periodMs: period, barTimes: data.map((k) => k.t) }) : null;
+  const lastC = data[data.length - 1].c;
+  const near = (p: number | null | undefined): p is number => typeof p === 'number' && Number.isFinite(p) && p > 0 && lastC > 0 && p / lastC < 3 && lastC / p < 3;
+  if (set) for (const m of set.markers) if (near(m.priceUsd)) { lo = Math.min(lo, m.priceUsd); hi = Math.max(hi, m.priceUsd); }
+  const avgUsd = tm?.avgEntry && near(tm.avgEntry.usd) ? tm.avgEntry.usd : null;
+  if (avgUsd !== null) { lo = Math.min(lo, avgUsd); hi = Math.max(hi, avgUsd); }
   const pad = (hi - lo) * 0.06 || hi * 0.01;
   lo -= pad; hi += pad;
   const range = hi - lo || 1;
@@ -173,6 +209,20 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
     const price = hi - (row / (plotH - 1)) * range;
     for (let k = 0; k < plotW; k++) c.put(x + k, y + row, '·', gridStyle);
     c.textR(x + plotW, y + row, axisW, ' ' + fmtAxis(price), labelStyle);
+  }
+  // task-1483: closed round trips, entry bar → exit bar, as a faint wash behind the candles (green = sold above the entry)
+  if (set && tm?.band !== false) {
+    for (const r of set.trips) {
+      const a = Math.max(0, data.findIndex((k) => k.t + period > r.openT));
+      let b = n - 1;
+      for (let i = n - 1; i >= 0; i--) if (data[i].t <= r.closeT) { b = i; break; }
+      const win = r.entryUsd !== null && r.exitUsd !== null ? r.exitUsd >= r.entryUsd : null;
+      const tint = mix(bg, win === null ? t.muted : win ? t.up : t.down, 0.07);
+      for (let i = a; i <= b; i++) for (let q = 0; q < CW; q++) for (let row = 0; row < plotH; row++) {
+        const cx = x + i * CW + q; if (cx >= x + plotW) continue;
+        const gi = c.idx(cx, y + row); if (!c.hard[gi]) c.bg[gi] = tint;
+      }
+    }
   }
   // last price line + tag
   const last = data[data.length - 1];
@@ -224,6 +274,7 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
       for (let q = 0; q < 3; q++) { const gi = c.idx(col + q, y + r); if (!c.hard[gi]) c.bg[gi] = mix(bg, color, 0.12); }
     }
   }
+  const info = set ? drawTradeMarks(c, { x, y, plotW, plotH, n, CW, bg, lo, hi, axisW, fmtAxis, lastRow: lastRow >= 0 && lastRow < plotH ? lastRow : null, data, set, avgUsd, avgSource: tm?.avgEntry?.source ?? 'paper', scale: s }) : null;
   if (volH) {
     const vy = y + plotH;
     for (let i = 0; i < n; i++) {
@@ -253,6 +304,91 @@ export function candleChart(c: Canvas, x: number, y: number, w: number, h: numbe
     c.text(cx, ty, lab, labelStyle);
   }
   c.textR(x + plotW, ty, axisW, (opts.interval || '1h') + ' UTC', { fg: t.dim, bg });
+  return info;
+}
+
+interface MarkGeom {
+  x: number; y: number; plotW: number; plotH: number; n: number; CW: number; bg: Hex; lo: number; hi: number; axisW: number;
+  fmtAxis: (p: number) => string; lastRow: number | null; data: readonly Candle[]; set: MarkerSet; avgUsd: number | null; avgSource: FillSource; scale: number;
+}
+
+const freeCell = (c: Canvas, cx: number, cy: number): boolean => { const ch = c.ch[c.idx(cx, cy)]; return ch === ' ' || ch === '·' || ch === '┄'; };
+
+/**
+ * task-1483: the avg-entry line, the B / S markers and their legend, on top of the drawn candles. Glyph + letter on
+ * every marker (△B ▽S paper, ▲B ▼S live), so NO_COLOR and calm read the same; colour only adds to it.
+ */
+function drawTradeMarks(c: Canvas, g: MarkGeom): CandleMarkInfo {
+  const t = c.theme;
+  const { x, y, plotW, plotH, CW, bg } = g;
+  const rowsOf = (p: number) => ((g.hi - p) / (g.hi - g.lo)) * plotH;
+  // the open position's average entry: a dashed line through the empty cells (candles stay on top) + an axis tag
+  let avgRow: number | null = null;
+  let avgShown = false;
+  if (g.avgUsd !== null) {
+    avgRow = markerRow(g.avgUsd, g.lo, g.hi, plotH);
+    if (avgRow !== null) {
+      const col = g.avgSource === 'paper' ? t.warn : t.text;
+      for (let k = 0; k < plotW; k++) if (freeCell(c, x + k, y + avgRow)) { c.put(x + k, y + avgRow, '┄', { fg: mix(bg, col, 0.8), bg, soft: true }); avgShown = true; }
+      // `avg` at the line's left end so it reads without colour (also over the last-price dashes when both share a row),
+      // and the value as an axis tag
+      const labelOk = (cx: number) => freeCell(c, cx, y + avgRow!) || c.ch[c.idx(cx, y + avgRow!)] === '╌';
+      if (labelOk(x) && labelOk(x + 1) && labelOk(x + 2)) { c.text(x, y + avgRow, 'avg', { fg: col, bg, b: true, hard: true }); avgShown = true; }
+      if (avgRow !== g.lastRow) {
+        c.fill(x + plotW, y + avgRow, g.axisW, 1, ' ', { bg }); // the grid label under it goes, not half of it
+        c.textR(x + plotW, y + avgRow, g.axisW, ' ' + g.fmtAxis(g.avgUsd), { fg: '#000000', bg: col, b: true });
+        avgShown = true;
+      }
+    }
+  }
+  const used = new Set<number>();
+  const drawn: CandleMarkInfo['drawn'] = [];
+  let offPlot = 0;
+  for (const m of g.set.markers) {
+    const k = g.data[m.index];
+    const col0 = x + m.index * CW;
+    const buy = m.side === 'buy';
+    // the fill's own price; no price → against the bar (below the low for a buy, above the high for a sell)
+    let row = m.priceUsd !== null ? markerRow(m.priceUsd, g.lo, g.hi, plotH) : Math.floor(rowsOf(buy ? k.l : k.h)) + (buy ? 1 : -1);
+    if (row === null || row < 0 || row >= plotH) { offPlot++; continue; }
+    // two marks in one bar on the same row (buy + sell, or paper + live): step away from the bar, never across it
+    while (row >= 0 && row < plotH && (used.has((row << 12) | m.index))) row += buy ? 1 : -1;
+    if (row < 0 || row >= plotH) { offPlot++; continue; }
+    used.add((row << 12) | m.index);
+    const sideCol = buy ? t.up : t.down;
+    const st: Style = m.source === 'live' ? { fg: '#000000', bg: sideCol, b: true, hard: true } : { fg: sideCol, bg: mix(bg, sideCol, 0.2), b: true, hard: true };
+    c.put(col0 + 1, y + row, markerGlyph(m.side, m.source), st);
+    c.put(col0 + 2, y + row, markerLetter(m.side), st);
+    if (m.count > 1 && col0 + 3 < x + plotW) c.put(col0 + 3, y + row, m.count > 9 ? '+' : String(m.count), st);
+    drawn.push({ marker: m, col: col0 + 1, row });
+  }
+  // the newest marker gets a compact label (B 41k) where the row has room, right of it first, else left
+  const newest = drawn[drawn.length - 1];
+  if (newest) {
+    const label = markerLabel(newest.marker, g.fmtAxis, 1);
+    const fits = (sx: number) => sx >= x && sx + label.length <= x + plotW && [...label].every((_, i) => freeCell(c, sx + i, y + newest.row));
+    const right = newest.col + 3 + (newest.marker.count > 1 ? 1 : 0);
+    const sx = fits(right) ? right : fits(newest.col - 2 - label.length) ? newest.col - 2 - label.length : null;
+    if (sx !== null) c.text(sx, y + newest.row, label, { fg: newest.marker.side === 'buy' ? t.up : t.down, bg, hard: true });
+  }
+  // legend + what was left off, on the top plot row where it is empty (else the bottom row), never over a candle
+  const note = [markerLegend(drawn.map((d) => d.marker), avgShown), omittedNote(g.set)].filter(Boolean).join(' · ');
+  if (note) {
+    const text = note.length > plotW - 2 ? note.slice(0, Math.max(0, plotW - 3)) + '…' : note;
+    // the outermost rows first (top, bottom, then inwards); in a row, the leftmost run of empty cells long enough
+    const rows: number[] = [];
+    for (let i = 0; i < Math.ceil(plotH / 2); i++) { rows.push(i); if (plotH - 1 - i !== i) rows.push(plotH - 1 - i); }
+    const len = [...text].length;
+    place: for (const row of rows) {
+      if (row === avgRow || row === g.lastRow || drawn.some((d) => d.row === row)) continue;
+      let run = 0;
+      for (let cx = x + 1; cx < x + plotW; cx++) {
+        run = freeCell(c, cx, y + row) ? run + 1 : 0;
+        if (run === len) { c.text(cx - len + 1, y + row, text, { fg: t.dim, bg, i: true }); break place; }
+      }
+    }
+  }
+  return { set: g.set, drawn, offPlot, avgRow };
 }
 
 export interface BarOpts {
@@ -522,7 +658,7 @@ export interface TapeRow { t: number; side: 'buy' | 'sell'; usd: number; price: 
  * Trade tape as a list: age · BUY/SELL · USD · price · wallet, newest first, one trade per line.
  * Draws at most `h` lines; returns the number drawn.
  */
-export function tradeTape(c: Canvas, x: number, y: number, w: number, h: number, trades: readonly TapeRow[], now: number, opts: { bg?: Hex } = {}): number {
+export function tradeTape(c: Canvas, x: number, y: number, w: number, h: number, trades: readonly TapeRow[], now: number, opts: { bg?: Hex; priceFmt?: (p: number) => string } = {}): number {
   const t = c.theme;
   const bg = opts.bg || t.panel;
   let n = 0;
@@ -534,7 +670,8 @@ export function tradeTape(c: Canvas, x: number, y: number, w: number, h: number,
     cx = c.text(cx + 1, yy, tr.side === 'buy' ? 'BUY ' : 'SELL', { fg: color, bg, b: true }, Math.max(0, x + w - cx - 1));
     if (cx + 9 > x + w) { n += 1; continue; }
     cx = c.textR(cx + 1, yy, 8, fmtUsd(tr.usd), { fg: t.text, bg });
-    cx = c.text(cx + 2, yy, tr.price > 0 ? fmtPrice(tr.price) : '—', { fg: t.muted, bg }, Math.max(0, x + w - cx - 2));
+    // task-1537: the caller's price basis (a market cap at the coin's supply by default); plain price without one
+    cx = c.text(cx + 2, yy, tr.price > 0 ? (opts.priceFmt ?? fmtPrice)(tr.price) : '—', { fg: t.muted, bg }, Math.max(0, x + w - cx - 2));
     c.text(cx + 2, yy, shortAddr(tr.wallet, 3), { fg: t.dim, bg }, Math.max(0, x + w - cx - 2));
     n += 1;
   }

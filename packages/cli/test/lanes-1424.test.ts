@@ -49,7 +49,9 @@ test('lanes: every serial and perf test registers through serialLane (one logged
 
 test('lanes: npm test runs the parallel suite, then the serial lane, then the perf lane', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
-  const t = pkg.scripts.test;
+  // task-1574: package.json runs scripts/test-run.mjs, which holds the chain (CHAIN) so it is shell-portable.
+  assert.equal(pkg.scripts.test, 'node scripts/test-run.mjs');
+  const t = /const CHAIN = '([^']+)';/.exec(readFileSync(join(ROOT, 'scripts', 'test-run.mjs'), 'utf8'))?.[1] ?? '';
   const par = t.indexOf('node --test "packages/*/test/*.test.ts"');
   const ser = t.indexOf('npm run test:serial');
   const perf = t.indexOf('npm run test:perf');

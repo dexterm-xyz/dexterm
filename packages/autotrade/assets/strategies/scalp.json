@@ -1,0 +1,98 @@
+{
+  "kind": "strategy",
+  "schema": "dexterm-strategy/1",
+  "id": "scalp",
+  "name": "Scalp (quick play)",
+  "version": "1.0.0",
+  "description": "Fresh momentum on a young coin: a 5-minute push with buyers in control, small size, fast partial profits, a tight trail, a 20-minute clock and a -25% hard stop.",
+  "mode": "paper",
+  "bankroll": {
+    "startUsd": 1000
+  },
+  "entry": {
+    "screen": "liq >= 30K vol5m >= 5K !flag:mint !flag:freeze",
+    "ageHours": {
+      "min": 0,
+      "max": 6
+    },
+    "safety": {
+      "maxTop10Pct": 35,
+      "maxDevPct": 5,
+      "requireNoMintAuthority": true,
+      "requireNoFreezeAuthority": true,
+      "maxMcapSplitX": 5,
+      "youngVertical": {
+        "maxAgeHours": 1,
+        "maxH1Pct": 250
+      },
+      "unknownHolders": "reject"
+    },
+    "triggers": [
+      {
+        "kind": "momentum",
+        "m5MinPct": 3,
+        "buySellMin": 1.2
+      }
+    ],
+    "triggerMode": "any",
+    "decide": "agent",
+    "candidateTtlSec": 300
+  },
+  "exits": {
+    "default": "scalp",
+    "profiles": [
+      "builtin:scalp",
+      "builtin:swing"
+    ]
+  },
+  "sizing": {
+    "mode": "pct",
+    "pct": 5,
+    "maxPctOfBankroll": 10,
+    "maxUsd": 500,
+    "minUsd": 5
+  },
+  "risk": {
+    "perTrade": {
+      "maxLossPctOfBankroll": 10,
+      "assumedLossPctNoStop": 100
+    },
+    "dailyLossHaltPct": 10,
+    "drawdown": {
+      "sizeDownAtPct": 15,
+      "sizeDownMult": 0.5,
+      "recoverBelowPct": 8,
+      "haltAtPct": 25
+    },
+    "maxConcurrent": 2,
+    "maxExposurePct": 25,
+    "lossStreak": {
+      "losses": 3,
+      "cooldownMin": 60
+    },
+    "maxEntriesPerDay": 12,
+    "perCoin": {
+      "maxEntries": 2,
+      "cooldownMin": 10
+    }
+  },
+  "agent": {
+    "model": "sonnet",
+    "maxSessions": 2,
+    "budgetUsdPerSession": 0.5,
+    "budgetUsdPerDay": 10,
+    "maxTurns": 60,
+    "deltaEverySec": 15,
+    "decideWithinSec": 90,
+    "sessionMaxMin": 240,
+    "onTimeout": "skip"
+  },
+  "execution": {
+    "slippageBps": 100,
+    "feeBps": 30,
+    "networkFeeUsd": 0.02,
+    "latencyMs": 3000,
+    "maxPriceImpactPct": 8,
+    "minExitLiquidityUsd": 2000
+  }
+}

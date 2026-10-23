@@ -7,7 +7,10 @@
 //             day, skipped while the bucket is paused after a 429. The only requests this package makes.
 //   label     code-only outcome labels per (t0 anchor, horizon) from the recorded numbers (labels.ts).
 //   prune     retention: raw JSON 7 d (focus rows only), one row per mint per minute after 24 h,
-//             columns 90 d, outcomes/verdicts forever.
+//             columns 90 d, outcomes/verdicts forever; autotrade ticks 14 d, sampled candles 90 d.
+//   ticks     (task-1504, opt-in) position-grade samples every 5–10 s for held / open / candidate / watch coins
+//             (ticks.ts), and a DB cap enforced by evicting the oldest history (retention.ts) instead of
+//             pausing observation.
 // Everything is synchronous SQLite on the app's own DB file (node:sqlite, WAL), batched in transactions,
 // so a refresh never awaits the recorder and a crash loses at most one batch.
 
@@ -22,6 +25,8 @@ import { ALL_HORIZONS_MASK, HORIZONS_SEC, SCHEMA_SQL, SCHEMA_VERSION } from './s
 import { COLUMN_NAMES, fromDsView, fromEnrichedRow, isMaterialChange, type ChangeDetection, type Snapshot, type SnapshotColumns, type SnapshotKind } from './snapshot.ts';
 import { LABELER_VERSION, labelAtHorizon, type Label, type Observation, type OutcomeRow } from './labels.ts';
 import { dueBounds, selectDue, type DueMint, type MintSummary } from './sweep.ts';
+import { TickLane, type FocusEntry, type TickPolicy, type TickPollResult } from './ticks.ts';
+import { DEFAULT_AGE, enforceCap, pruneTicksByAge, type CapPolicy, type CapResult } from './retention.ts';
 
 export interface RecorderOptions {
   /** SQLite file (the app's `--db`); ':memory:' (default) for tests. */
@@ -41,6 +46,10 @@ export interface RecorderOptions {
   membersEveryMs?: number;
   sweep?: Partial<SweepPolicy>;
   retention?: Partial<RetentionPolicy>;
+  /** task-1504: the autotrade tick lane (off unless given). `focus` lists the coins to sample, with their role. */
+  ticks?: { focus: () => Iterable<FocusEntry>; policy?: Partial<TickPolicy> };
+  /** task-1504: keep the DB under a cap by evicting the oldest history (off unless `maxBytes` is set). */
+  cap?: Partial<CapPolicy>;
   /** Diagnostic sink (--verbose). */
   onLog?: (line: string) => void;
 }
@@ -58,14 +67,19 @@ export interface SweepPolicy {
 
 export interface RetentionPolicy {
   rawDays: number;
+  /** Snapshot / feed-member / sweep-ledger rows older than this go (AUTOTRADE-SPEC §10 Q4: 14 is the "age" option). */
   columnsDays: number;
   downsampleAfterHours: number;
+  /** task-1504: autotrade ticks older than this go (default 14). */
+  ticksDays: number;
+  /** task-1504: sampled 1m candles older than this go (default 90). */
+  candlesDays: number;
   /** Run the prune job at most this often (default 1 h). */
   everyMs: number;
 }
 
 export const DEFAULT_SWEEP: SweepPolicy = { everyMs: 60_000, maxCallsPerSweep: 6, maxCallsPerDay: 1500, batch: 30 };
-export const DEFAULT_RETENTION: RetentionPolicy = { rawDays: 7, columnsDays: 90, downsampleAfterHours: 24, everyMs: 3_600_000 };
+export const DEFAULT_RETENTION: RetentionPolicy = { rawDays: 7, columnsDays: 90, downsampleAfterHours: 24, everyMs: 3_600_000, ...DEFAULT_AGE };
 /** Unchanged rows are re-written this often at most; the horizons are ≥ 1 h, so 30 min keeps every window observed. */
 export const DEFAULT_HEARTBEAT_MS = 1_800_000;
 export const DEFAULT_T0_EVERY_MS = 3_600_000;
@@ -80,7 +94,7 @@ export const SEEN_EVICT_MS = 2 * 3_600_000;
 export interface ObserveResult { written: number; skipped: number; heartbeat: number; t0: number }
 export interface SweepResult { mints: number; calls: number; answered: number; skipped: 'disabled' | 'not-due' | 'paused' | 'in-flight' | 'day-cap' | null; error?: string }
 export interface LabelResult { labelled: number; pending: number; counts: Partial<Record<Label, number>> }
-export interface PruneResult { rawCleared: number; downsampled: number; expired: number; membersExpired: number }
+export interface PruneResult { rawCleared: number; downsampled: number; expired: number; membersExpired: number; ticksExpired: number; candlesExpired: number }
 
 export interface RecorderStats {
   enabled: boolean;
@@ -97,6 +111,10 @@ export interface RecorderStats {
   outcomesByLabel: Partial<Record<Label, number>>;
   sweeps: number;
   sweepCallsToday: number;
+  /** task-1504: autotrade tick rows, sampled 1m candles, and tick calls today. */
+  ticks: number;
+  candles: number;
+  tickCallsToday: number;
   /** Whole DB file (every table, the cache included), bytes. */
   dbBytes: number | null;
   /** Bytes used by the recorder's own tables and indexes (dbstat), null when dbstat is not compiled in. */
@@ -123,6 +141,9 @@ export class Recorder implements StoreListener {
   private readonly membersEveryMs: number;
   readonly sweepPolicy: SweepPolicy;
   readonly retention: RetentionPolicy;
+  /** task-1504: the tick lane (null when not configured) and the cap policy (null = no cap). */
+  readonly tickLane: TickLane | null;
+  readonly cap: Partial<CapPolicy> | null;
   private readonly onLog?: (line: string) => void;
   /**
    * Per mint: the last WRITTEN row (columns + hash + time) and the newest observation time this process
@@ -176,6 +197,8 @@ export class Recorder implements StoreListener {
       lastLive: this.db.prepare(`SELECT t, hash, sources, ${cols} FROM token_snapshots WHERE mint = ? AND kind = 'live' ORDER BY t DESC LIMIT 1`),
       insertCreator: this.db.prepare('INSERT OR IGNORE INTO creators (mint, creator, source, first_t, created_at) VALUES (?, ?, ?, ?, ?)'),
     };
+    this.tickLane = opts.ticks ? new TickLane(this.db, { focus: opts.ticks.focus, policy: opts.ticks.policy, clock: this.clock, onLog: this.onLog }) : null;
+    this.cap = opts.cap && opts.cap.maxBytes ? opts.cap : null;
   }
 
   /** Attach as the data layer's store listener (and detach any previous one). */
@@ -339,7 +362,32 @@ export class Recorder implements StoreListener {
     try {
       if (now - this.lastPruneAt >= this.retention.everyMs) { this.lastPruneAt = now; out.prune = this.prune(now); }
     } catch (err) { this.log(`prune failed: ${msg(err)}`); }
+    try { this.enforceCap(now); } catch (err) { this.log(`cap failed: ${msg(err)}`); }
     return out;
+  }
+
+  /**
+   * task-1504: one tick-lane poll (ticks.ts). The host calls it every `fastEveryMs` (5 s); 'disabled' when the
+   * recorder is off or no tick lane was configured. The only other requests this package makes besides sweeps.
+   */
+  async pollTicks(deps: { dexscreener: DexScreener; limiter: RateLimiter }, now = this.clock.now()): Promise<TickPollResult> {
+    if (!this.enabled || this.closed || !this.tickLane) return { coins: 0, calls: 0, answered: 0, written: 0, overCap: 0, skipped: 'disabled' };
+    return this.tickLane.poll(deps, now);
+  }
+
+  /**
+   * task-1504: keep the DB under the configured cap by evicting the oldest history (retention.ts). A no-op without
+   * a cap or below its high-water mark. Observation never pauses; the collector calls this before each pass.
+   */
+  enforceCap(now = this.clock.now()): CapResult | null {
+    if (!this.cap || this.closed) return null;
+    const r = enforceCap(this.db, this.cap, now);
+    if (r.evicted) {
+      this.log(`cap: used ${(r.usedBefore / 1e6).toFixed(1)} → ${(r.usedAfter / 1e6).toFixed(1)} MB (${r.reclaimed} reclaimed, ${r.slices} slice(s) of history), history now from ${r.cutoff === null ? '—' : new Date(r.cutoff).toISOString()}${r.over ? ' (still over: only the newest hour is left)' : ''}`);
+      // Forget cached last rows: an evicted mint is re-seeded from the DB (or written fresh) next time.
+      this.seen.clear();
+    }
+    return r;
   }
 
   /** Mints whose horizon window is open and unobserved (sweep.ts), soonest-closing first. */
@@ -472,7 +520,7 @@ export class Recorder implements StoreListener {
    * watermark in recorder_meta means each pass only looks at the hours that newly crossed the line.
    */
   prune(now = this.clock.now()): PruneResult {
-    const res: PruneResult = { rawCleared: 0, downsampled: 0, expired: 0, membersExpired: 0 };
+    const res: PruneResult = { rawCleared: 0, downsampled: 0, expired: 0, membersExpired: 0, ticksExpired: 0, candlesExpired: 0 };
     if (this.closed) return res;
     const day = 86_400_000;
     const rawBefore = now - this.retention.rawDays * day;
@@ -496,9 +544,12 @@ export class Recorder implements StoreListener {
       res.membersExpired = Number(this.db.prepare('DELETE FROM feed_members WHERE t < ?').run(colsBefore).changes);
       this.db.prepare('DELETE FROM mints WHERE last_any_t < ?').run(colsBefore);
       this.db.prepare('DELETE FROM sweeps WHERE started_at < ?').run(colsBefore);
+      const tk = pruneTicksByAge(this.db, { ticksDays: this.retention.ticksDays, candlesDays: this.retention.candlesDays }, now);
+      res.ticksExpired = tk.ticks;
+      res.candlesExpired = tk.candles;
       this.db.exec('COMMIT');
     } catch (err) { this.db.exec('ROLLBACK'); throw err; }
-    if (res.rawCleared || res.downsampled || res.expired) this.log(`prune: raw ${res.rawCleared}, downsampled ${res.downsampled}, expired ${res.expired} rows`);
+    if (res.rawCleared || res.downsampled || res.expired || res.ticksExpired) this.log(`prune: raw ${res.rawCleared}, downsampled ${res.downsampled}, expired ${res.expired} rows, ${res.ticksExpired} ticks`);
     return res;
   }
 
@@ -522,7 +573,7 @@ export class Recorder implements StoreListener {
     try {
       const d = one<{ b: number | null }>("SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN ('token_snapshots', 'token_snapshots_mint_t', 'token_snapshots_t', 'token_snapshots_t0_pending')");
       if (d.b !== null && Number(s.n) > 0) bytesPerSnapshot = Number(d.b) / Number(s.n);
-      const all = one<{ b: number | null }>("SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN ('recorder_meta', 'feed_members', 'feed_members_mint_t', 'token_snapshots', 'token_snapshots_mint_t', 'token_snapshots_t', 'token_snapshots_t0_pending', 'mints', 'mints_last_live', 'sweeps', 'chain_events', 'chain_events_mint_t', 'outcomes', 'outcomes_label', 'verdicts', 'verdicts_mint_t')");
+      const all = one<{ b: number | null }>("SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN ('recorder_meta', 'feed_members', 'feed_members_mint_t', 'token_snapshots', 'token_snapshots_mint_t', 'token_snapshots_t', 'token_snapshots_t0_pending', 'mints', 'mints_last_live', 'sweeps', 'chain_events', 'chain_events_mint_t', 'outcomes', 'outcomes_label', 'verdicts', 'verdicts_mint_t', 'creators', 'creators_creator', 'autotrade_ticks', 'autotrade_ticks_t', 'autotrade_candles_1m', 'autotrade_candles_1m_t')");
       recorderBytes = all.b === null ? null : Number(all.b);
     } catch {
       // dbstat not compiled in: estimate from the stored widths (rows + the three indexes).
@@ -542,6 +593,9 @@ export class Recorder implements StoreListener {
       outcomesByLabel: byLabel,
       sweeps: Number(one<{ n: number }>('SELECT COUNT(*) AS n FROM sweeps').n),
       sweepCallsToday: this.sweepCallsToday(now),
+      ticks: Number(one<{ n: number }>('SELECT COUNT(*) AS n FROM autotrade_ticks').n),
+      candles: Number(one<{ n: number }>('SELECT COUNT(*) AS n FROM autotrade_candles_1m').n),
+      tickCallsToday: this.tickLane ? this.tickLane.callsToday(now) : tickCallsOn(this.db, now),
       dbBytes, recorderBytes, bytesPerSnapshot,
       oldestT: s.oldest === null ? null : Number(s.oldest),
       newestT: s.newest === null ? null : Number(s.newest),
@@ -577,6 +631,12 @@ export class Recorder implements StoreListener {
   private log(line: string): void {
     this.onLog?.(`recorder: ${line}\n`);
   }
+}
+
+/** Tick calls the lane recorded for `now`'s UTC day (recorder_meta), for a reader with no lane of its own. */
+function tickCallsOn(db: DatabaseSync, now: number): number {
+  const r = db.prepare("SELECT value FROM recorder_meta WHERE key = 'tick_calls'").get() as { value: string } | undefined;
+  try { const v = r ? JSON.parse(r.value) as { day: string; calls: number } : null; return v && v.day === new Date(now).toISOString().slice(0, 10) ? Number(v.calls) || 0 : 0; } catch { return 0; }
 }
 
 function msg(err: unknown): string {

@@ -22,6 +22,6 @@ date: 2026-10-16
 
 Requirements, install, first run and dexterm doctor.
 
-dexterm is a terminal screener for Solana memecoins with a local Claude analyst. It runs on your machine, reads public data with no key and never holds a wallet key. Trading is PAPER by default; any live swap is signed in your own Phantom wallet after you approve it (see paper trading (https://dexterm.xyz/docs/paper-trading)). This page gets you from nothing to the live screener.
+dexterm is a terminal screener for Solana memecoins with a local Claude analyst. It runs on your machine, reads public data with no key and never holds a wallet key. Trading in dexterm is PAPER (see paper trading (https://dexterm.xyz/docs/paper-trading)); dexterm signs nothing, and live trading happens in a Telegram trading bot of your choice (see live trading (https://dexterm.xyz/docs/live-trading)). This page gets you from nothing to the live screener.
 
 > note: Never used a terminal before? Start with the complete beginner guide (https://dexterm.xyz/docs/beginners). It defines every term, shows exactly what to copy on macOS, Linux and Windows, and ends with a ten-minute read-only coin review.

@@ -1,7 +1,6 @@
 // task-1340 trade moments, the CLI side. The acceptance rule is structural: effects fire ONLY after a settled
-// outcome. Proven here three ways: (1) the ticket binding's `onSettled` fires once per booked paper fill / failure
-// and, in LIVE, once per filled / refused / send-failed signer outcome, never for a quote, a plan, an in-flight
-// send or a `send-unknown`; (2) `fireMoment` has exactly one caller in the app (main.ts's live.onSettled hook) and
+// outcome. Proven here three ways: (1) the ticket binding's `onSettled` fires once per booked paper fill / failure,
+// never for a quote (task-1571: the ticket is paper only); (2) `fireMoment` has exactly one caller in the app (main.ts's live.onSettled hook) and
 // the ticket screen never imports it; (3) the ticket screen is shielded: its rect renders byte-identical with the
 // loudest effects + a live moment vs calm, in every phase, at 176 / 120 / 90.
 import assert from 'node:assert/strict';
@@ -11,16 +10,15 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   normalizeSwapQuote, SOL_MINT, LAMPORTS_PER_SOL,
-  type SwapQuote, type PaperOrder, type Fill, type PaperWallet, type TradeExecutor, type DataLayer, type SignerPort, type ConfirmView, type PlanView, type StatusView, type LinkedWallet,
+  type SwapQuote, type PaperOrder, type Fill, type PaperWallet, type TradeExecutor, type DataLayer,
 } from '@dexterm/data';
 import { THEMES, makeVfx, fireMoment, pulse, applyFx, type SettledTx } from '@dexterm/tui';
-import { TradeTicketLive, settledFromFill, settledFromConfirm } from '../src/live/trade.ts';
+import { TradeTicketLive, settledFromFill } from '../src/live/trade.ts';
 import type { TicketKey } from '../src/trade.ts';
 import { makeFixtureState, renderFrame, type AppState } from '../src/state.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const PK = 'Phan7om111111111111111111111111111111111111';
 const NOW = 1_000_000;
 
 function quote(): SwapQuote {
@@ -94,58 +92,7 @@ test('paper: a failed execution settles ONCE as failed (with the reason); an esc
   assert.equal(settled.length, 1, 'esc during filling settles nothing');
 });
 
-// ---- LIVE: the signer's outcomes
-function planView(): PlanView {
-  return {
-    hash: 'H'.repeat(64), kind: 'swap', network: 'devnet', mint: MINT, symbol: 'USDC', side: 'buy', decimals: 6, amountInRaw: '500000000', amountOutRaw: '2000000', minOutRaw: '1990000',
-    slippageBps: 50, route: ['Meteora'], priceImpactPct: 0.5, notionalUsd: null, solUsd: { price: 150, sources: ['dexscreener'] },
-    sim: { ran: true, ok: true, error: null, unitsConsumed: null, solOutLamports: '500005000' }, feeLamports: '6234', prioritizationFeeLamports: 1234,
-    instructions: [{ program: 'Jupiter', op: 'route' }], policy: { ok: true }, precheck: { ok: true }, userPublicKey: PK, builtAt: NOW, expiresAt: NOW + 90_000,
-  } as unknown as PlanView;
-}
-class FakeSigner implements SignerPort {
-  async fast(): Promise<never> { throw new Error('fill path not used by the ticket'); }
-  async fill(): Promise<never> { throw new Error('fill path not used by the ticket'); }
-  alive = true;
-  confirm_: ConfirmView = { kind: 'filled', signature: 'S'.repeat(88), fill: { t: NOW, mint: MINT, symbol: 'USDC', side: 'buy', decimals: 6, solDelta: '-500005000', tokenDelta: '2000000', feeLamports: '5000', priceSol: 0.00025, realizedLamports: '0' }, roundTripMs: 12, lighthouseTail: 0, network: 'devnet' };
-  async status(): Promise<StatusView> { return { version: 1, pid: 1, linked: { publicKey: PK, linkedAt: NOW }, network: 'devnet', rpcHost: 'api.devnet.solana.com', caps: { network: 'devnet', mainnetEnabled: false, perTradeUsd: 5, dailyUsd: 20, maxPriceImpactPct: 3, maxSolOut: 1, maxSlippageBps: 500 }, panic: null, ledgerLocked: null, spentTodayUsd: 0, plans: 0, solUsd: { price: 150, sources: ['dexscreener'] }, probeAvailable: true } as unknown as StatusView; }
-  async plan(): Promise<PlanView> { return planView(); }
-  async probe(): Promise<PlanView> { return planView(); }
-  async precheck(): Promise<{ ok: boolean }> { return { ok: true }; }
-  async confirm(): Promise<ConfirmView> { return this.confirm_; }
-  async drop(): Promise<void> {}
-  async panic(): Promise<void> {}
-  close(): void { this.alive = false; }
-}
-const linked: LinkedWallet = { publicKey: PK, linkedAt: NOW };
-async function liveRun(out: ConfirmView): Promise<SettledTx[]> {
-  const settled: SettledTx[] = [];
-  const signer = new FakeSigner(); signer.confirm_ = out;
-  const executor = { previewFill: () => FILL, execute: async () => FILL } as unknown as TradeExecutor;
-  const tl = new TradeTicketLive(fakeDl(), fakeWallet(), executor, { mint: MINT, symbol: 'USDC', decimals: 6, side: 'buy' }, { now: () => NOW, live: { signer: () => signer, linked: () => linked }, onSettled: (tx) => settled.push(tx) });
-  tl.key(ch('0')); tl.key(ch('.')); tl.key(ch('5'));
-  tl.key(ch('L')); await tick();
-  assert.equal(settled.length, 0, 'flipping to LIVE settles nothing');
-  assert.equal(tl.key({ name: 'enter' }), 'plan'); await tick();
-  assert.equal(settled.length, 0, 'the PLAN settles nothing');
-  assert.equal(tl.key(ch('Y')), 'confirm-live'); // the binding runs confirmLive() itself
-  await tick(); await tick();
-  return settled;
-}
-
-test('live: a filled outcome settles once with the signature (ledger live); refused / send-failed settle as failed; send-unknown settles NOTHING', async () => {
-  const filled = await liveRun(new FakeSigner().confirm_);
-  assert.equal(filled.length, 1);
-  assert.equal(filled[0].status, 'confirmed'); assert.equal(filled[0].ledger, 'live'); assert.equal(filled[0].sig, 'S'.repeat(88)); assert.ok(Math.abs((filled[0].solDelta ?? 0) + 0.500005) < 1e-9);
-  const refused = await liveRun({ kind: 'refused', reason: 'per-trade-cap', message: '$7.50 > $5' });
-  assert.equal(refused.length, 1); assert.equal(refused[0].status, 'failed'); assert.match(refused[0].reason ?? '', /per-trade-cap/);
-  const failed = await liveRun({ kind: 'send-failed', signature: null, error: 'blockhash expired' });
-  assert.equal(failed.length, 1); assert.equal(failed[0].status, 'failed');
-  const unknown = await liveRun({ kind: 'send-unknown', signature: 'U'.repeat(88), error: 'confirmation timed out' });
-  assert.equal(unknown.length, 0, 'an unknown outcome is not a result: no effect, no sound');
-  // the pure mappers agree
-  assert.equal(settledFromConfirm({ kind: 'send-unknown', signature: 'x', error: 'e' }, 'USDC', MINT, false), null);
-  assert.equal(settledFromConfirm(new FakeSigner().confirm_, 'USDC', MINT, true), null, 'the devnet probe is not a trade');
+test('settledFromFill: a paper sell settles with its PnL fraction of the cost before the sell', () => {
   assert.equal(settledFromFill(SELL_FILL, 500_000_000n).pnlPct, 0.2);
 });
 

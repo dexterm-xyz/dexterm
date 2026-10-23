@@ -12,6 +12,7 @@ import type { GeckoTerminal, GtPool, GtTrade } from './sources/geckoterminal.ts'
 import type { GoPlus, GoPlusSecurity } from './sources/goplus.ts';
 import type { RugCheck, RugSummary } from './sources/rugcheck.ts';
 import type { MintInfo, TopHolders } from './sources/solana-rpc.ts';
+import { classifyHolder, EX_POOL_TAGS } from './intel/holder-class.ts';
 
 /**
  * Keyless aggregate holder data (task-1309): holder count + top-10 concentration from a source that
@@ -24,7 +25,9 @@ export interface HoldersAggregate {
   fetchedAt: number;
 }
 
-const NS = { mint: 'rpc:mint', holders: 'rpc:holders', rug: 'rugcheck', pools: 'gt:pools', goplus: 'goplus', trades: 'gt:trades' } as const;
+const NS = { mint: 'rpc:mint', holders: 'rpc:holders', ownerMeta: 'rpc:owner-meta', rug: 'rugcheck', pools: 'gt:pools', goplus: 'goplus', trades: 'gt:trades' } as const;
+/** The program that owns an account (a pool, a curve PDA, a wallet) does not change: a week per owner. */
+const OWNER_META_TTL = 7 * 86_400_000;
 /** Pools for a mint change rarely; one lookup per hour per mint. */
 const POOLS_TTL = 3_600_000;
 /** The trades tape shares GeckoTerminal's 10/min bucket with the candles: refresh at most every 20 s per pool. */
@@ -89,7 +92,7 @@ export class TokenDetail {
       async () => {
         const info = (await this.mintInfo(mint)).value;
         try {
-          return await this.pool.topHolders(mint, { info });
+          return await this.exPool(await this.pool.topHolders(mint, { info }));
         } catch (rpcErr) {
           const agg = await this.aggregateHolders(mint, info).catch(() => null);
           if (agg) return agg;
@@ -98,6 +101,43 @@ export class TokenDetail {
       },
       { ttlMs: TTL.holders, source: this.pool.primary.source },
     );
+  }
+
+  /**
+   * The HOLDERS panel's ex-pool rule (task-1367 `classifyHolder`) for every caller of `holders()` (the MCP
+   * `get_holders` / `get_dossier` concentration, the autotrade dossier, rug-check), task-1518. A top account whose
+   * owner is a pool, a bonding curve, a launch vault, a lock or the burn address is not a person's position: it gets
+   * `poolSide` (and `label: 'LP'` for a pool, curve or vault) and is left out of `top10Pct`. Without this, every young
+   * PumpSwap pool (the vault owner is the pool account) and every Meteora DAMM v2 pool (the global pool authority)
+   * read as one 80-95 % "holder". One extra getMultipleAccounts over the owners not yet known (no data, <= 20
+   * addresses, cached a week per owner: an account's program does not change), the same lookup the wallet-intel scan
+   * makes; when it fails, only the derived authorities and the pump.fun curve are recognised and every other owner
+   * stays counted (never hidden).
+   */
+  private async exPool(h: TopHolders): Promise<TopHolders> {
+    if (h.aggregateOnly || !h.holders.length) return h;
+    const owners = [...new Set(h.holders.map((x) => x.owner).filter((o): o is string => !!o))];
+    type Meta = { programOwner: string | null; exists: boolean; lamports: number };
+    const meta = new Map<string, Meta>();
+    const misses: string[] = [];
+    for (const o of owners) { const hit = this.cache.get<Meta>(NS.ownerMeta, o); if (hit) meta.set(o, hit.value); else misses.push(o); }
+    if (misses.length) {
+      try {
+        const got = await this.pool.accountMeta(misses);
+        // an address with no account yet can be created later: an hour for those, a week for accounts that exist
+        for (const [o, m] of got) { meta.set(o, m); this.cache.set(NS.ownerMeta, o, m, { ttlMs: m.exists ? OWNER_META_TTL : 3_600_000, source: this.pool.primary.source }); }
+      } catch { /* counted, never hidden */ }
+    }
+    const holders = h.holders.map((x) => {
+      if (!x.owner || x.label) return x;
+      const c = classifyHolder({ mint: h.mint, owner: x.owner, tokenAccounts: [x.tokenAccount], meta: meta.get(x.owner), cex: null, dev: null, poolRule: null, linked: null });
+      if (!EX_POOL_TAGS.has(c.tag)) return x;
+      return { ...x, ...(c.tag === 'POOL' || c.tag === 'CURVE' || c.tag === 'VAULT' ? { label: 'LP' as const } : {}), poolSide: { tag: c.tag, program: c.program, reason: c.reason } };
+    });
+    const sum = (xs: { pct: number }[]) => Math.round(xs.reduce((s, x) => s + x.pct, 0) * 1000) / 1000;
+    const notCounted = new Set(['LP', 'cex', 'bridge']);
+    const counted = holders.filter((x) => !x.poolSide && !(x.label && notCounted.has(x.label))).slice(0, 10);
+    return { ...h, holders, top10Pct: h.top10Pct === null ? null : sum(counted), top10PctRaw: h.top10Pct === null ? null : sum(holders.slice(0, 10)) };
   }
 
   /** Build an aggregate-only TopHolders from the keyless Jupiter holder data; null when unavailable. */

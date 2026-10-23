@@ -21,8 +21,8 @@ const PKGS = path.join(ROOT, 'packages');
 
 // Runtime files outside src/ that code loads by path (relative to each package dir).
 const RUNTIME_DIRS = {
+  autotrade: ['assets'],
   cli: ['assets'],
-  data: ['vendor'],
   mcp: ['assets'],
   popup: ['vendor'],
 };

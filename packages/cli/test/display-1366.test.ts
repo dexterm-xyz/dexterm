@@ -49,22 +49,22 @@ test('$ toggles price ⇄ mcap, persists display.priceMode through the journal, 
   const state = makeFixtureState();
   state.custom = initCustom({ DEXTERM_HOME: home });
   state.priceMode = configPriceMode(state.custom.config);
-  assert.equal(priceModeOf(state), 'price');
-  keys(state, '$');
-  assert.equal(state.priceMode, 'mcap');
-  assert.match(state.pendingToast ?? '', /MARKET CAP .*saved/);
-  assert.equal(JSON.parse(readFileSync(configPath(home), 'utf8')).display.priceMode, 'mcap');
-  assert.equal(readJournal(home).at(-1)?.actor, 'user');
-  assert.equal(configPriceMode(initCustom({ DEXTERM_HOME: home }).config), 'mcap');
+  assert.equal(priceModeOf(state), 'mcap'); // task-1537: market cap is the default
   keys(state, '$');
   assert.equal(state.priceMode, 'price');
+  assert.match(state.pendingToast ?? '', /USD PRICE .*saved/);
   assert.equal(JSON.parse(readFileSync(configPath(home), 'utf8')).display.priceMode, 'price');
+  assert.equal(readJournal(home).at(-1)?.actor, 'user');
+  assert.equal(configPriceMode(initCustom({ DEXTERM_HOME: home }).config), 'price');
+  keys(state, '$');
+  assert.equal(state.priceMode, 'mcap');
+  assert.equal(JSON.parse(readFileSync(configPath(home), 'utf8')).display.priceMode, 'mcap');
 });
 
 test('$ on a run without a config still flips the mode for the run and says it was not saved', () => {
   const state = makeFixtureState();
   keys(state, '$');
-  assert.equal(state.priceMode, 'mcap');
+  assert.equal(state.priceMode, 'price'); // task-1537: from the mcap default
   assert.match(state.pendingToast ?? '', /not saved/);
 });
 
@@ -73,7 +73,8 @@ test('--price-mode sets the run mode and rejects anything else', () => {
   assert.equal(parseArgs([]).priceMode, null);
   assert.throws(() => parseArgs(['--price-mode', 'fdv']), /--price-mode expects price\|mcap/);
   assert.equal(stateFromArgs(parseArgs(['--screen', 'screener', '--price-mode', 'mcap']), {}).priceMode, 'mcap');
-  assert.equal(priceModeOf(stateFromArgs(parseArgs(['--screen', 'screener']), {})), 'price');
+  assert.equal(priceModeOf(stateFromArgs(parseArgs(['--screen', 'screener']), {})), 'mcap'); // task-1537
+  assert.equal(stateFromArgs(parseArgs(['--screen', 'screener', '--price-mode', 'price']), {}).priceMode, 'price');
 });
 
 test('a workspace with priceMode switches the mode; one without keeps the current mode', () => {
@@ -92,10 +93,10 @@ test('dexterm display shows and sets the saved mode; a bad mode exits 2', () => 
   const home = tmp();
   const a = bufIo({ DEXTERM_HOME: home });
   assert.equal(displayCommand([], a.io), 0);
-  assert.match(a.out(), /display\.priceMode = price/);
+  assert.match(a.out(), /display\.priceMode = mcap/); // task-1537: the default
   const b = bufIo({ DEXTERM_HOME: home });
-  assert.equal(displayCommand(['mcap'], b.io), 0);
-  assert.equal(JSON.parse(readFileSync(configPath(home), 'utf8')).display.priceMode, 'mcap');
+  assert.equal(displayCommand(['price'], b.io), 0);
+  assert.equal(JSON.parse(readFileSync(configPath(home), 'utf8')).display.priceMode, 'price');
   const c = bufIo({ DEXTERM_HOME: home });
   assert.equal(displayCommand(['usd'], c.io), 2);
   assert.match(c.err(), /unknown mode/);
@@ -217,9 +218,12 @@ test('popup chart VM: priceMode + supply (= mcap / price at the latest tick) tra
   const none = chartVMFromView(tokenView(null), { interval: '1h', series: null, priceMode: 'mcap', now: 1 });
   assert.equal(none.priceMode, 'mcap');
   assert.equal(none.supply, null, 'unknown supply is sent as null (the page shows price + a note), never guessed');
-  const px = chartVMFromView(tokenView(2_000_000), { interval: '1h', series: null, now: 1 });
+  const px = chartVMFromView(tokenView(2_000_000), { interval: '1h', series: null, priceMode: 'price', now: 1 });
   assert.equal(px.priceMode, 'price');
   assert.equal(px.supply, null);
+  const dflt = chartVMFromView(tokenView(2_000_000), { interval: '1h', series: null, now: 1 }); // task-1537: absent = mcap
+  assert.equal(dflt.priceMode, 'mcap');
+  assert.equal(dflt.supply, 1e9);
   assert.equal(chartVMFromView(tokenView(2_000_000)).priceMode, undefined, 'the v1 (no extras) VM shape is untouched');
 });
 

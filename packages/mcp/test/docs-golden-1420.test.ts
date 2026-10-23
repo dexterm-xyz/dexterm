@@ -37,7 +37,7 @@ const DOCS_GOLDEN: Array<[string, string]> = [
   ['what is a pnl card', 'docs-paper-trading-pnl-cards'],
   ['what does a pnl card show for a closed trade', 'docs-paper-trading-pnl-cards'],
   ['what are trade moments', 'docs-paper-trading-trade-moments'],
-  ['what does the live trading path keep', 'docs-paper-trading-what-the-live-path-keeps'],
+  ['what changed in live trading in 0.1.7', 'docs-live-trading-changed-in-0-1-7'],
   ['what does wallet panic do and how is it resumed', 'docs-paper-trading-panic'],
   // voice
   ['how fast does the voice respond, what is the latency', 'docs-voice-latency'],

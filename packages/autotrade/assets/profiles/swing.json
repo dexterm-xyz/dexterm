@@ -1,0 +1,88 @@
+{
+  "kind": "exit-profile",
+  "id": "swing",
+  "name": "Swing",
+  "version": "1.1.0",
+  "description": "An intraday trend on a coin that has already proven it can hold a pool: medium size, thirds at +50% and +100%, a 25% trail, a 90-minute review, no hard stop (thesis breaks only).",
+  "fit": {
+    "summary": "1 h to 7 d old; above VWAP with higher lows on the 1m candles; liquidity >= $30k and steady; holders not concentrated.",
+    "minLiquidityUsd": 30000,
+    "ageHours": {
+      "min": 1,
+      "max": 168
+    },
+    "maxTop10Pct": 30,
+    "signals": [
+      "trend intact on 1m candles",
+      "liquidity steady or rising vs its 5-min high",
+      "narrative not cooling"
+    ]
+  },
+  "sizing": {
+    "maxSizePctOfBankroll": 15
+  },
+  "tpLadder": [
+    {
+      "atPct": 50,
+      "sellFrac": 0.33
+    },
+    {
+      "atPct": 100,
+      "sellFrac": 0.33
+    }
+  ],
+  "trailingStop": {
+    "armAtPct": 40,
+    "trailPct": 25
+  },
+  "timeStop": {
+    "minutes": 90,
+    "ifBelowPct": 15,
+    "action": "review"
+  },
+  "hardStop": {
+    "enabled": false,
+    "atPct": null,
+    "why": "Recorded winners often dipped 10-25% before they ran, and a rug fills near -100% through any stop. The thesis-break rules and the size are the exit."
+  },
+  "thesisBreak": {
+    "liquidityDropPct": 30,
+    "liquidityWindowMin": 5,
+    "mcapDivergenceX": 5,
+    "devSell": {
+      "exitOnAnyDevSell": true,
+      "topHolderSellPctOfBag": 25
+    },
+    "volumeDeath": {
+      "m5TradesBelow": 10,
+      "forMinutes": 15
+    }
+  },
+  "reentry": {
+    "allowed": true,
+    "cooldownMinutes": 30,
+    "maxEntriesPerCoinPerSession": 1,
+    "requires": "a new full vet that passes"
+  },
+  "carry": {
+    "allowed": true,
+    "requiresTpFilled": 1,
+    "maxRemainderPctOfBankroll": 10
+  },
+  "reprofileTo": [
+    "runner",
+    "scalp"
+  ],
+  "notes": [
+    "Upgrade to runner only after TP1 filled with the price above it and every thesis check clean. Downgrade to scalp any time the trend weakens.",
+    "1.1.0 adds wake (the judgement calls that wake the position's agent session; noAnswer is what happens when no session answers in time) and maxHoldMinutes (a hard holding cap). Mechanical exits never wait for the session."
+  ],
+  "wake": {
+    "onTpFilled": true,
+    "onTimeReview": true,
+    "drawdownPct": -30,
+    "thesisWarnFrac": 0.6,
+    "noAnswer": "exit"
+  },
+  "maxHoldMinutes": 720
+}

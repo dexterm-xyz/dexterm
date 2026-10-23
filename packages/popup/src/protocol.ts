@@ -109,6 +109,24 @@ export interface TapeTrade { t: number; side: 'buy' | 'sell'; usd: number; price
 /** A fill on this coin from the position source's ledger (paper today), for chart markers. Read-only display. */
 export interface ChartFill { t: number; side: 'buy' | 'sell'; priceUsd: number | null; sol: number; tokens: number }
 
+/**
+ * task-1483: one fill for the chart's BUY / SELL markers — every fill of this coin in the paper ledger (`paper`: the
+ * user's and an agent's simulated fills) and the live ledger (`live`: confirmed real swaps). The page buckets them to
+ * its own timeframe and draws them; read-only display, the page can never act on one.
+ */
+export interface ChartMarkFill { t: number; side: 'buy' | 'sell'; source: 'paper' | 'live'; priceUsd: number | null; tokens: number; sol: number | null }
+
+/** task-1483: the markers layer of the chart VM. `on` = display.chartMarkers (the page's MARKERS control asks to flip it). */
+export interface ChartMarks {
+  on: boolean;
+  /** Oldest first, at most CHART_MARKS_MAX. */
+  fills: ChartMarkFill[];
+  /** Fills older than the ones sent (the VM carries the newest CHART_MARKS_MAX). */
+  truncated: number;
+}
+/** The most fills one chart VM carries (newest kept). */
+export const CHART_MARKS_MAX = 500;
+
 /** One labelled cell of the popup's position row, formatted TUI-side so it reads exactly like the terminal row. */
 export interface PositionCell { label: string; value: string; tone: 'up' | 'down' | 'text' | 'muted' | 'warn' }
 
@@ -202,6 +220,8 @@ export interface ChartVM {
   supply?: number | null;
   /** task-1473 r2: the PnL chip while an auto mode runs and a position is open; null / absent = no chip. */
   chip?: ChartChip | null;
+  /** task-1483: BUY / SELL markers (paper + live fills of this coin); absent = an older terminal (no markers). */
+  marks?: ChartMarks | null;
 }
 
 /** Token-detail popup view model: the identity + market + risk subset of the live TokenView. */

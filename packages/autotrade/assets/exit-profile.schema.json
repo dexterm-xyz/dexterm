@@ -1,0 +1,492 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dexterm.xyz/schemas/exit-profile.schema.json",
+  "title": "dexterm exit profile 1.2.0",
+  "description": "One per-coin exit profile: how a PAPER position is sized, scaled out, trailed, timed and abandoned. The seed data model of the dexterm strategy builder. Percentages are whole percents relative to the average entry price unless a field says otherwise. Version 1.2.0 (AUTOTRADE-SPEC section 1) extends 1.0.0 additively: wake and maxHoldMinutes (1.1.0), costRecovery and bagTrail (1.2.0). required is unchanged, so every 1.0.0 and 1.1.0 profile stays valid. Cross-field rules the schema cannot express (TP ladder ascending, sellFrac sum <= 1, an enabled hard stop needs atPct, a bagTrail needs costRecovery, TP steps above costRecovery.atPct) are checked by validateExitProfile in @dexterm/autotrade and by the challenge kit validateProfile.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "id",
+    "name",
+    "version",
+    "description",
+    "fit",
+    "sizing",
+    "tpLadder",
+    "trailingStop",
+    "timeStop",
+    "hardStop",
+    "thesisBreak",
+    "reentry",
+    "carry",
+    "reprofileTo"
+  ],
+  "properties": {
+    "kind": {
+      "const": "exit-profile"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,31}$",
+      "description": "Stable id the agent names in its PROFILE line."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "fit": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "When the agent should pick this profile, from the vet evidence. Advisory: the agent states its evidence in the PROFILE line.",
+      "required": [
+        "summary",
+        "minLiquidityUsd",
+        "ageHours"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "minLiquidityUsd": {
+          "type": "number",
+          "minimum": 10000
+        },
+        "ageHours": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        },
+        "maxTop10Pct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "maxItems": 8
+        }
+      }
+    },
+    "sizing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxSizePctOfBankroll"
+      ],
+      "properties": {
+        "maxSizePctOfBankroll": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 25,
+          "description": "Max entry cost as % of the CURRENT book bankroll (before the breaker multiplier). The size is the risk: a rug takes ~100%."
+        }
+      }
+    },
+    "tpLadder": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 6,
+      "description": "Take-profit steps. sellFrac is a fraction of the ORIGINAL position size (0.25 = a quarter of what was bought).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "atPct",
+          "sellFrac"
+        ],
+        "properties": {
+          "atPct": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 10000
+          },
+          "sellFrac": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "trailingStop": {
+      "description": "Once the price has been at least armAtPct above entry, exit the remainder when it falls trailPct from the highest price since entry. null = no trail.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "armAtPct",
+            "trailPct"
+          ],
+          "properties": {
+            "armAtPct": {
+              "type": "number",
+              "minimum": 0
+            },
+            "trailPct": {
+              "type": "number",
+              "minimum": 5,
+              "maximum": 60
+            }
+          }
+        }
+      ]
+    },
+    "timeStop": {
+      "description": "If the position has not reached ifBelowPct within `minutes` of entry: exit it, review it (a written judgment, no forced exit), or tighten (re-profile down). null = none.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minutes",
+            "ifBelowPct",
+            "action"
+          ],
+          "properties": {
+            "minutes": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 10080
+            },
+            "ifBelowPct": {
+              "type": "number"
+            },
+            "action": {
+              "enum": [
+                "exit",
+                "review",
+                "tighten"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "hardStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "atPct",
+        "why"
+      ],
+      "description": "Optional hard invalidation stop. Opt-in per profile, with the reason written down.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "atPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "maximum": 0,
+          "minimum": -90
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      }
+    },
+    "thesisBreak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "liquidityDropPct",
+        "liquidityWindowMin",
+        "mcapDivergenceX",
+        "devSell",
+        "volumeDeath"
+      ],
+      "description": "Evidence on the coin's own reads that the thesis is broken: exit everything, the next call is paper_close fraction 1.",
+      "properties": {
+        "liquidityDropPct": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 90,
+          "description": "Pool liquidity down this % from its highest read in the window."
+        },
+        "liquidityWindowMin": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "mcapDivergenceX": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 1.5,
+          "description": "Jupiter vs DexScreener market cap more than X apart (get_token pair.mcapResolved), or flagged."
+        },
+        "devSell": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "exitOnAnyDevSell",
+            "topHolderSellPctOfBag"
+          ],
+          "properties": {
+            "exitOnAnyDevSell": {
+              "type": "boolean"
+            },
+            "topHolderSellPctOfBag": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        },
+        "volumeDeath": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "m5TradesBelow",
+                "forMinutes"
+              ],
+              "properties": {
+                "m5TradesBelow": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "forMinutes": {
+                  "type": "number",
+                  "minimum": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "reentry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed",
+        "cooldownMinutes",
+        "maxEntriesPerCoinPerSession",
+        "requires"
+      ],
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "cooldownMinutes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxEntriesPerCoinPerSession": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "requires": {
+          "type": "string",
+          "maxLength": 300
+        }
+      }
+    },
+    "carry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed",
+        "requiresTpFilled",
+        "maxRemainderPctOfBankroll"
+      ],
+      "description": "May an open position stay open across the gap between sessions (unmanaged)?",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "requiresTpFilled": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "description": "How many TP steps must have filled first."
+        },
+        "maxRemainderPctOfBankroll": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 25
+        }
+      }
+    },
+    "reprofileTo": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{1,31}$"
+      },
+      "maxItems": 8,
+      "uniqueItems": true,
+      "description": "Profiles this one may switch to mid-trade (with a logged REPROFILE line). Upgrades need TP1 filled; a fired trigger is executed first."
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "maxItems": 8
+    },
+    "costRecovery": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "atPct",
+            "maxSellFrac"
+          ],
+          "properties": {
+            "atPct": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 10000
+            },
+            "maxSellFrac": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 0.9
+            }
+          }
+        }
+      ]
+    },
+    "bagTrail": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "trailPct"
+          ],
+          "properties": {
+            "trailPct": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 90
+            },
+            "armAtPct": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "wake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "onTpFilled",
+        "onTimeReview",
+        "drawdownPct",
+        "thesisWarnFrac",
+        "noAnswer"
+      ],
+      "properties": {
+        "onTpFilled": {
+          "type": "boolean"
+        },
+        "onTimeReview": {
+          "type": "boolean"
+        },
+        "drawdownPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -95,
+          "maximum": -1
+        },
+        "thesisWarnFrac": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.1,
+          "maximum": 0.95
+        },
+        "noAnswer": {
+          "enum": [
+            "hold",
+            "exit"
+          ]
+        },
+        "onCostRecovered": {
+          "type": "boolean"
+        }
+      }
+    },
+    "maxHoldMinutes": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 43200
+    }
+  }
+}

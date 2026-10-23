@@ -10,7 +10,9 @@
     ".": "./src/index.ts",
     "./model": "./src/model.ts",
     "./plans": "./src/trade/plans/index.ts",
-    "./copy": "./src/trade/copy/index.ts"
+    "./copy": "./src/trade/copy/index.ts",
+    "./ledger": "./src/trade/ledger/index.ts",
+    "./basis": "./src/basis.ts"
   },
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",

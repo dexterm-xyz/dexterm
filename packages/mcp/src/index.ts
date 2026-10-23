@@ -2,7 +2,7 @@
 // Every tool is read-only and schema-described; nothing in this package may build,
 // sign or send a transaction (SPEC §5.2, §6.3).
 
-export { runStdioServer, selfTest, McpTools, TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, appHelpAnswer, firewall, listPrompts, getPrompt, resourceList, resourceRead, overlayCounts, userSkillPreamble, BUNDLED_KB_DIR, BUNDLED_SKILLS_DIR } from './server.ts';
+export { runStdioServer, selfTest, McpTools, TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, PAPER_NOTE_TOOLS, appHelpAnswer, firewall, listPrompts, getPrompt, resourceList, resourceRead, overlayCounts, userSkillPreamble, BUNDLED_KB_DIR, BUNDLED_SKILLS_DIR } from './server.ts';
 // task-1443: resolve the paper agent desk from the running app's rendezvous (null when agent paper trading is off).
 export { resolvePaperAgentDesk, paperAgentDeskDb } from './paper-agent.ts';
 export {
@@ -11,7 +11,18 @@ export {
   KB_LIMITS, SKILL_LIMITS, KB_ID, SKILL_NAME, KB_RULE, MONEY_TOOLS,
   type ContentEntry, type ContentKind, type MergedSet, type SkippedFile, type CheckResult, type BundledSource, type Origin,
 } from './user-content.ts';
+// task-1507: the AUTOTRADE chat tools (strategy reads + proposals), the model deny-list, the risk delta and the
+// proposal files the Q screen's keypress path re-checks and applies.
+export {
+  AutotradeTools, ProposalFiles, checkProposal, riskDelta, diffLines, screenDelta, deniedChanges, opsPolicyErrors, opsShapeErrors,
+  proposalCardView, proposalsDir, isProposalId, cleanText, loadEngine, STRATEGY_DENIED_FOR_MODELS, STRATEGY_READ_TOOLS, STRATEGY_PROPOSE_TOOLS,
+  AUTOTRADE_TOOLS, PARALLEL_READ_TOOLS, PARALLEL_CONTROL_TOOLS, PARALLEL_TOOLS, MAX_PROPOSAL_OPS, BACKTEST_MAX_DAYS, BACKTEST_RATE, PROPOSAL_SCHEMA, RUNNER_STATUS_SCHEMA,
+  type Engine, type StrategyProposalRecord, type ProposalCheck, type ProposalInput, type RiskDelta, type RiskReason, type ProposalStatus,
+} from './autotrade-tools.ts';
 export { buildDossier, type DossierInput, type DossierAvailability } from './dossier.ts';
+// task-1530: the trade-ledger tools (reads + the backtest request), and the request files the CLI runs or dismisses.
+export { LedgerTools, LEDGER_TOOLS, LEDGER_READ_TOOLS, LEDGER_PROPOSE_TOOLS, tradeView, filterFromArgs, type LedgerToolsOpts } from './ledger-tools.ts';
+export { BacktestRequests, requestsDir, isRequestId, BACKTEST_REQUEST_SCHEMA, REQUEST_MAX_DAYS, MAX_PENDING_REQUESTS, REQUEST_RATE_PER_HOUR, type BacktestRequest, type RequestStatus } from './backtest-requests.ts';
 // task-1406 + task-1421: the spectator sink the tool-call path writes to when a spectator surface is open
 // (via DEXTERM_SPECTATOR_FILE, or the ~/.dexterm rendezvous an external `dexterm mcp` client uses).
 export {

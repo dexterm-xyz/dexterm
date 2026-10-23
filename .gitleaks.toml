@@ -37,3 +37,11 @@ regexes = ['''idempotency_key: '(esc-[0-9]{8}|inject-key-[0-9]{4})'[ ,}]''']
 description = "packages/cli/test/x-ui-1357.test.ts: `access_token: 'at-xyz-1234567890'` is the fake X OAuth token a test stores to render the logged-in status line (task-1375); it is written only into the test's temp home dir."
 regexTarget = "line"
 regexes = ['''store\.setTokens\(\{ access_token: 'at-xyz-1234567890', refresh_token: 'rt-1', ''']
+
+[[allowlists]]
+description = "packages/autotrade/test/chat-attacks-1527.test.ts (task-1527, release 0.1.7): the Telegram redaction attack test feeds self-made fakes (a patterned uuid in a Helius RPC URL, `api_key=abc123def456`) to the redactor and asserts they come out as [url] / [key]; they are not credentials."
+regexTarget = "line"
+regexes = [
+  '''const RPC = 'https://mainnet\.helius-rpc\.com/\?api-key=0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';''',
+  '''\['api_key=abc123def456', /api_key=\\\[key\\\]/\]''',
+]

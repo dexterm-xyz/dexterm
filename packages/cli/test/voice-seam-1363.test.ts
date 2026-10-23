@@ -5,14 +5,14 @@ import { useNodeScripts } from '../../../scripts/test-support.ts';
 // asserts the app did the thing — plus a static check that every kind the router can emit has a `case` in
 // handleVoiceDecision, so a new kind without a consumer fails here before a verifier finds it.
 //
-// Booby traps (any touch = a failed test): every PlanService arming/cap/gate/panic method AND the task-1363 fire-path
-// switch (useLive/usePaper), the fast-wallet store (create/remove/load), the signer client's fill/confirm/fast, the
-// paper executor, the ticket's confirm paths and the LIVE flip, the in-app /wallet commands.
+// Booby traps (any touch = a failed test): every PlanService arming/cap/gate/panic method, the paper executor, the
+// ticket's confirm path, the in-app /wallet commands. task-1571: the fire-path switch, fast wallet, signer client and
+// LIVE flip are gone from the build.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +44,7 @@ const { createReplayFeed } = await import('../src/feed.ts');
 const { LiveContext } = await import('../src/live/index.ts');
 const { TradeTicketLive } = await import('../src/live/trade.ts');
 const { TokenPopups } = await import('../src/popup.ts');
-const { PaperExecutor, FastWalletStore, SignerClient } = await import('@dexterm/data');
+const { PaperExecutor } = await import('@dexterm/data');
 const { PlanService } = await import('@dexterm/data/plans');
 type PlanService = InstanceType<typeof PlanService>;
 const { screenerView } = await import('../src/screener/view.ts');
@@ -52,19 +52,12 @@ const { screenerView } = await import('../src/screener/view.ts');
 // ---- booby traps
 const TRAP: string[] = [];
 const trap = (name: string) => function () { TRAP.push(name); throw new Error(`TRAP: ${name}`); };
-for (const m of ['armPlan', 'armPlanByKeypress', 'armMandateByKeypress', 'draftMandate', 'acceptRisk', 'restoreGate', 'panic', 'confirm', 'challenge', 'useLive', 'usePaper'] as const) {
+for (const m of ['armPlan', 'armPlanByKeypress', 'armMandateByKeypress', 'draftMandate', 'acceptRisk', 'restoreGate', 'panic', 'confirm', 'challenge'] as const) {
   (PlanService.prototype as unknown as Record<string, unknown>)[m] = trap(`PlanService.${m}`);
 }
-for (const m of ['create', 'remove', 'load'] as const) (FastWalletStore.prototype as unknown as Record<string, unknown>)[m] = trap(`FastWalletStore.${m}`);
-for (const m of ['fill', 'confirm', 'fast', 'plan', 'probe', 'start'] as const) (SignerClient.prototype as unknown as Record<string, unknown>)[m] = trap(`SignerClient.${m}`);
 (PaperExecutor.prototype as unknown as { execute: unknown }).execute = trap('PaperExecutor.execute');
 (TradeTicketLive.prototype as unknown as { confirm: unknown }).confirm = trap('TradeTicketLive.confirm');
-(TradeTicketLive.prototype as unknown as { confirmLive: unknown }).confirmLive = trap('TradeTicketLive.confirmLive');
-(TradeTicketLive.prototype as unknown as { planLive: unknown }).planLive = trap('TradeTicketLive.planLive');
-const origSetMode = TradeTicketLive.prototype.setMode;
-TradeTicketLive.prototype.setMode = function (mode: 'paper' | 'live') { if (mode === 'live') { TRAP.push('TradeTicketLive.setMode(live)'); throw new Error('TRAP'); } return origSetMode.call(this, mode); };
 (LiveContext.prototype as unknown as { walletCommand: unknown }).walletCommand = trap('LiveContext.walletCommand');
-(LiveContext.prototype as unknown as { ensureSigner: unknown }).ensureSigner = trap('LiveContext.ensureSigner');
 const POPUPS: string[] = [];
 (TokenPopups.prototype as unknown as { openChart: unknown }).openChart = async function (v: { symbol: string }) { POPUPS.push(`open:${v.symbol}`); (this as unknown as { chartId: string }).chartId = 'fake'; return { native: false, reason: 'test', dock: null }; };
 (TokenPopups.prototype as unknown as { closeChart: unknown }).closeChart = function () { POPUPS.push('close'); (this as unknown as { chartId: string | null }).chartId = null; };
@@ -237,10 +230,9 @@ test('task-1363 hostile utterances: live / fast wallet / fire path / airdrop wor
     await home(); assert.ok(select(SEL));
     await say(u);
     assert.equal(state.plansSvc?.mode?.() ?? 'paper', 'paper', `"${u}": fire path stays paper`);
-    assert.equal(state.plansUi?.liveModal ?? false, false, `"${u}": the fire-path modal is not raised by voice`);
     assert.ok(plans().every((p) => p.status === 'proposed' || p.status === 'cancelled'), `"${u}": nothing armed`);
     assert.equal(state.pendingWallet ?? null, null, `"${u}": no /wallet command queued`);
     assert.equal(TRAP.length, 0, `"${u}" touched ${JSON.stringify(TRAP)}`);
   }
-  assert.equal(new FastWalletStore(join(HOME, 'fast-wallet.json')).exists(), false, 'no fast wallet was created');
+  assert.equal(existsSync(join(HOME, 'fast-wallet.json')), false, 'no key file of any kind');
 });

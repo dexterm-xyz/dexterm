@@ -101,16 +101,6 @@ export function widgetPositionsVM(state: AppState): WidgetPositionsVM {
     try {
       for (const p of live.positions.view().rows) rows.push({ symbol: p.symbol, mint: p.mint, side: 'long', tokens: p.tokens, valueSol: p.valueSol, unrealizedSol: p.unrealizedSol, unrealizedPct: p.unrealizedPct, book: 'paper' });
     } catch { /* no paper book on this run */ }
-    const lp = live.livePositions;
-    if (lp) {
-      try {
-        for (const p of lp.positions()) {
-          if (p.tokensRaw <= 0n) continue;
-          const h = lp.held(p.mint);
-          rows.push({ symbol: p.symbol, mint: p.mint, side: 'long', tokens: h?.tokens ?? Number(p.tokensRaw) / 10 ** p.decimals, valueSol: null, unrealizedSol: null, unrealizedPct: null, book: 'live' });
-        }
-      } catch { /* ledger unreadable */ }
-    }
   }
   return { rows, updatedAt: state.now.getTime() };
 }

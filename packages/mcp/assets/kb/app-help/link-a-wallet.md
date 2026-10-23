@@ -1,6 +1,6 @@
 ---
 id: link-a-wallet
-title: Link a wallet for trading (dexterm wallet)
+title: Link a wallet to show its public key (dexterm wallet)
 kind: app-help
 screen: all
 feature: trading
@@ -12,17 +12,11 @@ tags:
   - phantom
   - connect
   - pubkey
-  - caps
-  - trade
+  - panic
+  - resume
 commands:
   - wallet
 flags:
-  - --mainnet
-  - --max-usd
-  - --daily-usd
-  - --max-sol-out
-  - --max-slippage-bps
-  - --trade-rpc
   - --no-live
 confidence: high
 owner: maintainers
@@ -36,6 +30,6 @@ sources:
 date: 2026-10-16
 ---
 
-`dexterm wallet link|unlink|status` links a Phantom wallet through a loopback bridge — your keys NEVER enter dexterm, only the public key is stored — and shows the link and the signer-side trade caps. dexterm is non-custodial: it builds and simulates transactions, your own wallet signs. The signer-side caps (`--max-usd`, `--daily-usd`, `--max-sol-out`, `--max-slippage-bps`) and the RPC (`--trade-rpc`) bound every trade and live on the signer; `--mainnet` opts in to mainnet and `--no-live` keeps it paper-only. The analyst can never link, unlink, sign, arm or change a cap.
+`dexterm wallet link|unlink|status` links a Phantom wallet through a loopback bridge (Phantom signs a MESSAGE, never a transaction): your keys NEVER enter dexterm, only the public key is stored, for display. dexterm holds no key and never signs or sends a transaction; trading in dexterm is paper, and live trading happens in the Telegram trading bot of your choice. `dexterm wallet panic` halts autotrade runs and the paper agent desk at once; only `dexterm wallet resume`, a keypress on a real terminal, clears it. `--no-live` (0.1.6) is accepted and changes nothing. The analyst can never link, unlink or resume.
 
 CLI: `dexterm wallet`.

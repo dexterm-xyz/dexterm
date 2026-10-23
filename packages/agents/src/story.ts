@@ -10,6 +10,7 @@
 // Like follow.ts it has no action path: it cannot arm, sign, size, confirm or raise a cap.
 
 import type { SpectatorEvent, SpectatorDetail } from './spectator.ts';
+import { fmtCap, knownSupply } from '@dexterm/data/basis';
 import { maskAddress } from './spectator.ts';
 
 export type StoryPhase = 'idle' | 'scanning' | 'vetting' | 'sizing' | 'executing' | 'holding' | 'exiting';
@@ -349,7 +350,7 @@ export class AgentStory {
         const qty = priced.reduce((s, x) => s + x.qty, 0);
         a.entryUsd = qty > 0 ? priced.reduce((s, x) => s + (x.priceUsd as number) * x.qty, 0) / qty : null;
         a.spentSol = buys.reduce((s, x) => s + Math.abs(x.sol), 0);
-        if (a.stage !== 'open') { this.score.entries += 1; this.decide(t, 'enter', a.symbol, `entered · ${Math.abs(f.sol).toFixed(4)} SOL${a.sizeUsd != null ? ` ($${a.sizeUsd.toFixed(2)})` : ''}${f.priceUsd != null ? ` @ $${fmtPx(f.priceUsd)}` : ''}`); }
+        if (a.stage !== 'open') { this.score.entries += 1; this.decide(t, 'enter', a.symbol, `entered · ${Math.abs(f.sol).toFixed(4)} SOL${a.sizeUsd != null ? ` ($${a.sizeUsd.toFixed(2)})` : ''}${f.priceUsd != null ? ` @ ${fillAt(f.mint, f.priceUsd)}` : ''}`); }
         a.stage = 'open';
         a.filledAt = a.filledAt ?? t;
         this.beats.fillAt = t;
@@ -508,7 +509,7 @@ function narrate(tool: string, d: SpectatorDetail, ev: SpectatorEvent, names: Ma
   if (d.larp) return `LARP evidence · ${d.larp.flags} flag${d.larp.flags === 1 ? '' : 's'}${d.larp.items[0] ? ` · ${d.larp.items[0]}` : ''}`;
   if (d.fill) {
     const f = d.fill;
-    if (f.side === 'buy') return `PAPER FILL · ${Math.abs(f.sol).toFixed(4)} SOL → ${fmtQty(f.qty)} ${sym(f.mint)}${f.priceUsd != null ? ` @ $${fmtPx(f.priceUsd)}` : ''}`;
+    if (f.side === 'buy') return `PAPER FILL · ${Math.abs(f.sol).toFixed(4)} SOL → ${fmtQty(f.qty)} ${sym(f.mint)}${f.priceUsd != null ? ` @ ${fillAt(f.mint, f.priceUsd)}` : ''}`;
     return `PAPER SELL · ${fmtQty(f.qty)} ${sym(f.mint)} → ${fmtSol(f.sol)}${f.realizedSol != null ? ` · realized ${fmtSol(f.realizedSol)}` : ''}`;
   }
   if (d.ticket) {
@@ -528,6 +529,15 @@ export function fmtQty(n: number): string {
   if (a >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (a >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toFixed(a >= 10 ? 0 : 2);
+}
+
+/**
+ * task-1537: a fill level in narration: the market cap it filled at when the supply is known without a guess (pump.fun's
+ * fixed 1B), the price beside it; else the price alone. Both numbers, so either basis reads it.
+ */
+export function fillAt(mint: string, priceUsd: number): string {
+  const sup = knownSupply({ mint });
+  return sup ? `${fmtCap(priceUsd * sup.tokens)} mcap ($${fmtPx(priceUsd)})` : `$${fmtPx(priceUsd)}`;
 }
 
 /** A price in USD with enough significant digits for a micro-cap (0.0000531). */

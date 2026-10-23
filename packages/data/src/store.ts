@@ -37,15 +37,24 @@ export const MCAP_AGREE_RATIO = 5;
  * (or `fdv` when absent) can reflect only the Solana-side supply of bridged/wrapped
  * tokens. Take the larger of DexScreener and Jupiter `mcap` when they agree within
  * 5x; otherwise keep DexScreener's number and flag the row. One side only: use it.
+ *
+ * task-1518: when both sources' prices are known, Jupiter's cap is first moved to DexScreener's price (its implied
+ * supply x the newer price), so "agree" compares the SUPPLY each source counts, which is what the rule is about. A
+ * Jupiter record served from the cache can be minutes old: on a coin that ran 6x since, the raw caps are 6x apart
+ * while both count the same supply. Comparing the raw caps flagged every fast runner (and the autotrade thesis-split
+ * exit sold it, "market-cap sources 1.0x apart"), and on a coin that dumped it showed the stale, larger cap.
  */
-export function resolveMcap(ds: { mcap: number | null; fdv: number | null } | undefined, jupMcap: number | null | undefined): McapResolution {
+export function resolveMcap(ds: { mcap: number | null; fdv: number | null } | undefined, jupMcap: number | null | undefined, prices?: { dexscreener?: number | null; jupiter?: number | null }): McapResolution {
   const d = ds ? (ds.mcap ?? ds.fdv) : null;
   const j = jupMcap ?? null;
-  const pos = (n: number | null) => n !== null && Number.isFinite(n) && n > 0;
+  const pos = (n: number | null | undefined): n is number => n !== null && n !== undefined && Number.isFinite(n) && n > 0;
   if (pos(d) && pos(j)) {
-    const ratio = Math.max(d!, j!) / Math.min(d!, j!);
+    const dp = prices?.dexscreener, jp = prices?.jupiter;
+    // Jupiter's cap at DexScreener's (newer) price: its supply x the price the row shows.
+    const jNow = pos(dp) && pos(jp) ? j * (dp / jp) : j;
+    const ratio = Math.max(d, jNow) / Math.min(d, jNow);
     if (ratio <= MCAP_AGREE_RATIO) {
-      return j! > d! ? { value: j, basis: 'jupiter', flagged: false, dexscreener: d, jupiter: j } : { value: d, basis: 'dexscreener', flagged: false, dexscreener: d, jupiter: j };
+      return jNow > d ? { value: jNow, basis: 'jupiter', flagged: false, dexscreener: d, jupiter: j } : { value: d, basis: 'dexscreener', flagged: false, dexscreener: d, jupiter: j };
     }
     return { value: d, basis: 'dexscreener', flagged: true, dexscreener: d, jupiter: j };
   }
@@ -177,7 +186,7 @@ export class Store {
         price: p,
         sources,
         stale: ds.stale.has(mint) || jup.stale.has(mint) || price.stale.has(mint),
-        mcap: resolveMcap(d?.pair, j?.pair.mcap),
+        mcap: resolveMcap(d?.pair, j?.pair.mcap, { dexscreener: d?.pair.priceUsd, jupiter: j?.pair.priceUsd }),
       });
     }
 

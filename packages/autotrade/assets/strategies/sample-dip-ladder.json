@@ -1,0 +1,188 @@
+{
+  "kind": "strategy",
+  "schema": "dexterm-strategy/1",
+  "id": "sample-dip-ladder",
+  "name": "Dip ladder (custom sample)",
+  "version": "1.0.0",
+  "description": "A user-made sample: buy half on a trend coin, add the other half if it dips 15% within 30 minutes, risk-sized so a full stop-out loses 2% of the bankroll, with an inline exit profile that takes a third at +40% and trails the rest.",
+  "mode": "paper",
+  "bankroll": {
+    "startUsd": 1000
+  },
+  "entry": {
+    "screen": "liq >= 40K vol1h > 20K h1 > 0 !flag:mint !flag:freeze",
+    "ageHours": {
+      "min": 2,
+      "max": 72
+    },
+    "safety": {
+      "maxTop10Pct": 30,
+      "maxDevPct": 5,
+      "requireNoMintAuthority": true,
+      "requireNoFreezeAuthority": true,
+      "maxMcapSplitX": 5,
+      "youngVertical": {
+        "maxAgeHours": 3,
+        "maxH1Pct": 200
+      },
+      "unknownHolders": "reject"
+    },
+    "triggers": [
+      {
+        "kind": "screen"
+      }
+    ],
+    "triggerMode": "any",
+    "decide": "agent",
+    "candidateTtlSec": 300
+  },
+  "exits": {
+    "default": "dip-trail",
+    "profiles": [
+      {
+        "kind": "exit-profile",
+        "id": "dip-trail",
+        "name": "Dip ladder trail",
+        "version": "1.0.0",
+        "description": "A third off at +40%, a third at +90%, the rest trails 20% once it is up 30%. A -35% hard stop below the average entry, because the ladder already bought the dip.",
+        "fit": {
+          "summary": "A trend coin that pulls back inside its first hours with liquidity holding.",
+          "minLiquidityUsd": 40000,
+          "ageHours": {
+            "min": 2,
+            "max": 72
+          },
+          "maxTop10Pct": 30
+        },
+        "sizing": {
+          "maxSizePctOfBankroll": 12
+        },
+        "tpLadder": [
+          {
+            "atPct": 40,
+            "sellFrac": 0.33
+          },
+          {
+            "atPct": 90,
+            "sellFrac": 0.33
+          }
+        ],
+        "trailingStop": {
+          "armAtPct": 30,
+          "trailPct": 20
+        },
+        "timeStop": {
+          "minutes": 180,
+          "ifBelowPct": 10,
+          "action": "review"
+        },
+        "hardStop": {
+          "enabled": true,
+          "atPct": -35,
+          "why": "The ladder already added on the dip; a further -35% from the average means the trend is gone."
+        },
+        "thesisBreak": {
+          "liquidityDropPct": 25,
+          "liquidityWindowMin": 5,
+          "mcapDivergenceX": 5,
+          "devSell": {
+            "exitOnAnyDevSell": true,
+            "topHolderSellPctOfBag": 25
+          },
+          "volumeDeath": {
+            "m5TradesBelow": 8,
+            "forMinutes": 20
+          }
+        },
+        "reentry": {
+          "allowed": false,
+          "cooldownMinutes": 0,
+          "maxEntriesPerCoinPerSession": 1,
+          "requires": "not on the same coin the same day"
+        },
+        "carry": {
+          "allowed": true,
+          "requiresTpFilled": 1,
+          "maxRemainderPctOfBankroll": 8
+        },
+        "reprofileTo": [
+          "swing"
+        ],
+        "wake": {
+          "onTpFilled": true,
+          "onTimeReview": true,
+          "drawdownPct": -20,
+          "thesisWarnFrac": 0.6,
+          "noAnswer": "exit"
+        },
+        "maxHoldMinutes": 1440
+      },
+      "builtin:swing"
+    ]
+  },
+  "sizing": {
+    "mode": "risk",
+    "riskPct": 2,
+    "ladder": [
+      {
+        "frac": 0.5,
+        "atPct": 0,
+        "withinMin": 30
+      },
+      {
+        "frac": 0.5,
+        "atPct": -15,
+        "withinMin": 30
+      }
+    ],
+    "maxPctOfBankroll": 12,
+    "maxUsd": 300,
+    "minUsd": 5
+  },
+  "risk": {
+    "perTrade": {
+      "maxLossPctOfBankroll": 10,
+      "assumedLossPctNoStop": 100
+    },
+    "dailyLossHaltPct": 8,
+    "drawdown": {
+      "sizeDownAtPct": 12,
+      "sizeDownMult": 0.5,
+      "recoverBelowPct": 6,
+      "haltAtPct": 20
+    },
+    "maxConcurrent": 3,
+    "maxExposurePct": 30,
+    "lossStreak": {
+      "losses": 2,
+      "cooldownMin": 120
+    },
+    "maxEntriesPerDay": 6,
+    "perCoin": {
+      "maxEntries": 1,
+      "cooldownMin": 1440
+    }
+  },
+  "agent": {
+    "model": "sonnet",
+    "maxSessions": 2,
+    "budgetUsdPerSession": 0.5,
+    "budgetUsdPerDay": 10,
+    "maxTurns": 60,
+    "deltaEverySec": 15,
+    "decideWithinSec": 90,
+    "sessionMaxMin": 240,
+    "onTimeout": "skip"
+  },
+  "execution": {
+    "slippageBps": 100,
+    "feeBps": 30,
+    "networkFeeUsd": 0.02,
+    "latencyMs": 3000,
+    "maxPriceImpactPct": 8,
+    "minExitLiquidityUsd": 2000
+  },
+  "notes": [
+    "Shareable: copy this file into ~/.dexterm/strategies/ and run `dexterm autotrade validate`."
+  ]
+}

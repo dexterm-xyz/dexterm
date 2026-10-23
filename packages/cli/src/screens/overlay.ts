@@ -47,12 +47,14 @@ export interface HelpRow { keys: string; label: string }
  * `--fixtures`.
  */
 export function OVERLAY_HINTS(screen: ScreenKey, fixtures: boolean): HelpRow[] {
+  // task-1508: on the AUTOTRADE screen c / n / u / d / x are its own verbs (the loop skips calm and the demo keys there).
+  const own = screen === 'autotrade';
   const rows: HelpRow[] = [
-    { keys: 'c', label: 'calm mode (effects off)' },
+    ...(own ? [] : [{ keys: 'c', label: 'calm mode (effects off)' }]),
     { keys: '?', label: 'this help' },
   ];
   if (screen === 'analyst') rows.unshift({ keys: 'type', label: 'ask a follow-up · ⏎ send · esc clear/back' });
-  if (fixtures) rows.push({ keys: 'n/u/d/x', label: 'demo: new pair · pump · dump · rug' });
+  if (fixtures && !own) rows.push({ keys: 'n/u/d/x', label: 'demo: new pair · pump · dump · rug' });
   return rows;
 }
 
@@ -90,6 +92,7 @@ const SCREEN_TITLE: Record<ScreenKey, string> = {
   ticket: 'Paper trade ticket', positions: 'Paper positions',
   trending: 'Trending in the space', kol: 'KOL lists', bubbles: 'Bubble map', narrative: 'Narrative board',
   plans: 'Order plans & mandates', follows: 'Followed wallets', rules: 'Rules (alerts + proposals only)',
+  autotrade: 'Autotrade (paper)',
 };
 
 /** Draw a centered modal card and return its inner rect, or null when the terminal is too small. */

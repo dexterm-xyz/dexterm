@@ -23,14 +23,17 @@ export const CASES = [];
 for (const screen of ['screener', 'token', 'newpairs', 'watchlist', 'analyst']) {
   const selected = screen === 'screener' || screen === 'token' ? 3 : screen === 'analyst' ? 0 : 1;
   for (const [width, height] of [[176, 48], [120, 40], [90, 40]]) {
-    CASES.push({ screen, width, height, selected, theme: 'midnight', name: `${screen}-${width}x${height}` });
+    CASES.push({ screen, width, height, selected, theme: 'midnight', name: `${screen}-${width}x${height}`, priceMode: 'price' });
+    // task-1537: the default (market cap) render of the same frame; the prototypes show price, so no prototype twin
+    if (width !== 120) CASES.push({ screen, width, height, selected, theme: 'midnight', name: `${screen}-${width}x${height}-mcap`, mcap: true });
   }
 }
 
 /** The screener over the recorded data-store sample (D-03); goldens come from this renderer, not the prototype. */
 export const LIVE_CASES = [];
 for (const [width, height] of [[176, 48], [120, 40], [90, 40]]) {
-  LIVE_CASES.push({ screen: 'screener', width, height, selected: 3, theme: 'midnight', live: true, name: `screener-live-${width}x${height}` });
+  LIVE_CASES.push({ screen: 'screener', width, height, selected: 3, theme: 'midnight', live: true, name: `screener-live-${width}x${height}`, priceMode: 'price' });
+  if (width !== 120) LIVE_CASES.push({ screen: 'screener', width, height, selected: 3, theme: 'midnight', live: true, name: `screener-live-${width}x${height}-mcap` });
 }
 export const samplePath = resolve(repo, 'packages', 'data', 'fixtures', 'live-sample.json');
 
@@ -39,8 +42,8 @@ export function renderOurs(c, { ansi = false } = {}) {
   const { THEMES } = loadTui();
   // goldens are the calm render: effects off, so the text is the data and the chrome, nothing frame-dependent
   const state = c.live
-    ? makeFeedState(replayFeed, 'replay', { screen: c.screen, selected: c.selected, theme: THEMES[c.theme], calm: true })
-    : makeFixtureState({ screen: c.screen, selected: c.selected, theme: THEMES[c.theme], calm: true });
+    ? makeFeedState(replayFeed, 'replay', { screen: c.screen, selected: c.selected, theme: THEMES[c.theme], calm: true, priceMode: c.priceMode })
+    : makeFixtureState({ screen: c.screen, selected: c.selected, theme: THEMES[c.theme], calm: true, priceMode: c.priceMode });
   const canvas = renderFrame(state, c.width, c.height);
   return ansi ? canvas.toAnsi({ depth: 'truecolor' }) : canvas.toPlain();
 }
@@ -76,7 +79,7 @@ if (isMain) {
   mkdirSync(snapDir, { recursive: true });
   let bad = 0;
   for (const c of [...CASES, ...LIVE_CASES]) {
-    if (c.live && mode === '--from-prototype') continue; // the prototype has no data store; --update writes these
+    if ((c.live || c.mcap) && mode === '--from-prototype') continue; // the prototype has no data store; --update writes these
     if (mode === '--update' || mode === '--from-prototype') {
       const text = mode === '--update' ? renderOurs(c) : renderPrototype(c);
       writeFileSync(snapPath(c), text + '\n');

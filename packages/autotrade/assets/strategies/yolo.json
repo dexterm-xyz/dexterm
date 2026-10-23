@@ -1,0 +1,157 @@
+{
+  "kind": "strategy",
+  "schema": "dexterm-strategy/1",
+  "id": "yolo",
+  "name": "YOLO full port (HIGH RISK)",
+  "version": "1.0.0",
+  "description": "HIGH RISK, PAPER only. One early-momentum entry at a time, the biggest size the paper book allows behind it. Holder-safety gates first: LP burned or locked, no mint or freeze authority, the LARP check, minimum liquidity. Take the cost back at about 2x, then a free bag with a loose trail; thesis-break and liquidity-pull exits, a time stop, never the same coin twice. Most entries lose and one rug can zero the wallet.",
+  "mode": "paper",
+  "highRisk": true,
+  "bankroll": {
+    "startUsd": 200
+  },
+  "entry": {
+    "screen": "liq >= 25K vol5m >= 5K lplocked >= 90 !flag:mint !flag:freeze",
+    "ageHours": {
+      "min": 0,
+      "max": 2
+    },
+    "safety": {
+      "maxTop10Pct": 30,
+      "maxDevPct": 5,
+      "requireNoMintAuthority": true,
+      "requireNoFreezeAuthority": true,
+      "maxMcapSplitX": 3,
+      "youngVertical": {
+        "maxAgeHours": 2,
+        "maxH1Pct": 150
+      },
+      "unknownHolders": "reject",
+      "larp": {
+        "maxScore": 49,
+        "unknown": "reject"
+      }
+    },
+    "triggers": [
+      {
+        "kind": "momentum",
+        "m5MinPct": 3,
+        "buySellMin": 1.3
+      }
+    ],
+    "triggerMode": "any",
+    "decide": "agent",
+    "candidateTtlSec": 180
+  },
+  "exits": {
+    "default": "yolo",
+    "profiles": [
+      {
+        "kind": "exit-profile",
+        "id": "yolo",
+        "name": "YOLO (cost back at 2x, free bag)",
+        "version": "1.2.0",
+        "description": "The whole stake on one young pair. At about 2x, sell the slice that pays back the position cost; the rest rides as a free bag on a loose 50% trail. Liquidity pulls, dev sells and dead volume exit at once; a -50% stop and a 45-minute time stop keep a full-port position from bleeding out slowly.",
+        "fit": {
+          "summary": "A young pair (0-2 h) with LP burned or locked, no mint or freeze authority, a LARP score below the high band, liquidity >= $25k and a first clean 5-minute push.",
+          "minLiquidityUsd": 25000,
+          "ageHours": { "min": 0, "max": 2 },
+          "maxTop10Pct": 30,
+          "signals": ["first clean 5m push with buyers ahead of sellers", "liquidity rising with price", "many distinct buyers, top-2 share low"]
+        },
+        "sizing": { "maxSizePctOfBankroll": 25 },
+        "tpLadder": [],
+        "trailingStop": null,
+        "costRecovery": { "atPct": 100, "maxSellFrac": 0.6 },
+        "bagTrail": { "trailPct": 50 },
+        "timeStop": { "minutes": 45, "ifBelowPct": 20, "action": "exit" },
+        "hardStop": {
+          "enabled": true,
+          "atPct": -50,
+          "why": "The whole wallet rides on one coin: a -50% stop ends a slow bleed. A rug or a pulled pool still fills near -100%, whatever the stop says."
+        },
+        "thesisBreak": {
+          "liquidityDropPct": 30,
+          "liquidityWindowMin": 5,
+          "mcapDivergenceX": 5,
+          "devSell": { "exitOnAnyDevSell": true, "topHolderSellPctOfBag": 30 },
+          "volumeDeath": { "m5TradesBelow": 5, "forMinutes": 20 }
+        },
+        "reentry": {
+          "allowed": false,
+          "cooldownMinutes": 0,
+          "maxEntriesPerCoinPerSession": 1,
+          "requires": "never the same coin twice: a full-port entry is never repeated"
+        },
+        "carry": { "allowed": false, "requiresTpFilled": 0, "maxRemainderPctOfBankroll": 0 },
+        "reprofileTo": [],
+        "wake": { "onTpFilled": false, "onTimeReview": false, "drawdownPct": -30, "thesisWarnFrac": 0.6, "noAnswer": "exit", "onCostRecovered": true },
+        "maxHoldMinutes": 1440,
+        "notes": [
+          "The bag trail arms on the cost-recovery sell; before that the stop, the time stop, the thesis breaks and the rug floor exit.",
+          "An agent can tighten or exit early, never loosen a stop or a trail."
+        ]
+      }
+    ]
+  },
+  "sizing": {
+    "mode": "pct",
+    "pct": 25,
+    "maxPctOfBankroll": 25,
+    "maxUsd": 1000,
+    "minUsd": 5
+  },
+  "risk": {
+    "perTrade": {
+      "maxLossPctOfBankroll": 25,
+      "assumedLossPctNoStop": 100
+    },
+    "dailyLossHaltPct": 60,
+    "drawdown": {
+      "sizeDownAtPct": 50,
+      "sizeDownMult": 1,
+      "recoverBelowPct": 10,
+      "haltAtPct": 80
+    },
+    "maxConcurrent": 1,
+    "maxExposurePct": 100,
+    "lossStreak": {
+      "losses": 3,
+      "cooldownMin": 60
+    },
+    "maxEntriesPerDay": 6,
+    "perCoin": {
+      "maxEntries": 1,
+      "cooldownMin": 10080
+    },
+    "recoveredBags": {
+      "countAsOpen": true,
+      "maxBags": 1
+    }
+  },
+  "agent": {
+    "model": "sonnet",
+    "maxSessions": 1,
+    "budgetUsdPerSession": 0.5,
+    "budgetUsdPerDay": 5,
+    "maxTurns": 60,
+    "deltaEverySec": 15,
+    "decideWithinSec": 45,
+    "sessionMaxMin": 240,
+    "onTimeout": "skip"
+  },
+  "execution": {
+    "slippageBps": 300,
+    "feeBps": 30,
+    "networkFeeUsd": 0.02,
+    "latencyMs": 3000,
+    "maxPriceImpactPct": 3,
+    "minExitLiquidityUsd": 5000
+  },
+  "notes": [
+    "HIGH RISK. Paper only: dexterm holds no key and places no live order. Experimental; not financial advice. Self-directed only.",
+    "Paper: the runner's book caps one position at 25% (the ceiling for every strategy); the replay below measures full port.",
+    "Run it: `dexterm autotrade run yolo --paper` (`--replay builtin:yolo-rehearsal --stub` for a short fixture run).",
+    "`dexterm autotrade yolo-replay yolo` shows what full-port compounding did on your recorded history: rugs, the loss spread and how often it zeroed the wallet."
+  ]
+}

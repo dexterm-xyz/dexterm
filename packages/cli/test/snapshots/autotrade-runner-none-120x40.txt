@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER   starting and stopping a paper run ships with …
+╭─ RUNNER · PAPER ────────────────────────────────────────────── status file: /tmp/dexterm-home/autotrade/runner.json ─╮
+│ no autotrade runner is running                                                                                       │
+│ the runner (headless, one per machine) writes its status here every heartbeat; this view picks it up within 2 s      │
+│ `!` kill · `p` pause entries · `f` flatten act on a running runner only; nothing on this screen reaches a wallet or… │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  tab  view   !  kill   p  pause entries   f  flatten (confirm)   esc  back   q  quit

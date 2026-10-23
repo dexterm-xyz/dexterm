@@ -12,7 +12,7 @@
 // Reduced motion (calm mode / DEXTERM_REDUCED_MOTION) drops every sweep, flash, glitch and typewriter: the same
 // information appears at once. NO_COLOR keeps meaning in glyphs (▸ active phase, ✓ ! ✗ chips, ▶ cursor).
 
-import { mix, hash3, KATAKANA, decryptText, fmtCompactUsd, type Canvas, type Hex, type Theme, type ColorDepth } from '@dexterm/tui';
+import { mix, hash3, KATAKANA, decryptText, fmtCompactUsd, markerGlyph, markerLetter, type Canvas, type Hex, type Theme, type ColorDepth } from '@dexterm/tui';
 import { STORY_RAIL, fmtQty, fmtPx, type StoryView, type StoryPhase, type TimelineNode, type TradeArc } from '@dexterm/agents';
 import { pnlChipVM, renderPnlChip, type PnlChipVM } from './pnl-chip.ts';
 
@@ -512,7 +512,8 @@ function ticketCard(c: Canvas, v: StoryView, arc: TradeArc, o: HudOpts, screenH:
     ['SIZE', arc.sizeUsd != null ? `$${arc.sizeUsd.toFixed(2)}${v.caps ? `   cap $${v.caps.perTradeUsd.toFixed(2)}/trade · $${v.caps.totalUsd.toFixed(0)} total` : ''}` : 'sizing…', arc.sizeUsd != null ? t.text : t.dim],
     ['GATE', 'YOUR keypress armed the mandate · tier hands-free', t.muted],
     ['', 'no keypress per trade inside it · desk enforces caps', mix(bg, t.dim, 0.85)],
-    ['ENTRY', fill ? `${Math.abs(fill.sol).toFixed(4)} SOL → ${fmtQty(fill.qty)} $${arc.symbol}${fill.priceUsd != null ? ` @ $${fmtPx(fill.priceUsd)}` : ''}` : refused ? '—' : 'awaiting confirm · fresh quote at fill', fill ? t.text : t.dim],
+    // task-1537: the fill reads as the market cap it filled at when the HUD's cap scale knows the supply (like the position card)
+    ['ENTRY', fill ? `${Math.abs(fill.sol).toFixed(4)} SOL → ${fmtQty(fill.qty)} $${arc.symbol}${fill.priceUsd != null ? ` @ ${((sc) => (sc ? `MC ${fmtCompactUsd(fill.priceUsd * sc)}` : `$${fmtPx(fill.priceUsd)}`))(o.mcapScale?.(arc.mint) ?? null)}` : ''}` : refused ? '—' : 'awaiting confirm · fresh quote at fill', fill ? t.text : t.dim],
     ['IMPACT', fill?.impactPct != null ? `${fill.impactPct.toFixed(2)}%${v.caps?.maxPriceImpactPct != null ? `   max ${v.caps.maxPriceImpactPct}%` : ''}` : '—', t.muted],
     ['EXITS', 'agent-managed · no resting orders on PAPER', t.muted],
   ];
@@ -540,6 +541,23 @@ function ticketCard(c: Canvas, v: StoryView, arc: TradeArc, o: HudOpts, screenH:
     const pulse = o.reduced ? 0.8 : 0.5 + 0.5 * Math.sin(o.now / 180);
     c.text(x + Math.floor((w - s.length) / 2), sy, s, { fg: mix(bg, t.meteora, pulse), bg });
   }
+}
+
+/**
+ * task-1483: where the arc's fills sit on the PnL trace: the column of the first sample at or after the fill (the sample
+ * that first reflects it). A fill before the first SHOWN sample when older samples were cut off, or after the last
+ * sample, gets no column (it is not moved onto another one). Columns are 0-based into `shownT`.
+ */
+export function traceFillCols(allT: readonly number[], shownFrom: number, fills: readonly { t: number; side: 'buy' | 'sell' }[]): Array<{ col: number; side: 'buy' | 'sell'; count: number }> {
+  const by = new Map<string, { col: number; side: 'buy' | 'sell'; count: number }>();
+  for (const f of fills) {
+    const i = allT.findIndex((t) => t >= f.t);
+    if (i < 0 || i < shownFrom) continue;
+    const key = `${i}|${f.side}`;
+    const e = by.get(key);
+    if (e) e.count++; else by.set(key, { col: i - shownFrom, side: f.side, count: 1 });
+  }
+  return [...by.values()].sort((a, b) => a.col - b.col);
 }
 
 function positionCard(c: Canvas, v: StoryView, arc: TradeArc, o: HudOpts, screenH: number): void {
@@ -574,6 +592,15 @@ function positionCard(c: Canvas, v: StoryView, arc: TradeArc, o: HudOpts, screen
       const lv = Math.round(((s.pct - lo) / span) * 7);
       c.put(x + 2 + i, y + 6, LV[lv], { fg: s.pct >= 0 ? t.up : t.down, bg, soft: true });
     });
+    // task-1483: the agent's PAPER fills under the trace (△B / ▽S, hollow = paper), at the sample that first shows them
+    const used = new Set<number>();
+    for (const m of traceFillCols(arc.trace.map((s) => s.t), arc.trace.length - tr.length, arc.fills)) {
+      const cx = x + 2 + m.col;
+      if (used.has(m.col) || used.has(m.col + 1) || cx + 1 >= x + w - 1) continue;
+      used.add(m.col); used.add(m.col + 1);
+      const col = m.side === 'buy' ? t.up : t.down;
+      c.text(cx, y + 7, `${markerGlyph(m.side, 'paper')}${markerLetter(m.side)}`, { fg: col, bg: mix(bg, col, 0.2), b: true, hard: true });
+    }
   } else c.text(x + 2, y + 6, '· waiting for the first mark tick', { fg: t.dim, bg });
   // task-1472: with the chart axis on market cap and a known supply, entry/mark read MC (compact k/M/B), like the charts
   const sc = o.mcapScale?.(arc.mint) ?? null;

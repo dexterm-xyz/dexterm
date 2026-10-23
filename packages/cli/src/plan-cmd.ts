@@ -201,7 +201,7 @@ export async function runMandate(rest: string[], io: Io): Promise<number> {
         if (!row) { errOut(`no such mandate ${id}`); return 1; }
         out(row.paperOnly
           ? `Arm PAPER-ONLY mandate ${id}? This lets the agent paper desk book simulated fills under these caps. No plan, copy trade or signer can use it.`
-          : `Arm standing mandate ${id}? This lets armed plans fire at machine speed from the capped fast wallet.`);
+          : `Arm standing mandate ${id}? This lets armed plans fire at machine speed on PAPER (simulated fills; dexterm places no live order).`);
         out(`  total ${fmtUsd(row.totalUsd)} · per-trade ${fmtUsd(row.perTradeUsd)} · per-coin ${fmtUsd(row.perCoinUsd)} · maxTier ${row.maxTier}`);
         out('Hold any key to confirm (physical keypress). A pipe or agent cannot arm. Waiting 15s…');
         const key = await ttyKeypress(io.stdin as never, 15_000);

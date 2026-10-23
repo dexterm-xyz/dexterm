@@ -33,7 +33,10 @@ date: 2026-10-16
 | `DEXTERM_INTENSITY` | `off` · `normal` · `fever` |
 | `DEXTERM_OFFLINE=1` | refuse live data; `--fixtures` or `--replay` only (tests and CI) |
 | `DEXTERM_ANALYST_MODEL` | the Claude model for analyst turns (default `(generated from the app: see https://dexterm.xyz/docs/configuration#environment-variables; app-help has the exact keys and commands)`) |
-| `DEXTERM_ANALYST_ENGINE` | `auto` (default) · `claude` · `codex`: which of your CLIs runs the analyst (since 0.1.5; also `--analyst-engine` and `analyst.engine` in `config.json`) |
+| `DEXTERM_ANALYST_ENGINE` | `auto` (default) · `claude` · `codex` · `ollama`: which engine runs the analyst (since 0.1.5; `ollama` = a local model (https://dexterm.xyz/docs/ollama); also `--analyst-engine` and `analyst.engine` in `config.json`) |
+| `DEXTERM_AI_PROVIDER` | `auto` · `claude` · `codex` · `ollama`: the engine for every surface, over `~/.dexterm/ai.json` (see local model (https://dexterm.xyz/docs/ollama#pick-the-engine-globally-or-per-surface)) |
+| `DEXTERM_OLLAMA_HOST` · `DEXTERM_OLLAMA_MODEL` | the Ollama host (default `http://127.0.0.1:11434`; another machine is warned about) and the local model |
+| `DEXTERM_AI_RESTRICTIONS` | `observe` · `propose` · `paper` · `full`: can only LOWER the local engine's profile for this run |
 | `DEXTERM_CODEX_MODEL` | pin the Codex model for analyst turns (default: your Codex default) |
 | `DEXTERM_POPUP_SHELL` | path to a prebuilt native chart window |
 | `DEXTERM_POPUP_HOTKEY` · `DEXTERM_POPUP_HOTKEY_CLOSE` | override the popup chords without a config file |

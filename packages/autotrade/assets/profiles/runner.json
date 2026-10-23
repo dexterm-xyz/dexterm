@@ -1,0 +1,88 @@
+{
+  "kind": "exit-profile",
+  "id": "runner",
+  "name": "Runner (long hold)",
+  "version": "1.1.0",
+  "description": "A conviction hold for a large move: quarters at +100% and +200%, then the last half trails 40% off its peak. No hard stop, a 4-hour review, may carry a small remainder between agent sessions.",
+  "fit": {
+    "summary": "At least ~6 h old, liquidity >= $50k, top-10 <= 25% (or holder data unavailable with a stronger tape), a narrative heating up; or an upgrade from scalp/swing after TP1 filled.",
+    "minLiquidityUsd": 50000,
+    "ageHours": {
+      "min": 6,
+      "max": null
+    },
+    "maxTop10Pct": 25,
+    "signals": [
+      "narrative heating",
+      "liquidity rising with price",
+      "many distinct buyers, top-2 share low"
+    ]
+  },
+  "sizing": {
+    "maxSizePctOfBankroll": 20
+  },
+  "tpLadder": [
+    {
+      "atPct": 100,
+      "sellFrac": 0.25
+    },
+    {
+      "atPct": 200,
+      "sellFrac": 0.25
+    }
+  ],
+  "trailingStop": {
+    "armAtPct": 100,
+    "trailPct": 40
+  },
+  "timeStop": {
+    "minutes": 240,
+    "ifBelowPct": 25,
+    "action": "review"
+  },
+  "hardStop": {
+    "enabled": false,
+    "atPct": null,
+    "why": "A runner has to survive the -20% to -45% shakeouts that come before most large moves. Rugs are handled by the thesis-break rules and by size."
+  },
+  "thesisBreak": {
+    "liquidityDropPct": 30,
+    "liquidityWindowMin": 5,
+    "mcapDivergenceX": 5,
+    "devSell": {
+      "exitOnAnyDevSell": true,
+      "topHolderSellPctOfBag": 25
+    },
+    "volumeDeath": {
+      "m5TradesBelow": 10,
+      "forMinutes": 30
+    }
+  },
+  "reentry": {
+    "allowed": false,
+    "cooldownMinutes": 0,
+    "maxEntriesPerCoinPerSession": 1,
+    "requires": "not in the same session; a later session runs a new full vet"
+  },
+  "carry": {
+    "allowed": true,
+    "requiresTpFilled": 1,
+    "maxRemainderPctOfBankroll": 15
+  },
+  "reprofileTo": [
+    "swing",
+    "scalp"
+  ],
+  "notes": [
+    "A downgrade (tighter exits) is allowed any time with a logged reason.",
+    "1.1.0 adds wake (the judgement calls that wake the position's agent session; noAnswer is what happens when no session answers in time) and maxHoldMinutes (a hard holding cap). Mechanical exits never wait for the session."
+  ],
+  "wake": {
+    "onTpFilled": true,
+    "onTimeReview": true,
+    "drawdownPct": -35,
+    "thesisWarnFrac": 0.6,
+    "noAnswer": "hold"
+  },
+  "maxHoldMinutes": 2880
+}

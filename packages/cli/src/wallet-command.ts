@@ -1,12 +1,13 @@
 // dexterm T2 — the in-app `/wallet …` command grammar (task-1328). Pure: parse only. The LiveContext
-// performs the command. `/wallet` alone = status.
-export type WalletCommand = 'status' | 'link' | 'unlink' | 'panic' | 'probe';
+// performs the command. `/wallet` alone = status. task-1571: dexterm holds no key and signs nothing; the
+// linked wallet is a public key for display, and live trading happens in the Telegram trading bot of your choice.
+export type WalletCommand = 'status' | 'link' | 'unlink' | 'panic';
 
 /**
- * Parse a typed command: `/wallet` · `/wallet status` · `/wallet link` · `/wallet unlink` ·
- * `/wallet panic` · `/wallet probe`. The leading slash is optional (the screener's `/` line ate it).
- * Anything else — including a real filter — returns null. `resume` is deliberately NOT a command here:
- * re-enabling live trading needs a real TTY keypress in `dexterm wallet resume`.
+ * Parse a typed command: `/wallet` · `/wallet status` · `/wallet link` · `/wallet unlink` · `/wallet panic`.
+ * The leading slash is optional (the screener's `/` line ate it). Anything else — including a real filter —
+ * returns null. `resume` is deliberately NOT a command here: clearing the panic switch needs a real TTY
+ * keypress in `dexterm wallet resume`.
  */
 export function parseWalletCommand(text: string): WalletCommand | { error: string } | null {
   const m = /^\s*\/?wallet(?:\s+(\S+))?\s*$/i.exec(String(text ?? ''));
@@ -16,14 +17,12 @@ export function parseWalletCommand(text: string): WalletCommand | { error: strin
   if (arg === 'link') return 'link';
   if (arg === 'unlink') return 'unlink';
   if (arg === 'panic') return 'panic';
-  if (arg === 'probe') return 'probe';
   if (arg === 'resume') return { error: 'resume needs a real terminal keypress: run `dexterm wallet resume` in a shell' };
-  return { error: `unknown /wallet command "${arg.slice(0, 16)}" (status · link · unlink · panic · probe)` };
+  return { error: `unknown /wallet command "${arg.slice(0, 16)}" (status · link · unlink · panic)` };
 }
 
-export const WALLET_HELP = `  /wallet [status]          linked wallet (pubkey only), the signer's network + caps, panic state
+export const WALLET_HELP = `  /wallet [status]          linked wallet (public key only, read-only) and the panic state
   /wallet link              open the browser to link a Phantom wallet (sign-a-message proof; no transaction)
   /wallet unlink            forget the linked public key
-  /wallet panic             disable live signing at once (kill-switch file + cap-ledger lock); resume needs \`dexterm wallet resume\`
-  /wallet probe             devnet plumbing test: a wrap-and-unwrap transaction you sign in Phantom (fees only)
-  dexterm wallet fast …     the capped DEVNET fast wallet armed order plans fire from: create (TTY keypress) · status · airdrop · remove`;
+  /wallet panic             halt autotrade runs and the paper agent desk at once (kill-switch file); resume needs \`dexterm wallet resume\`
+  dexterm never holds a key and never signs. Live trading happens in the Telegram trading bot of your choice.`;

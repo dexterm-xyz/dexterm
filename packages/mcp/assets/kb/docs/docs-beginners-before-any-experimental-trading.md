@@ -28,6 +28,6 @@ sources:
 date: 2026-10-16
 ---
 
-Stop here until you are comfortable reading the app. Trading is experimental and has known bugs. It begins in PAPER simulation, which uses pretend funds. In the wallet path, Phantom shows and approves each wallet action, the keypress gate (a required physical key press) is on by default, and hard spending limits remain enforced in a separate signing process. No analyst, voice, or connected program can arm or sign.
+Stop here until you are comfortable reading the app. Trading in dexterm is PAPER simulation, which uses pretend funds, and the keypress gate (a required physical key press) is on by default. dexterm signs nothing and sends no transaction; live trading happens in a Telegram trading bot of your choice, outside dexterm. No analyst, voice, or connected program can trade.
 
-Never enter a seed phrase, private key, password, API key, or authentication token. Read the paper and wallet guide (https://dexterm.xyz/docs/paper-trading) before considering anything beyond the read-only walkthrough.
+Never enter a seed phrase, private key, password, API key, or authentication token. Read the paper trading guide (https://dexterm.xyz/docs/paper-trading) and live trading (https://dexterm.xyz/docs/live-trading) before considering anything beyond the read-only walkthrough.

@@ -215,7 +215,6 @@ export type AppAction =
   // plan / r revokes a mandate, ! panics (revokes everything). Arming is NEVER reachable by voice/agent.
   | 'screen.plans' | 'plans.tab' | 'plans.arm' | 'plans.cancel' | 'plans.revoke' | 'plans.panic' | 'plans.popup' | 'plans.gate'
   // task-1363: L on the plans screen raises the FIRE PATH modal (paper ⇄ live devnet fast wallet); the switch itself is a captured keypress.
-  | 'plans.live'
   // task-1360 copy trading: the FOLLOWED WALLETS screen (U, global): follow a wallet by typing its address (i), unfollow
   // (d), poll now (r, the global refresh). Alerts on a followed wallet's buys/sells are toasts anywhere. Read-only here.
   | 'screen.follows' | 'follows.add' | 'follows.remove'
@@ -245,7 +244,12 @@ export type AppAction =
   | 'export.view'
   // task-1407 PNL CARDS: `H` on the token, positions and followed-wallets screens previews a shareable PnL card built from
   // recorded fills (PAPER / LIVE / TRACKED stamp); share = save + clipboard + X compose intent in the user's browser.
-  | 'pnl.card';
+  | 'pnl.card'
+  // task-1508 AUTOTRADE (paper): `Q` opens the strategies / editor / compare / backtest / runner screen; its verbs are
+  // per-screen. Nothing on it switches a strategy to live, arms a mandate, or reaches a wallet or the signer.
+  | 'screen.autotrade' | 'autotrade.view' | 'autotrade.new' | 'autotrade.dup' | 'autotrade.edit' | 'autotrade.compare' | 'autotrade.backtest'
+  | 'autotrade.export' | 'autotrade.import' | 'autotrade.run' | 'autotrade.save' | 'autotrade.undo' | 'autotrade.sweep'
+  | 'autotrade.kill' | 'autotrade.pause' | 'autotrade.flatten' | 'autotrade.proposal';
 
 /** The prototype's key table (README of dexterm/prototype) plus the SPEC §4.1 screener keys. */
 export const DEFAULT_KEYMAP = new Keymap<AppAction>([
@@ -407,7 +411,6 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['!'], action: 'plans.panic', label: 'PANIC', screen: 'plans' },
   { keys: ['M'], action: 'plans.popup', label: 'popup', screen: 'plans' },
   { keys: ['G'], action: 'plans.gate', label: 'hands-free gate', screen: 'plans' },
-  { keys: ['L'], action: 'plans.live', label: 'fire path paper/live', screen: 'plans' },
   // task-1360 copy trading. `U` opens the FOLLOWED WALLETS screen from anywhere (free capital: not B/S/P/W/V/X/T/L/C/F/Z/R/
   // K/M/N/D/O/G/I). On it: `i` types a wallet address (+ optional label) to follow, `d` unfollows the selected wallet,
   // `r` (global refresh) polls now. Nothing on this screen trades: a buy/sell alert is information only.
@@ -436,4 +439,25 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['d'], action: 'rules.remove', label: 'delete rule', screen: 'rules' },
   { keys: ['tab'], action: 'rules.tab', label: 'rules ⇄ proposals', screen: 'rules' },
   { keys: ['x'], action: 'rules.dismiss', label: 'dismiss proposal', screen: 'rules' },
+  // task-1508 AUTOTRADE (paper). `Q` (free capital everywhere) opens the screen; tab cycles its five views (strategies,
+  // editor, compare, backtest, runner). The lowercase verbs below override the global w/b/x/p/i/s on this screen only.
+  // `!` soft-stops the paper runner, `p` pauses its new entries, `f` flattens after a y confirm. Edits only touch the
+  // user's own strategy files (validated, journaled); there is no key here for live mode, mandates or the signer.
+  { keys: ['Q'], action: 'screen.autotrade', label: 'autotrade (paper)' },
+  { keys: ['tab'], action: 'autotrade.view', label: 'next view', screen: 'autotrade' },
+  { keys: ['n'], action: 'autotrade.new', label: 'new from preset', screen: 'autotrade' },
+  { keys: ['d'], action: 'autotrade.dup', label: 'duplicate', screen: 'autotrade' },
+  { keys: ['e'], action: 'autotrade.edit', label: 'edit', screen: 'autotrade' },
+  { keys: ['c'], action: 'autotrade.compare', label: 'mark to compare', screen: 'autotrade' },
+  { keys: ['b'], action: 'autotrade.backtest', label: 'backtest', screen: 'autotrade' },
+  { keys: ['w'], action: 'autotrade.sweep', label: 'sweep (held-out)', screen: 'autotrade' },
+  { keys: ['x'], action: 'autotrade.export', label: 'export file', screen: 'autotrade' },
+  { keys: ['i'], action: 'autotrade.import', label: 'import file', screen: 'autotrade' },
+  { keys: ['r'], action: 'autotrade.run', label: 'runner', screen: 'autotrade' },
+  { keys: ['s'], action: 'autotrade.save', label: 'save (new version)', screen: 'autotrade' },
+  { keys: ['u'], action: 'autotrade.undo', label: 'undo', screen: 'autotrade' },
+  { keys: ['!'], action: 'autotrade.kill', label: 'kill (soft stop)', screen: 'autotrade' },
+  { keys: ['p'], action: 'autotrade.pause', label: 'pause new entries', screen: 'autotrade' },
+  { keys: ['f'], action: 'autotrade.flatten', label: 'flatten (confirm)', screen: 'autotrade' },
+  { keys: ['o'], action: 'autotrade.proposal', label: 'review chat proposal', screen: 'autotrade' },
 ]);

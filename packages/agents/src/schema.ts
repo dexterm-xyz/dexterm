@@ -1,7 +1,7 @@
 // @dexterm/agents — a small, total JSON-schema checker for tool arguments (task-1345).
 //
 // Covers the subset the dexterm tool table uses: object/string/integer/number/boolean, enum, minimum,
-// maximum, maxLength, required, additionalProperties:false, nested objects. Anything the schema does
+// maximum, maxLength, required, additionalProperties:false, nested objects, and (task-1507) `free` JSON values. Anything the schema does
 // not mention is an error (schemas are closed: `additionalProperties` defaults to false for agent
 // calls even when a schema omits it). Pure and never throws.
 
@@ -19,6 +19,23 @@ export interface JsonSchema {
   items?: JsonSchema;
   maxItems?: number;
   description?: string;
+  /** task-1507: a free-form JSON value (a strategy document, a patch op's value). Only its depth and key names are
+   *  checked here (the bus already caps the argument bytes); the tool validates the content itself. */
+  free?: boolean;
+}
+
+const FREE_DEPTH = 12;
+function freeError(v: unknown, path: string, depth = 0): string | null {
+  if (depth > FREE_DEPTH) return `${path}: too deeply nested`;
+  if (typeof v === 'string') return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(v) ? `${path}: control characters are not allowed` : null;
+  if (v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) return null;
+  if (typeof v !== 'object') return `${path}: not a JSON value`;
+  for (const [k, x] of Array.isArray(v) ? v.entries() : Object.entries(v as Record<string, unknown>)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') return `${path}.${String(k)}: not allowed`;
+    const err = freeError(x, `${path}.${String(k)}`, depth + 1);
+    if (err) return err;
+  }
+  return null;
 }
 
 const MAX_STRING = 2000;
@@ -27,6 +44,7 @@ const MAX_KEYS = 32;
 
 export function validateArgs(schema: JsonSchema | undefined, value: unknown, path = 'args', depth = 0): string | null {
   if (depth > MAX_DEPTH) return `${path}: too deeply nested`;
+  if (schema?.free) return value === undefined ? null : freeError(value, path);
   if (!schema) return value === undefined || (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0) ? null : `${path}: this tool takes no arguments`;
   const t = schema.type ?? (schema.properties ? 'object' : undefined);
   if (schema.enum && !schema.enum.includes(value)) return `${path}: must be one of ${schema.enum.map((v) => JSON.stringify(v)).join(', ')}`;

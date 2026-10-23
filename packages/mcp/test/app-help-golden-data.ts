@@ -117,4 +117,8 @@ export const GOLDEN: Array<[string, string]> = [
   ['switch the analyst engine to codex', 'use-codex-analyst'],
   ['has this deployer rugged before', 'dev-history'],
   ['show the dev rugs on the token screen', 'dev-history'],
+  // task-1483 chart BUY / SELL markers
+  ['mark where I bought and sold on the chart', 'chart-trade-markers'],
+  ['turn off the buy sell markers', 'chart-trade-markers'],
+  ['show my fills on the chart', 'chart-trade-markers'],
 ];
