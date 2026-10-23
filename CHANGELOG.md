@@ -27,13 +27,6 @@ A first cut of live trading through Telegram, and autotrade on paper. dexterm ne
 - The top-10 holder share leaves out pools, bonding curves, launch vaults and locks on young PumpSwap and Meteora coins.
 - A coin that simply ran no longer shows a market-cap "split" between two sources.
 
-### Known issues
-
-- The Telegram live path is a first cut: dexterm 0.1.7 does not place orders in your trading bot, and the path has not been exercised end to end on mainnet. dexterm has not been tested with any particular trading bot.
-- Paper trading, paper autotrade, paper accounts and the yolo preset are simulated: paper fills are modelled, not results, and a backtest on your own recorded history is not a forecast.
-- The Telegram connector needs a bot you create and a private chat; a group chat is refused. If another program polls the same bot, pairing and approvals stop.
-- Trading remains experimental. Models, voice, agents and chat only propose; nothing in dexterm is financial advice.
-
 ## [0.1.6] - 2026-10-20
 
 A watch-it-work release: see an agent's reasoning, vetting and paper position as it trades, get a 0-100 LARP score that shows every point, and read charts in market cap. Trading remains experimental; agent trading is paper only (simulated), and this release does not enable mainnet trading. Nothing in dexterm is financial advice.
