@@ -45,3 +45,11 @@ regexes = [
   '''const RPC = 'https://mainnet\.helius-rpc\.com/\?api-key=0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';''',
   '''\['api_key=abc123def456', /api_key=\\\[key\\\]/\]''',
 ]
+
+[[allowlists]]
+description = "packages/autotrade/test/{executor-kit,compromised-limits}-1654.test.ts (task-1654, release 0.2.0): self-labelled HMAC secrets (`kit-test-secret-…`, `listener-secret-…`) that sign only fake test signals and heartbeats in a temp home; not credentials."
+regexTarget = "line"
+regexes = [
+  '''^const SECRET = 'kit-test-secret-0123456789abcdef';''',
+  '''^  const secret = 'listener-secret-0123456789abcdef';''',
+]

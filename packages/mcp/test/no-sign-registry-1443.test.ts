@@ -29,8 +29,13 @@ const STRATEGY_TOOLS = ['strategy_list', 'strategy_get', 'strategy_validate', 's
 const PARALLEL_TOOLS = ['autotrade_parallel_list', 'autotrade_parallel_compare', 'autotrade_parallel_start', 'autotrade_parallel_stop'];
 // task-1530: TRADE LEDGER reads, a run's candidate record, outcomes, the Telegram / live-signer STATE (`trading_status`:
 // the FORBIDDEN rule below and trade-t2-1328's LOCKOUT keep 'signer' and 'live' out of tool names) and one PROPOSE tool (a backtest request file)
-const LEDGER_TOOLS = ['ledger_trades', 'ledger_positions', 'ledger_equity', 'ledger_summary', 'ledger_compare', 'candidate_dossier', 'outcomes_lookup', 'telegram_status', 'trading_status', 'backtest_requests', 'backtest_request'];
-const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS]);
+// task-1645: `trade_fire_feed` reads real mode's MCP feed and status (the user arms, sets caps and kills on a terminal only)
+// task-1654: trading_limits (read/explain) and limits_propose (a diff card; writes nothing) are the analyst's limits surface.
+const LEDGER_TOOLS = ['ledger_trades', 'ledger_positions', 'ledger_equity', 'ledger_summary', 'ledger_compare', 'candidate_dossier', 'outcomes_lookup', 'telegram_status', 'trading_status', 'trade_fire_feed', 'trading_limits', 'backtest_requests', 'backtest_request', 'limits_propose'];
+// task-1647: the JOURNEY: two reads, paper forward-test control (the strategy's own bankroll, never real) and a promotion
+// PROPOSAL (a file; always-on is the user's key, real the user's caps + typed phrase on their terminal)
+const JOURNEY_TOOLS = ['strategy_journey', 'strategy_forward_report', 'strategy_forward_start', 'strategy_forward_stop', 'strategy_promote_propose'];
+const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS, ...JOURNEY_TOOLS]);
 
 const servedNames = TOOLS.map((t) => String(t.name));
 
@@ -39,6 +44,8 @@ test('every served tool is on the allowlist, and the allowlist has no stale name
   assert.deepEqual([...STRATEGY_READ_TOOLS, ...STRATEGY_PROPOSE_TOOLS].sort(), [...STRATEGY_TOOLS].sort());
   assert.deepEqual([...LEDGER_READ_TOOLS, ...LEDGER_PROPOSE_TOOLS].sort(), [...LEDGER_TOOLS].sort());
   for (const n of [...LEDGER_PROPOSE_TOOLS, ...PAPER_NOTE_TOOLS]) assert.ok(!READ_ONLY_TOOLS.includes(n), `${n} writes a file: not read-only`);
+  // task-1647: forward-test control and promotion proposals act or write: never on the read-only surface
+  for (const n of ['strategy_forward_start', 'strategy_forward_stop', 'strategy_promote_propose']) assert.ok(!READ_ONLY_TOOLS.includes(n), `${n} acts or writes: not read-only`);
   for (const n of ALLOWLIST) assert.ok(servedNames.includes(n), `allowlist names a tool "${n}" the server no longer serves`);
   assert.equal(servedNames.length, ALLOWLIST.size, 'no duplicate or missing tool names');
 });

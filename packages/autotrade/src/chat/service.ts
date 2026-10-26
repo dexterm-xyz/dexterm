@@ -16,6 +16,8 @@ import type { RunnerState } from '../runner.ts';
 import type { ResolvedStrategy } from '../strategy.ts';
 import { StrategyStore } from '../store.ts';
 import { requestControl } from '../safety.ts';
+import { healthLine } from '../executor-health.ts';
+import { limitsSummary } from '../limits.ts';
 import { badgeOf, type ExecutionPort } from '../execution-port.ts';
 import { ApprovalBroker, CallbackStore, callbackDbPath } from './approvals.ts';
 import { ChatAudit } from './audit.ts';
@@ -80,6 +82,7 @@ export class HostControlPort implements ControlPort {
       runId, state: st.state, haltReason: st.haltReason, strategy: st.strategy, open: st.positions.length, candidates: st.candidates.length,
       dayPnlPct: start > 0 ? (st.book.realizedTodayUsd / start) * 100 : null, spend: { todayUsd: st.spend.todayUsd, dayCapUsd: st.spend.dayCapUsd }, allowance: st.spend.allowance,
       approvals: s?.entry.decide === 'agent+approve' ? 'required by the strategy' : cfg.approvals,
+      ...(st.real?.executor ? { real: { executor: healthLine(st.real.executor), limits: limitsSummary(st.real.limits ?? {}), pause: st.real.risk?.buyPause ?? null } } : {}),
     };
   }
 

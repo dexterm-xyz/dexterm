@@ -274,6 +274,19 @@ export class SimBook {
     return p;
   }
 
+  /**
+   * 0.2.0 card B (service-recover.ts): take over a position a crashed run left open. Its open cost leaves this
+   * book's cash (it is exposure here now); the coin counts as entered, so the per-coin rules see it.
+   */
+  adopt(p: Position): boolean {
+    if (this.open.has(p.mint)) return false;
+    this.state.cashUsd -= Math.max(0, p.costUsd - p.realizedUsd);
+    (this.state.perCoin[p.mint] ??= { entries: 0, lastExit: 0 }).entries++;
+    this.open.set(p.mint, p);
+    this.triggers.set(p.id, ['resumed']);
+    return true;
+  }
+
   addTranche(p: Position, fill: Fill): void {
     this.state.cashUsd -= fill.usd;
     const tokens = p.tokens + fill.tokens;
@@ -339,8 +352,9 @@ export function clampEntry(book: SimBook, k: MarketTick, req: EntryRequest, kill
   const st = book.state;
   const clamps: Clamp[] = [];
   const no = (refused: string): ClampResult => ({ ok: false, refused, clamps });
-  // task-1571: paper only (dexterm holds no key and places no live order).
-  if (s.mode !== 'paper') return no('mode-not-paper');
+  // task-1571: paper only (dexterm holds no key and places no live order). task-1645: real is the same paper book; its
+  // fills become trade-fire signals for the user's own executor (the runner admits it only through the real-mode hook).
+  if (s.mode !== 'paper' && s.mode !== 'real') return no('mode-not-paper');
   if (killSwitch) return no('kill-switch');
   if (st.halted) return no(`halted:${st.halted}`);
   if (k.t < st.cooldownUntil) return no('loss-streak-cooldown');

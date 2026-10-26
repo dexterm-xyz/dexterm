@@ -1,0 +1,13 @@
+[Unit]
+Description=dexterm autotrade service: start it when it is not running (one tick)
+
+[Service]
+Type=oneshot
+ExecStart="/usr/local/bin/node" "/opt/dexterm/packages/cli/bin/dexterm.mjs" "autotrade" "service" "ensure" "--quiet" "--home" "/tmp/dex home %%1"
+WorkingDirectory=/opt/dexterm
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Nice=10
+IOSchedulingClass=idle
+KillMode=process
+StandardOutput=append:/tmp/dex home %%1/autotrade/logs/tick.log
+StandardError=append:/tmp/dex home %%1/autotrade/logs/tick.log

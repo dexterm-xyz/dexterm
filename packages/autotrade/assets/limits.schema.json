@@ -1,0 +1,569 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dexterm.xyz/schemas/limits.schema.json",
+  "title": "dexterm-limits/1",
+  "description": "dexterm real-mode limits: $DEXTERM_HOME/autotrade/real/limits.json. A number in global replaces the placeholder default (null turns it off); every other scope can only tighten (the stricter number wins). Only `dexterm autotrade limits` writes it; raising needs a typed confirmation on a real terminal.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema"
+  ],
+  "properties": {
+    "schema": {
+      "const": "dexterm-limits/1"
+    },
+    "global": {
+      "$ref": "#/$defs/globalSet"
+    },
+    "modes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "real": {
+          "$ref": "#/$defs/set"
+        },
+        "paper": {
+          "$ref": "#/$defs/set"
+        }
+      }
+    },
+    "strategies": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/set"
+      }
+    },
+    "accounts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/set"
+      }
+    },
+    "updatedAt": {
+      "type": "number"
+    },
+    "migratedFrom": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "perTradeSol": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "the most SOL one buy signal may spend (a bigger buy is clamped down to it) (SOL; a cap: smaller is stricter)"
+        },
+        "perTradePct": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 100,
+          "description": "the most one buy may spend as a percent of the book (bookSol, else the strategy book); with perTradeSol set too, the smaller wins (% of book; a cap: smaller is stricter)"
+        },
+        "dailySol": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "SOL all buy signals may spend per local day (a buy over it is refused) (SOL/day; a cap: smaller is stricter)"
+        },
+        "buysPerDay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "buy signals per local day (0 = no buys) (buys/day; a cap: smaller is stricter)"
+        },
+        "maxOpenPositions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "real positions open at once, across every strategy and account on this home (open; a cap: smaller is stricter)"
+        },
+        "maxExposurePct": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 100,
+          "description": "the cost of every open real position together, as a percent of the book (a buy is clamped to what is left) (% of book; a cap: smaller is stricter)"
+        },
+        "minPositionSol": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000,
+          "description": "a buy smaller than this after every clamp is refused (no dust orders) (SOL; a floor: larger is stricter)"
+        },
+        "maxPositionSol": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "the most SOL one position may cost, adds included (a buy is clamped to what is left) (SOL; a cap: smaller is stricter)"
+        },
+        "perCoinSolPerDay": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "SOL spent on one coin per local day, re-entries included (a buy over it is refused) (SOL/day; a cap: smaller is stricter)"
+        },
+        "perCoinBuysPerDay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "buy signals on one coin per local day (buys/day; a cap: smaller is stricter)"
+        },
+        "bookSol": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "what the percent limits are a percent of: the size of YOUR account (unset = the strategy's own book) (SOL; a cap: smaller is stricter)"
+        },
+        "dailyLossSol": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "when the day's realized loss reaches this, no new buy goes out until the next local day (exits still do) (SOL/day; a cap: smaller is stricter)"
+        },
+        "maxDrawdownSol": {
+          "type": "number",
+          "minimum": 1e-06,
+          "maximum": 1000000000000,
+          "description": "the drawdown breaker: realized PnL this far below its peak trips it; no new buy until you reset it (typed) (SOL; a cap: smaller is stricter)"
+        },
+        "lossStreak": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "this many losing closes in a row pause new buys for lossStreakPauseMin (losses; a cap: smaller is stricter)"
+        },
+        "lossStreakPauseMin": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 525600,
+          "description": "how long the loss-streak pause lasts (min; a floor: larger is stricter)"
+        },
+        "maxHoldMinutes": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 525600,
+          "description": "a real position held this long gets its exit signal (the stricter of this and the exit profile's own cap) (min; a cap: smaller is stricter)"
+        },
+        "minLiquidityUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000,
+          "description": "no buy on a coin with less pool liquidity (unknown liquidity is refused while this is set) (USD; a floor: larger is stricter)"
+        },
+        "minMcapUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000000,
+          "description": "no buy on a coin below this market cap (unknown is refused while this is set) (USD; a floor: larger is stricter)"
+        },
+        "maxSlippageBps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "the slippage tolerance a signal states (the stricter of this and the strategy's) (bps; a cap: smaller is stricter)"
+        },
+        "maxPriceImpactPct": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 100,
+          "description": "the price impact a buy may have on the pool (constant-product estimate): a buy is clamped to it; the signal states it (%; a cap: smaller is stricter)"
+        },
+        "signalTtlSec": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "description": "how long an executor may act on a signal (the stricter of this and the channel setting) (s; a cap: smaller is stricter)"
+        },
+        "maxBuysPerMinute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "the signal rate limit: buy signals in any 60 s (buys/min; a cap: smaller is stricter)"
+        },
+        "maxSellsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "OPTIONAL: sells are never capped unless you set this; a sell over it waits for the next tick (sells/min; a cap: smaller is stricter)"
+        },
+        "minForwardTrades": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "the evidence floor for real: arming needs a COMPLETED forward test of these exact rules with at least this many closed paper trades, and a backtest on record (below it only a typed override on your own terminal arms, journaled) (trades; a floor: larger is stricter)"
+        },
+        "executorSilenceMin": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 525600,
+          "description": "no heartbeat, receipt or ack from your executor for this long pauses new buy signals (exits still go out) (min; a cap: smaller is stricter)"
+        }
+      }
+    },
+    "globalSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "perTradeSol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "the most SOL one buy signal may spend (a bigger buy is clamped down to it) (SOL; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "perTradePct": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 100,
+              "description": "the most one buy may spend as a percent of the book (bookSol, else the strategy book); with perTradeSol set too, the smaller wins (% of book; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "dailySol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "SOL all buy signals may spend per local day (a buy over it is refused) (SOL/day; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "buysPerDay": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000,
+              "description": "buy signals per local day (0 = no buys) (buys/day; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "maxOpenPositions": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "description": "real positions open at once, across every strategy and account on this home (open; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "maxExposurePct": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 100,
+              "description": "the cost of every open real position together, as a percent of the book (a buy is clamped to what is left) (% of book; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "minPositionSol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000,
+              "description": "a buy smaller than this after every clamp is refused (no dust orders) (SOL; a floor: larger is stricter)"
+            }
+          ]
+        },
+        "maxPositionSol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "the most SOL one position may cost, adds included (a buy is clamped to what is left) (SOL; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "perCoinSolPerDay": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "SOL spent on one coin per local day, re-entries included (a buy over it is refused) (SOL/day; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "perCoinBuysPerDay": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "description": "buy signals on one coin per local day (buys/day; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "bookSol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "what the percent limits are a percent of: the size of YOUR account (unset = the strategy's own book) (SOL; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "dailyLossSol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "when the day's realized loss reaches this, no new buy goes out until the next local day (exits still do) (SOL/day; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "maxDrawdownSol": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1e-06,
+              "maximum": 1000000000000,
+              "description": "the drawdown breaker: realized PnL this far below its peak trips it; no new buy until you reset it (typed) (SOL; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "lossStreak": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "description": "this many losing closes in a row pause new buys for lossStreakPauseMin (losses; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "lossStreakPauseMin": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 525600,
+              "description": "how long the loss-streak pause lasts (min; a floor: larger is stricter)"
+            }
+          ]
+        },
+        "maxHoldMinutes": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 525600,
+              "description": "a real position held this long gets its exit signal (the stricter of this and the exit profile's own cap) (min; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "minLiquidityUsd": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000,
+              "description": "no buy on a coin with less pool liquidity (unknown liquidity is refused while this is set) (USD; a floor: larger is stricter)"
+            }
+          ]
+        },
+        "minMcapUsd": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000,
+              "description": "no buy on a coin below this market cap (unknown is refused while this is set) (USD; a floor: larger is stricter)"
+            }
+          ]
+        },
+        "maxSlippageBps": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "description": "the slippage tolerance a signal states (the stricter of this and the strategy's) (bps; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "maxPriceImpactPct": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 100,
+              "description": "the price impact a buy may have on the pool (constant-product estimate): a buy is clamped to it; the signal states it (%; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "signalTtlSec": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 600,
+              "description": "how long an executor may act on a signal (the stricter of this and the channel setting) (s; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "maxBuysPerMinute": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "description": "the signal rate limit: buy signals in any 60 s (buys/min; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "maxSellsPerMinute": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "description": "OPTIONAL: sells are never capped unless you set this; a sell over it waits for the next tick (sells/min; a cap: smaller is stricter)"
+            }
+          ]
+        },
+        "minForwardTrades": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "description": "the evidence floor for real: arming needs a COMPLETED forward test of these exact rules with at least this many closed paper trades, and a backtest on record (below it only a typed override on your own terminal arms, journaled) (trades; a floor: larger is stricter)"
+            }
+          ]
+        },
+        "executorSilenceMin": {
+          "oneOf": [
+            {
+              "type": "null",
+              "description": "off: this limit does not apply"
+            },
+            {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 525600,
+              "description": "no heartbeat, receipt or ack from your executor for this long pauses new buy signals (exits still go out) (min; a cap: smaller is stricter)"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

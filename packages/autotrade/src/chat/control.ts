@@ -30,6 +30,8 @@ export interface StatusView {
   spend: { todayUsd: number; dayCapUsd: number };
   allowance: { fiveHour: number | null; sevenDay: number | null } | null;
   approvals: 'required by the strategy' | 'on' | 'off';
+  /** task-1654: a real run's executor health and limits, as engine-made lines (absent on paper). */
+  real?: { executor: string; limits: string; pause: string | null };
 }
 
 export interface PositionView { mint: string; symbol: string; profile: string; pnlPct: number; freeBag: boolean; next: string | null }
@@ -88,6 +90,7 @@ export class ControlRouter {
             `open ${s.open} · candidates ${s.candidates} · day P/L ${pct(s.dayPnlPct)}`,
             `model spend today $${s.spend.todayUsd.toFixed(2)}${Number.isFinite(s.spend.dayCapUsd) ? ` of $${s.spend.dayCapUsd}` : ''}${s.allowance?.fiveHour !== null && s.allowance?.fiveHour !== undefined ? ` · 5 h window ${Math.round(s.allowance.fiveHour * 100)}%` : ''}`,
             `approvals: ${s.approvals}`,
+            ...(s.real ? [`executor: ${inert(s.real.executor, 160)}`, `limits: ${inert(s.real.limits, 160)}`, ...(s.real.pause ? [`NEW BUYS PAUSED: ${inert(s.real.pause, 120)}`] : [])] : []),
           ],
         };
       }

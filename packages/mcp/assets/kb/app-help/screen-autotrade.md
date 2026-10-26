@@ -79,6 +79,10 @@ keys:
   - !
   - f
   - o
+  - J
+  - F
+  - X
+  - A
 actions:
   - quit
   - screen.screener
@@ -141,6 +145,10 @@ actions:
   - autotrade.pause
   - autotrade.flatten
   - autotrade.proposal
+  - autotrade.journey
+  - autotrade.forward
+  - autotrade.forwardstop
+  - autotrade.promote
 tools:
   - strategy_list
   - autotrade_status
@@ -214,4 +222,8 @@ Keys on this screen:
   `p` — pause new entries
   `f` — flatten (confirm)
   `o` — review chat proposal
+  `J` — journey (ladder)
+  `F` — forward test (paper)
+  `X` — stop forward test
+  `A` — review promotion
   `?` — this help

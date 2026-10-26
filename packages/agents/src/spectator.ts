@@ -93,8 +93,10 @@ const LONG_B58_RE = new RegExp(`${BASE58}{45,}`, 'g');
 /** A hex run of ≥64 chars is a 32-byte key / signature. */
 const HEX_KEY_RE = /\b[0-9a-fA-F]{64,}\b/g;
 
+// task-1645: real mode's trade-fire signals and receipts stay out of shared views (`sig` already covers signal,
+// signalId and txSig; receipt, nonce and trade_fire are added).
 export const SENSITIVE_KEY_RE =
-  /(secret|private|privkey|mnemonic|seed|passphrase|password|signature|sig|apikey|api[_-]?key|keypair|token)/i;
+  /(secret|private|privkey|mnemonic|seed|passphrase|password|signature|sig|apikey|api[_-]?key|keypair|token|receipt|nonce|trade[_-]?fire)/i;
 
 /** Mask one address the way the product's shortAddr does (head4…tail4). */
 export function maskAddress(s: string): string {

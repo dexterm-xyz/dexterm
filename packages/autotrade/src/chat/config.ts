@@ -3,7 +3,9 @@
 // $DEXTERM_HOME/connectors.json (0600):
 //   { schema, telegram: { enabled, bot: {id, username}, secretStore, tiers, allow: [{senderId, chatId, tiers,
 //     pairedAt}], notify: {…per event…}, dailySummaryAt, quietHours, approvals, approvalExpirySec, repriceTolPct,
-//     showAbsoluteBook } }
+//     showAbsoluteBook }, signals: {…} }
+// task-1645: `signals` is the real-mode trade-fire channel setup (signal-channels.ts parses it); it lives here so the
+// Telegram copy and the executor channels are configured in one place. This module only carries it through.
 // Only local commands write it (`dexterm telegram setup|pair|revoke|approvals|notify`). From chat, exactly one
 // field can change: `approvals` from "off" to "on" (safer); everything else, and "off", is local only.
 
@@ -48,7 +50,7 @@ export interface TelegramConfig {
   showAbsoluteBook: boolean;
 }
 
-export interface ConnectorsConfig { schema: typeof CONNECTORS_SCHEMA; telegram: TelegramConfig }
+export interface ConnectorsConfig { schema: typeof CONNECTORS_SCHEMA; telegram: TelegramConfig; /** task-1645: parsed by signal-channels.ts. */ signals?: unknown }
 
 export const DEFAULT_NOTIFY: NotifyPrefs = { candidates: 'digest', entries: true, closes: true, halts: true, spend: true, daily: true };
 
@@ -71,7 +73,7 @@ export function loadConnectors(home: string): LoadResult {
   if (!existsSync(p)) return { ok: true, config: { schema: CONNECTORS_SCHEMA, telegram: defaultTelegram() }, exists: false };
   let raw: unknown;
   try { raw = JSON.parse(readFileSync(p, 'utf8')); } catch (e) { return { ok: false, error: `${p} is not JSON: ${(e as Error).message.slice(0, 120)}` }; }
-  const d = raw as { schema?: unknown; telegram?: Record<string, unknown> };
+  const d = raw as { schema?: unknown; telegram?: Record<string, unknown>; signals?: unknown };
   if (d.schema !== CONNECTORS_SCHEMA) return { ok: false, error: `${p}: schema is not ${CONNECTORS_SCHEMA}` };
   const t = d.telegram ?? {};
   const base = defaultTelegram();
@@ -106,7 +108,7 @@ export function loadConnectors(home: string): LoadResult {
     repriceTolPct: Number.isFinite(tol) && tol > 0 ? Math.min(10, tol) : 3,
     showAbsoluteBook: t.showAbsoluteBook === true,
   };
-  return { ok: true, config: { schema: CONNECTORS_SCHEMA, telegram }, exists: true };
+  return { ok: true, config: { schema: CONNECTORS_SCHEMA, telegram, ...(d.signals !== undefined ? { signals: d.signals } : {}) }, exists: true };
 }
 
 export function saveConnectors(home: string, c: ConnectorsConfig): void {

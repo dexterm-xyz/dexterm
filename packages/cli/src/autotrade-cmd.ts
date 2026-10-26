@@ -1,4 +1,5 @@
-// `dexterm autotrade <sub>` (task-1503 AT-1, AUTOTRADE-SPEC). PAPER ONLY: no keys, no wallet, no signer.
+// `dexterm autotrade <sub>` (task-1503 AT-1, AUTOTRADE-SPEC). No keys, no wallet, no signer: paper, or real mode
+// (task-1645: trade-fire signals to the user's own executor, `signal` / `receipt` rows).
 //
 // A dispatcher table: each subcommand is one row that lazy-loads its own module under ./autotrade-cmd/, so
 // later cards add a row (run, service, stop, flatten, audit) without editing anyone else's lines.
@@ -67,8 +68,8 @@ export const SUBCOMMANDS: Record<string, Subcommand> = {
     load: () => import('./autotrade-cmd/requests.ts').then((m) => m.requestsCmd),
   },
   run: {
-    usage: 'dexterm autotrade run <id|file> --paper [--replay TAPE [--ms-per-tick 2000]] [--model M] [--max-minutes N] [--stub] [--raw] [--quiet] [--no-telegram]',
-    summary: 'the paper runner: the screener hands each candidate to your own Claude (runner.json picks the account), every size clamped; ledger in autotrade/runs/; your paired Telegram bot starts with it (dexterm telegram setup)',
+    usage: 'dexterm autotrade run <id|file> --paper|--real [--replay TAPE [--ms-per-tick 2000]] [--model M] [--max-minutes N] [--sol-usd N] [--stub] [--raw] [--quiet] [--no-telegram]',
+    summary: 'the runner: the screener hands each candidate to your own Claude (runner.json picks the account), every size clamped; ledger in autotrade/runs/; your paired Telegram bot starts with it (dexterm telegram setup). --real (a strategy you armed with signal arm) runs in the FOREGROUND only, on live data: the always-on service runs paper strategies, and while no real run is running NO signal goes out, sells included',
     load: () => import('./autotrade-cmd/run.ts').then((m) => m.runCmd),
   },
   'run --all': {
@@ -111,6 +112,51 @@ export const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: 'list the run ledgers; --verify recomputes each hash chain and names the first edited, missing or reordered event',
     load: () => import('./autotrade-cmd/audit.ts').then((m) => m.auditCmd),
   },
+  signal: {
+    usage: 'dexterm autotrade signal status|channels|secret|arm|disarm|caps|kill|unkill|held|release|test|flush|tail|reconcile …',
+    summary: 'real mode: a LIVE TRADE FIRE signal per trade to YOUR executor (webhook, --signal-cmd, JSONL, MCP, Telegram copy); arm on your own terminal; hard caps, kill switch; dexterm holds no key',
+    load: () => import('./autotrade-cmd/signal.ts').then((m) => m.signalCmd),
+  },
+  receipt: {
+    usage: 'dexterm autotrade receipt <nonce|id> executed|rejected|failed [--price USD] [--size-sol N] [--tokens N] [--tx SIG] [--reason TEXT] | receipt list [--json]',
+    summary: 'what your executor did with a trade-fire signal, as data only (positions stay unconfirmed until a receipt); the drift between signals and fills',
+    load: () => import('./autotrade-cmd/receipt.ts').then((m) => m.receiptCmd),
+  },
+  service: {
+    usage: 'dexterm autotrade service install|uninstall|ensure|run|start|stop|status|logs [--home PATH]',
+    summary: 'the always-on service: your PAPER strategies (autotrade.json) start at login, restart after a crash, stop on any kill switch and tell you when they cannot run; real mode does not run under it (run --real, in the foreground)',
+    load: () => import('./autotrade-cmd/service.ts').then((m) => m.serviceCmd),
+  },
+  forward: {
+    usage: 'dexterm autotrade forward start <id> [--hours H] [--trades N] [--bankroll-usd N] | status [<id>] | stop <id> | report <id> [--json]',
+    summary: 'forward test: the strategy on the LIVE tape, on paper, own bankroll and run file, for hours or N trades; the report sets it next to its backtest',
+    load: () => import('./autotrade-cmd/forward.ts').then((m) => m.forwardCmd),
+  },
+  journey: {
+    usage: 'dexterm autotrade journey [<id>] [--json]',
+    summary: 'where a strategy stands on the ladder draft → backtested → forward-tested → always-on → real, and what the next rung needs',
+    load: () => import('./autotrade-cmd/journey.ts').then((m) => m.journeyCmd),
+  },
+  promote: {
+    usage: 'dexterm autotrade promote <id> --to always-on|real | list | show <pp-id> | apply <pp-id> | dismiss <pp-id>',
+    summary: 'a promotion with its evidence card: always-on needs your y on a real terminal; real needs the evidence floor (a completed forward test with minForwardTrades closed paper trades + a backtest) and hands over to signal arm (your caps, a typed phrase); no rung is skipped',
+    load: () => import('./autotrade-cmd/journey.ts').then((m) => m.promoteCmd),
+  },
+  limits: {
+    usage: 'dexterm autotrade limits show|set|diff|reset|accept|breaker reset|explain|schema …',
+    summary: 'real mode: every limit is yours (per trade SOL or % of book, per day, open positions, exposure, loss limits, breaker, rate, slippage, TTL, executor silence), global / per mode / per strategy / per account, the stricter wins; raising is typed on your own terminal',
+    load: () => import('./autotrade-cmd/limits.ts').then((m) => m.limitsCmd),
+  },
+  executor: {
+    usage: 'dexterm autotrade executor status [--json] | heartbeat [--name N] [--account ID] [--dry-run] [--nonce N] | kit --out DIR',
+    summary: 'real mode: is YOUR executor alive (heartbeat, last receipt, lag)? A silent executor pauses new buy signals; `kit --out DIR` copies the dry-run reference executors (webhook, signal-cmd, JSONL tail)',
+    load: () => import('./autotrade-cmd/executor.ts').then((m) => m.executorCmd),
+  },
+  report: {
+    usage: 'dexterm autotrade report [--period day|week] [--strategy ID] [--json] [--telegram]',
+    summary: 'the digest per strategy and mode: trades, win rate with its interval, net, drawdown, refusals, limits hit, executor health, paper vs real fills, an honest small-sample note',
+    load: () => import('./autotrade-cmd/report.ts').then((m) => m.reportCmd),
+  },
   extract: {
     usage: 'dexterm autotrade extract --out FILE [--db PATH] [--max-mints N] [--min-peak-liq USD] [--span-hours H]',
     summary: 'save a replay tape from your recorder history (read-only) to a file you can backtest offline',
@@ -120,7 +166,7 @@ export const SUBCOMMANDS: Record<string, Subcommand> = {
 
 export function autotradeHelp(): string {
   return [
-    'dexterm autotrade: strategies, backtests and the paper runner. PAPER ONLY, not financial advice.',
+    'dexterm autotrade: strategies, backtests and the runner. PAPER by default; mode real sends a LIVE TRADE FIRE signal per trade to YOUR executor (`signal arm`, on your own terminal; dexterm holds no key). Not financial advice.',
     '',
     ...Object.values(SUBCOMMANDS).map((s) => `  ${s.usage}\n      ${s.summary}`),
     '',
