@@ -10,6 +10,10 @@ import { runAutotrade, simExecutor } from '../src/runner.ts';
 import { effectiveLimits, emptyLimits } from '../src/limits.ts';
 import { PaperLimitsExecutor } from '../src/paper-limits.ts';
 
+// task-1679 (hosted CI, UTC runners): the fixture tape runs across 2026-10-17 00:00 UTC, and real mode's daily
+// counters are per LOCAL day by design. These tests assert one day's counters, so they run in the zone the fixture
+// was recorded in (America/New_York: the whole tape is one local day there). Node re-reads TZ when it is assigned.
+process.env.TZ = 'America/New_York';
 const TAPE = loadTape(fileURLToPath(new URL('./fixtures/autotrade-1498-tape.json', import.meta.url)));
 const SOL_USD = 200;
 
