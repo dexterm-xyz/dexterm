@@ -5,7 +5,8 @@
 // dropped, reordered or cut-off line is named with its event number. Exit 1 when any checked run is broken.
 
 import { dextermHome } from '@dexterm/custom';
-import { auditRun, listRunIds, type RunAudit } from '@dexterm/autotrade';
+import { existsSync } from 'node:fs';
+import { Outbox, allOutboxSignals, auditRun, divergenceLines, divergenceReport, driftReport, listRunIds, outboxPath, readReceipts, type DivergenceSummary, type DriftReport, type RunAudit } from '@dexterm/autotrade';
 import type { AutotradeIo } from '../autotrade-cmd.ts';
 import { parseArgs } from './strategies.ts';
 
@@ -33,8 +34,19 @@ export async function auditCmd(argv: string[], io: AutotradeIo): Promise<number>
   const verify = !!opts.verify;
   const audits = ids.map((id) => auditRun(home, id));
   const broken = verify ? audits.filter((a) => !a.ok) : [];
+  // task-1645: real mode: the drift between the trade-fire signals and the executor's receipts.
+  let real: Omit<DriftReport, 'rows'> | null = null;
+  // task-1654: paper vs real: each receipted fill against dexterm's own paper fill (every outbox file, archives too).
+  let divergence: DivergenceSummary | null = null;
+  if (existsSync(outboxPath(home))) {
+    const receipts = readReceipts(home).receipts;
+    const { rows: _rows, ...rest } = driftReport(Outbox.open(home, { channels: [], noLock: true }).signals(), receipts, Date.now());
+    real = rest;
+    const { rows: _r2, ...dv } = divergenceReport(allOutboxSignals(home), receipts);
+    divergence = dv;
+  }
   if (opts.json) {
-    io.stdout.write(`${JSON.stringify({ verified: verify, runs: audits, broken: broken.length }, null, 2)}\n`);
+    io.stdout.write(`${JSON.stringify({ verified: verify, runs: audits, broken: broken.length, ...(real ? { realSignals: real } : {}), ...(divergence ? { paperVsReal: divergence } : {}) }, null, 2)}\n`);
     return broken.length ? 1 : 0;
   }
   if (!audits.length) { io.stdout.write('no autotrade runs yet (ledgers live in autotrade/runs/ under your dexterm home)\n'); return 0; }
@@ -42,5 +54,7 @@ export async function auditCmd(argv: string[], io: AutotradeIo): Promise<number>
   for (const a of audits) io.stdout.write(`${line(a, verify)}\n`);
   if (verify) io.stdout.write(broken.length ? `${broken.length} broken ledger${broken.length === 1 ? '' : 's'}: the lines from that event on cannot be trusted\n` : 'every chain verifies\n');
   else io.stdout.write('add --verify to recompute the hash chains\n');
+  if (real) io.stdout.write(`real-mode signals vs receipts · executed ${real.counts.executed} · rejected ${real.counts.rejected} · failed ${real.counts.failed} · unconfirmed ${real.unconfirmed}${real.sizeDrift ? ` · size drift on ${real.sizeDrift}` : ''}${real.orphanReceipts ? ` · ${real.orphanReceipts} orphan receipt(s)` : ''} (dexterm autotrade receipt list)\n`);
+  if (divergence?.receipted) for (const l of divergenceLines(divergence)) io.stdout.write(`${l}\n`);
   return broken.length ? 1 : 0;
 }

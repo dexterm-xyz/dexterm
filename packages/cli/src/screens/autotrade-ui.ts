@@ -16,19 +16,21 @@
 // runner's control file (task-1509 fileControl), the same request `dexterm autotrade stop|flatten` writes.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { applyOps, dextermHome, type PatchOp } from '@dexterm/custom';
 import {
-  StrategyStore, MAX_OPS, STRATEGY_ID, activeRunner, bumpPatch, fmtIssue, readControl, readFleetStatus, requestControl, runnerRendezvousPath, validateStrategy,
+  StrategyStore, MAX_OPS, recordBacktestEvidence, type BacktestEvidence, STRATEGY_ID, activeRunner, bumpPatch, fmtIssue, readControl, readFleetStatus, requestControl, runnerRendezvousPath, validateStrategy,
   type BacktestReport, type FleetStatus, type ControlAction, type Grid, type Issue, type ListEntry, type ResolvedStrategy, type Strategy, type StrategyCheck, type SweepResult,
 } from '@dexterm/autotrade';
 import type { ProposalFiles } from '@dexterm/mcp';
 import { parseFilter } from '../screener/filter.ts';
 import { proposalFilesFor, proposalSource, type ProposalReview } from './autotrade-proposals.ts';
+import { confirmPromote, type ForwardSpawn, type JourneyPanel } from './autotrade-journey.ts';
 
-export type AutotradeView = 'list' | 'editor' | 'compare' | 'backtest' | 'runner';
+/** task-1647: `journey` (J on a strategy) is opened, never tab-cycled: the tabs stay the five views. */
+export type AutotradeView = 'list' | 'editor' | 'compare' | 'backtest' | 'runner' | 'journey';
 export const AUTOTRADE_VIEWS: readonly AutotradeView[] = ['list', 'editor', 'compare', 'backtest', 'runner'];
-export const VIEW_TITLE: Record<AutotradeView, string> = { list: 'STRATEGIES', editor: 'EDITOR', compare: 'COMPARE', backtest: 'BACKTEST', runner: 'RUNNER' };
+export const VIEW_TITLE: Record<AutotradeView, string> = { list: 'STRATEGIES', editor: 'EDITOR', compare: 'COMPARE', backtest: 'BACKTEST', runner: 'RUNNER', journey: 'JOURNEY' };
 
 export const SECTIONS = ['entry', 'exits', 'risk', 'sizing', 'agent', 'execution'] as const;
 export type Section = (typeof SECTIONS)[number];
@@ -43,7 +45,8 @@ export const INPUT_MAX = 400;
 
 // ───────────────────────────── injected services ─────────────────────────────
 
-export interface BacktestOutcome { report: BacktestReport; curve: number[] }
+/** task-1647: a single-strategy backtest also carries the held-out evidence the journey records. */
+export interface BacktestOutcome { report: BacktestReport; curve: number[]; evidence?: BacktestEvidence }
 /** Backtests and sweeps run off the render loop (a worker thread in the app, inline over a fixture tape in tests). */
 export interface BacktestJobs {
   /** Every strategy on the SAME tape (one window), results in order. */
@@ -122,7 +125,8 @@ export interface RunnerSnapshot {
   schema: typeof RUNNER_SCHEMA;
   pid: number;
   state: 'running' | 'paused' | 'halted' | 'stopped';
-  mode: 'paper';
+  /** task-1645: real = the paper engine + LIVE TRADE FIRE signals to the user's executor (no key). */
+  mode: 'paper' | 'real';
   startedAt: number;
   heartbeatAt: number;
   haltReason: string | null;
@@ -131,8 +135,20 @@ export interface RunnerSnapshot {
   spend: { todayUsd: number; dayCapUsd: number };
   candidates: { mint: string; symbol: string; ageSec: number; matched: string[]; session: string | null }[];
   sessions: { id: string; mint: string; symbol: string; turns: number; costUsd: number; budgetUsd: number; lastDecision: string | null }[];
-  positions: { mint: string; symbol: string; profile: string; costUsd: number; pnlUsd: number; pnlPct: number; next: string | null; freeBag?: boolean }[];
+  positions: { mint: string; symbol: string; profile: string; costUsd: number; pnlUsd: number; pnlPct: number; next: string | null; freeBag?: boolean; confirm?: string }[];
   ledgerTail: { seq: number; t: number; kind: string; text: string }[];
+  /** task-1645: real mode only (status, never a control). */
+  real?: {
+    accountId: string; killed: string | null; outboxDepth: number; lastNonce: number;
+    caps: { perTradeSol: number; dailySol: number; buysPerDay: number; maxOpenPositions: number };
+    day: { buySol: number; buys: number };
+    channels: { name: string; pending: number; failing: number; lastErr: string | null }[];
+    positions: { mint: string; symbol: string; state: string; nonce: number }[];
+    /** task-1654: the limits in force (absent from card A runners), the risk pauses, the executor's health. */
+    limits?: Record<string, number | null>;
+    risk?: { dayPnlSol: number; lossStreak: number; pausedUntil: number | null; breaker: { at: number; drawdownSol: number } | null; buyPause: string | null };
+    executor?: { alive: boolean | null; windowMin: number | null; silentSec: number | null; lastSeenBy: string | null; heartbeat: { executor: string; dryRun: boolean | null } | null; lastReceipt: { nonce: number; status: string } | null; receiptLagSec: number | null };
+  };
 }
 export type RunnerRead = { kind: 'none'; path: string } | { kind: 'bad'; path: string; error: string } | { kind: 'ok'; path: string; snap: RunnerSnapshot; readAt: number };
 
@@ -149,8 +165,8 @@ function runnerShapeError(d: unknown): string | null {
   if (!d || typeof d !== 'object') return 'not an object';
   const o = d as Record<string, unknown>;
   if (o.schema !== RUNNER_SCHEMA) return `unknown rendezvous shape ${JSON.stringify(o.schema)} (expected ${RUNNER_SCHEMA})`;
-  // Paper only: a rendezvous that claims anything else is shown as an error, never as a running live runner.
-  if (o.mode !== 'paper') return `mode ${JSON.stringify(o.mode)}: this screen shows paper runners only`;
+  // Paper, or real (task-1645: signals to the user's executor). Anything else is an error, never a running live runner.
+  if (o.mode !== 'paper' && o.mode !== 'real') return `mode ${JSON.stringify(o.mode)}: this screen shows paper runners only (and real-mode signal runners)`;
   for (const k of ['pid', 'startedAt', 'heartbeatAt']) if (typeof o[k] !== 'number') return `${k} is not a number`;
   if (!['running', 'paused', 'halted', 'stopped'].includes(o.state as string)) return `unknown state ${JSON.stringify(o.state)}`;
   for (const k of ['candidates', 'sessions', 'positions', 'ledgerTail']) if (!Array.isArray(o[k])) return `${k} is not a list`;
@@ -177,6 +193,8 @@ export interface AutotradeDeps {
   proposalFiles?: ProposalFiles;
   /** Where `x` writes an exported strategy file. */
   exportDir: string;
+  /** task-1647: starts a forward test's host (default: the dexterm entry, detached). */
+  forwardSpawn?: ForwardSpawn;
   now: () => number;
 }
 
@@ -225,10 +243,12 @@ export interface AutotradeUi {
   /** task-1529: set while the runner is a `run --all` (its run id is the fleet's). */
   fleet: FleetStatus | null;
   runnerReadAt: number;
-  /** The flatten confirm card (`f`, then y). */
-  confirm: { kind: 'flatten' } | null;
+  /** The flatten confirm card (`f`, then y); task-1647: the always-on promotion card (`A` on the journey, then y). */
+  confirm: { kind: 'flatten' } | { kind: 'promote'; proposalId: string } | null;
   /** task-1507: the chat proposal's review card (`o`; y applies, a LOOSER one needs a second y). */
   review: ProposalReview | null;
+  /** task-1647: the journey view's strategy and what it last read. */
+  journey: JourneyPanel | null;
 }
 
 export function defaultDeps(env: NodeJS.ProcessEnv = process.env, jobs: BacktestJobs | null = null): AutotradeDeps {
@@ -252,7 +272,7 @@ export function defaultDeps(env: NodeJS.ProcessEnv = process.env, jobs: Backtest
 export function newAutotradeUi(deps: AutotradeDeps): AutotradeUi {
   const ui: AutotradeUi = {
     view: 'list', deps, entries: [], selected: 0, marked: [], notice: null, input: null, editor: null, compare: null,
-    focusId: null, backtests: new Map(), compareRun: null, sweep: null, runner: { kind: 'none', path: '' }, fleet: null, runnerReadAt: 0, confirm: null, review: null,
+    focusId: null, backtests: new Map(), compareRun: null, sweep: null, runner: { kind: 'none', path: '' }, fleet: null, runnerReadAt: 0, confirm: null, review: null, journey: null,
   };
   reloadList(ui);
   refreshRunner(ui);
@@ -582,6 +602,8 @@ export function startBacktest(ui: AutotradeUi, id: string): string {
   void ui.deps.jobs.backtest([s], { days: BACKTEST_DAYS, until }).then(([out]) => {
     job.status = 'done'; job.result = out; job.doneAt = ui.deps.now();
     recordLine(ui, s, out.report);
+    // task-1647: the held-out split of a stored strategy is its journey evidence
+    if (out.evidence && ui.deps.store.get(s.id)?.ok) { try { recordBacktestEvidence(dirname(ui.deps.store.dir), out.evidence); } catch { /* evidence is best effort here */ } }
   }, (e) => { job.status = 'error'; job.error = errText(e); job.doneAt = ui.deps.now(); });
   return `backtesting ${s.id} v${s.version} on the last ${BACKTEST_DAYS} days of recorded history…`;
 }
@@ -671,6 +693,7 @@ export function confirmKey(ui: AutotradeUi, yes: boolean): string {
   const c = ui.confirm;
   ui.confirm = null;
   if (!c) return '';
+  if (c.kind === 'promote') return confirmPromote(ui, c.proposalId, yes);
   return yes ? ui.deps.control.flatten() : 'flatten cancelled';
 }
 

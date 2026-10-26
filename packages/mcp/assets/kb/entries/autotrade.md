@@ -7,7 +7,7 @@ tags:
   - paper
   - backtest
   - proposal
-date: 2026-10-21
+date: 2026-10-24
 confidence: high
 owner: maintainers
 origin: primary-doc
@@ -33,6 +33,8 @@ sources:
 - "stricter coins" → add a screen clause (`top10 <= 25`) or tighten `/entry/safety/*`.
 - "stop after a bad day" → lower `/risk/dailyLossHaltPct` or `/risk/drawdown/haltAtPct`.
 
-**Then measure.** `strategy_backtest {proposalId}` runs the current version and the proposal on the same recorded tape (days <= 14, read-only, rate-limited). Quote the trade count and the data limits: small n means little, fills are modelled, and early-entry rugs are often unsellable. A backtest is never a prediction and never financial advice.
+**Then measure.** `strategy_backtest {proposalId}` runs the current version and the proposal on the same recorded tape (days <= 14, rate-limited; a proposal's backtest saves nothing). `strategy_backtest {id}` also runs the strategy on each half of the held-out split and records it as the strategy's backtest evidence. Quote the trade count and the data limits: small n means little, fills are modelled, and early-entry rugs are often unsellable. A backtest is never a prediction and never financial advice.
 
 **Status.** `autotrade_status` shows the paper runner (heartbeat, halt, candidates, sessions and spend, positions) and the proposals waiting for the user.
+
+**The journey (one rung at a time).** draft → backtested (`strategy_backtest {id}`: held-out split recorded) → forward-tested (`strategy_forward_start {id, hours|trades}`: paper, live data, its own bankroll; read `strategy_forward_report` when it ends; an early stop never counts) → always-on → real (`strategy_promote_propose {id, to}`). `strategy_journey {id}` shows the rungs; evidence binds to the exact rules. Never skip a rung, apply a promotion, set or suggest caps, pick a bankroll or arm anything: say "I proposed it; you apply it". Claim gains only when `heldOut.claim` / `comparison.claim` is true (>= 20 trades in both halves, net above 0); otherwise "too few trades to claim anything".

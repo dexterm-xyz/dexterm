@@ -67,7 +67,7 @@ function shippedFiles(): { firstParty: string[]; vendor: string[] } {
   for (const d of readdirSync(PKGS)) {
     const pkg = join(PKGS, d);
     if (!existsSync(join(pkg, 'package.json'))) continue;
-    for (const sub of ['src', 'bin', 'assets']) for (const f of walk(join(pkg, sub))) if (CODE.test(f)) firstParty.push(f);
+    for (const sub of ['src', 'bin', 'assets', 'examples']) for (const f of walk(join(pkg, sub))) if (CODE.test(f)) firstParty.push(f);
     for (const f of walk(join(pkg, 'vendor'))) if (CODE.test(f)) vendor.push(f);
   }
   return { firstParty, vendor };

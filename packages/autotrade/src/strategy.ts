@@ -75,8 +75,12 @@ export interface Strategy {
   name: string;
   version: string;
   description: string;
-  /** paper is the default and the only mode the runner executes; live is designed, gated and refused here. */
-  mode: 'paper' | 'live';
+  /**
+   * paper is the default. task-1645: real = the paper engine plus a LIVE TRADE FIRE signal to the user's own executor
+   * (dexterm holds no key); it runs only once armed on the user's own terminal (real-mode.ts). live (the removed
+   * local signer) still validates and is refused.
+   */
+  mode: 'paper' | 'real' | 'live';
   /** task-1532: a HIGH RISK label (the yolo preset): the TUI, the run banner, the CLI list and Telegram say so. A label only;
    *  the clamp, the caps and the signer decide the same with or without it. */
   highRisk?: boolean;
@@ -206,7 +210,7 @@ export const SCHEMAS: Refs = {
     kind: { type: 'string', enum: ['strategy'] },
     schema: { type: 'string', enum: [STRATEGY_SCHEMA] },
     id: str(32, ID), name: str(40), version: str(16, SEMVER), description: str(600),
-    mode: { type: 'string', enum: ['paper', 'live'] },
+    mode: { type: 'string', enum: ['paper', 'real', 'live'] },
     highRisk: { type: 'boolean' },
     bankroll: obj({ startUsd: num(1, 1e7), source: { type: 'string', enum: ['fixed', 'desk'] } }, ['startUsd']),
     entry: obj({
@@ -335,6 +339,7 @@ export function validateStrategy(doc: unknown, library: Record<string, ExitProfi
   for (const [i, t] of s.entry.triggers.entries()) if (t.kind === 'narrative' || t.kind === 'wallet') warnings.push({ path: `/entry/triggers/${i}`, msg: `${t.kind} triggers need the live ${t.kind} feed; replays and backtests treat them as not firing` });
   if (s.bankroll.source === 'desk') warnings.push({ path: '/bankroll/source', msg: 'desk reads the paper desk book during a run; backtests use startUsd' });
   if (s.entry.safety.larp) warnings.push({ path: '/entry/safety/larp', msg: 'the LARP gate needs the live web (live data runs only); replays and backtests do not evaluate it' });
+  if (s.mode === 'real') warnings.push({ path: '/mode', msg: 'mode real sends a LIVE TRADE FIRE signal for every trade to your own executor; it runs only after `dexterm autotrade signal arm` on your own terminal, at this exact version' });
   if (s.mode === 'live') warnings.push({ path: '/mode', msg: 'mode live does not run: dexterm runs strategies on paper only (it holds no key and places no live order); live trading happens in the Telegram trading bot of your choice' });
 
   if (errors.length) return { ok: false, errors, warnings };

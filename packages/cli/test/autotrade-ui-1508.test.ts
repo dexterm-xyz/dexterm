@@ -97,13 +97,15 @@ function selectField(h: Harness, path: string): void {
 test('keymap: Q opens autotrade from anywhere, every autotrade verb is bound, and no scope binds a key twice', () => {
   assert.equal(DEFAULT_KEYMAP.resolveId('Q'), 'screen.autotrade');
   for (const s of ['screener', 'token', 'positions', 'plans', 'rules'] as const) assert.equal(DEFAULT_KEYMAP.resolveId('Q', s), 'screen.autotrade', `Q on ${s}`);
-  const want = ['autotrade.view', 'autotrade.new', 'autotrade.dup', 'autotrade.edit', 'autotrade.compare', 'autotrade.backtest', 'autotrade.sweep', 'autotrade.export', 'autotrade.import', 'autotrade.run', 'autotrade.save', 'autotrade.undo', 'autotrade.kill', 'autotrade.pause', 'autotrade.flatten', 'autotrade.proposal'];
+  const want = ['autotrade.view', 'autotrade.new', 'autotrade.dup', 'autotrade.edit', 'autotrade.compare', 'autotrade.backtest', 'autotrade.sweep', 'autotrade.export', 'autotrade.import', 'autotrade.run', 'autotrade.save', 'autotrade.undo', 'autotrade.kill', 'autotrade.pause', 'autotrade.flatten', 'autotrade.proposal',
+    'autotrade.journey', 'autotrade.forward', 'autotrade.forwardstop', 'autotrade.promote']; // task-1647: the journey view
   const ours = DEFAULT_KEYMAP.bindings.filter((b) => b.screen === 'autotrade');
   assert.deepEqual(ours.map((b) => b.action).sort(), [...want].sort());
   assert.deepEqual(Object.fromEntries(ours.map((b) => [b.action, b.keys.join(',')])), {
     'autotrade.view': 'tab', 'autotrade.new': 'n', 'autotrade.dup': 'd', 'autotrade.edit': 'e', 'autotrade.compare': 'c', 'autotrade.backtest': 'b', 'autotrade.sweep': 'w',
     'autotrade.export': 'x', 'autotrade.import': 'i', 'autotrade.run': 'r', 'autotrade.save': 's', 'autotrade.undo': 'u', 'autotrade.kill': '!', 'autotrade.pause': 'p', 'autotrade.flatten': 'f',
     'autotrade.proposal': 'o', // task-1507: review a chat proposal
+    'autotrade.journey': 'J', 'autotrade.forward': 'F', 'autotrade.forwardstop': 'X', 'autotrade.promote': 'A', // task-1647
   });
   // collisions: inside one scope (global, or one screen) a key id resolves to exactly one binding
   const scopes = new Map<string, Map<string, string>>();

@@ -76,7 +76,8 @@ export interface BacktestReport {
 }
 
 export async function backtest(strategy: ResolvedStrategy, tape: Tape, sessions: SessionFactory | null = null): Promise<{ report: BacktestReport; run: RunResult }> {
-  const run = await runAutotrade({ strategy, tape, sessions, pacing: { mode: 'lockstep' } });
+  // task-1645: a strategy in mode real backtests as its paper twin (a backtest never emits a trade-fire signal).
+  const run = await runAutotrade({ strategy: strategy.mode === 'real' ? { ...strategy, mode: 'paper' } : strategy, tape, sessions, pacing: { mode: 'lockstep' } });
   return { report: report(strategy, tape, run), run };
 }
 

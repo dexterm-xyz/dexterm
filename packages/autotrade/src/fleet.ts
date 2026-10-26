@@ -381,6 +381,8 @@ export interface FleetMemberSpec {
   strategy: ResolvedStrategy;
   basedOn: { id: string; version: string; hash: string };
   bankroll: { usd: number; sol?: number; solUsd?: number };
+  /** 0.2.0 card B: positions a crashed run of this strategy left open; the member's FIRST run adopts them. */
+  adopt?: import('./engine.ts').Position[];
 }
 
 export interface FleetHooks {
@@ -557,7 +559,10 @@ export async function runFleet(o: FleetOpts): Promise<FleetResult> {
     fl.add(now, 'member_start', { member: id, runId, why, strategyHash: spec.strategy.hash, bankroll: spec.bankroll, ...(account ? { account: account.id } : {}) });
     say(`[${id}] started (run ${runId}, ${spec.basedOn.id} v${spec.basedOn.version}, ${account ? `paper account ${account.id} ($${account.cashUsd.toFixed(2)} cash of $${account.startUsd})` : `bankroll $${spec.bankroll.usd}${spec.bankroll.sol !== undefined ? ` = ${spec.bankroll.sol} SOL` : ''}`})`);
     const ticks = hub.subscribe(runId);
+    const adopt = spec.adopt;
+    spec.adopt = undefined; // a later restart of this member (a `start` request) never adopts them twice
     l.done = runAutotrade({
+      ...(adopt?.length ? { adopt } : {}),
       strategy: spec.strategy, source: { name: o.tape?.source ?? o.source!.name, ticks, startT: now }, sessions, gate, ledger, runId,
       dossier: o.dossier?.(spec), vet: o.vet?.(spec), executor: execs.executors.get(id), verbose: o.verbose ?? true, onLine: (s) => say(`[${id}] ${s}`),
       pacing, ...(account ? { account, member: id } : {}),

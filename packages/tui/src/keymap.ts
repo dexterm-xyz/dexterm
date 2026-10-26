@@ -249,7 +249,9 @@ export type AppAction =
   // per-screen. Nothing on it switches a strategy to live, arms a mandate, or reaches a wallet or the signer.
   | 'screen.autotrade' | 'autotrade.view' | 'autotrade.new' | 'autotrade.dup' | 'autotrade.edit' | 'autotrade.compare' | 'autotrade.backtest'
   | 'autotrade.export' | 'autotrade.import' | 'autotrade.run' | 'autotrade.save' | 'autotrade.undo' | 'autotrade.sweep'
-  | 'autotrade.kill' | 'autotrade.pause' | 'autotrade.flatten' | 'autotrade.proposal';
+  | 'autotrade.kill' | 'autotrade.pause' | 'autotrade.flatten' | 'autotrade.proposal'
+  // task-1647: the journey view (J) of one strategy: F starts a paper forward test, X stops it, A reviews an always-on promotion
+  | 'autotrade.journey' | 'autotrade.forward' | 'autotrade.forwardstop' | 'autotrade.promote';
 
 /** The prototype's key table (README of dexterm/prototype) plus the SPEC §4.1 screener keys. */
 export const DEFAULT_KEYMAP = new Keymap<AppAction>([
@@ -460,4 +462,11 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['p'], action: 'autotrade.pause', label: 'pause new entries', screen: 'autotrade' },
   { keys: ['f'], action: 'autotrade.flatten', label: 'flatten (confirm)', screen: 'autotrade' },
   { keys: ['o'], action: 'autotrade.proposal', label: 'review chat proposal', screen: 'autotrade' },
+  // task-1647: a strategy's JOURNEY (draft → backtested → forward-tested → always-on → real). F starts a 24 h paper forward
+  // test (live data, the strategy's own bankroll), X stops it, A opens a pending always-on promotion (y applies). Real is
+  // never applied from a key: it needs the user's caps and a typed phrase on a terminal.
+  { keys: ['J'], action: 'autotrade.journey', label: 'journey (ladder)', screen: 'autotrade' },
+  { keys: ['F'], action: 'autotrade.forward', label: 'forward test (paper)', screen: 'autotrade' },
+  { keys: ['X'], action: 'autotrade.forwardstop', label: 'stop forward test', screen: 'autotrade' },
+  { keys: ['A'], action: 'autotrade.promote', label: 'review promotion', screen: 'autotrade' },
 ]);

@@ -29,7 +29,7 @@ export const LEDGER_HELP = `dexterm ledger: the unified trade ledger (paper, age
   dexterm ledger sync [--json]                                append what the sources hold to the ledger file
   dexterm ledger verify [--json]                              recompute the ledger file's sha256 chain
 
-  filters: --source paper|desk|autotrade|live  --mode paper|devnet|live  --strategy ID[@VERSION|@HASH]  --profile P
+  filters: --source paper|desk|autotrade|live  --mode paper|devnet|live|real  --strategy ID[@VERSION|@HASH]  --profile P
            --exit REASON  --mint MINT  --run RUN_ID  --account ID  --days N  --status open|closed  --wallet-db PATH
 
   The file is $DEXTERM_HOME/ledger/trades.jsonl (default ~/.dexterm). PAPER rows are simulated; filter by --mode
@@ -97,8 +97,9 @@ function banner(v: LedgerView, rows: readonly TradeRow[]): string[] {
   if (v.pending.length) out.push(`  + ${v.pending.length} events from the sources not in the file yet (shown here; \`dexterm ledger sync\` appends them)`);
   for (const s of v.sources) if (s.problem) out.push(`  ! ${s.problem}`);
   const modes = [...new Set(rows.map((t) => t.walletMode))];
-  if (modes.length > 1) out.push('  PAPER, DEVNET and LIVE trades are mixed here: use --mode before comparing results.');
+  if (modes.length > 1) out.push('  PAPER, REAL, DEVNET and LIVE trades are mixed here: use --mode before comparing results.');
   else if (modes[0] === 'paper') out.push('  PAPER (simulated) trades.');
+  else if (modes[0] === 'real') out.push('  REAL-mode trades: dexterm modelled the trades it signalled to your executor; your executor\'s receipts are the real fills.');
   return out;
 }
 

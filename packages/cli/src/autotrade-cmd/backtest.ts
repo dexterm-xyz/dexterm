@@ -2,16 +2,17 @@
 // the recorder DB is opened read-only, fills are modelled, no network, no model, no keys. Mechanical entries
 // (`auto`): the agent's judgement is what the runner card measures, so a backtest never spawns a session.
 
+import { dextermHome } from '@dexterm/custom';
 import { defaultDbPath } from '@dexterm/data';
 import { openHistoryReadOnly } from '@dexterm/recorder';
 import {
-  backtest, everyCandidate, fmtIssue, loadTape, renderRecall, renderReport, renderSweep, renderYoloReplay, builtinTapePath, runnerRecall, saveTape, sweep, tapeFromDb, tapeFromDoc, yoloReplay,
+  backtest, backtestEvidence, everyCandidate, recordBacktestEvidence, renderHeldOut, fmtIssue, loadTape, renderRecall, renderReport, renderSweep, renderYoloReplay, builtinTapePath, runnerRecall, saveTape, sweep, tapeFromDb, tapeFromDoc, yoloReplay,
   type Grid, type ResolvedStrategy, type Tape,
 } from '@dexterm/autotrade';
 import type { AutotradeIo } from '../autotrade-cmd.ts';
 import { parseArgs, resolveStrategyArg, storeFor } from './strategies.ts';
 
-const BOOL = ['json', 'every-candidate'];
+const BOOL = ['json', 'every-candidate', 'no-held-out'];
 
 function strategyFrom(pos: string[], opts: Record<string, string | true>, io: AutotradeIo, usage: string, anyMode = false): ResolvedStrategy | null {
   const arg = typeof opts.strategy === 'string' ? opts.strategy : pos[0];
@@ -80,7 +81,8 @@ export function tapeFrom(opts: Record<string, string | true>, io: AutotradeIo): 
 
 export async function backtestCmd(argv: string[], io: AutotradeIo): Promise<number> {
   const { pos, opts } = parseArgs(argv, BOOL);
-  const usage = 'dexterm autotrade backtest <id|file> [--tape FILE | --db PATH] [--days N | --since T] [--until T] [--every-candidate [--unit-usd 20]] [--recall 5,10] [--json]';
+  const usage = 'dexterm autotrade backtest <id|file> [--tape FILE | --db PATH] [--days N | --since T] [--until T] [--every-candidate [--unit-usd 20]] [--recall 5,10] [--no-held-out] [--json]';
+  const arg = typeof opts.strategy === 'string' ? opts.strategy : pos[0];
   const s0 = strategyFrom(pos, opts, io, usage);
   if (!s0) return 2;
   const tape = tapeFrom(opts, io);
@@ -92,8 +94,17 @@ export async function backtestCmd(argv: string[], io: AutotradeIo): Promise<numb
   if (!opts['every-candidate']) {
     try { storeFor(io).recordBacktest({ hash: s.hash, t: Date.now(), trades: report.trades, netUsd: report.netUsd, netPct: report.netPct, maxDrawdownPct: report.maxDrawdownPct, tape: `${report.tape.mints} coins ${report.tape.from ?? ''}..${report.tape.to ?? ''}` }); } catch { /* the line is a convenience for `list`; never fail a backtest on it */ }
   }
-  if (opts.json) { io.stdout.write(JSON.stringify(recall ? { ...report, recall } : report, null, 2) + '\n'); return 0; }
+  // task-1647: a stored strategy's backtest is journey evidence: the same rules on each half of the held-out split.
+  let evidence: Awaited<ReturnType<typeof backtestEvidence>>['evidence'] | null = null;
+  const stored = !!arg && !opts['every-candidate'] && !opts['no-held-out'] && storeFor(io).get(arg)?.ok === true && arg === s.id;
+  if (stored) {
+    const days = numOpt(opts, 'days', 0);
+    evidence = (await backtestEvidence(s, tape, { by: 'user', days: days > 0 ? days : null, full: { report, run } })).evidence;
+    try { recordBacktestEvidence(dextermHome(io.env), evidence); } catch (e) { io.stderr.write(`warning: the journey record was not written (${(e as Error).message})\n`); }
+  }
+  if (opts.json) { io.stdout.write(JSON.stringify({ ...report, ...(recall ? { recall } : {}), ...(evidence ? { heldOut: evidence.heldOut, evidence: { verdict: evidence.verdict, claim: evidence.claim, rulesHash: evidence.rulesHash } } : {}) }, null, 2) + '\n'); return 0; }
   io.stdout.write(renderReport(report) + '\n');
+  if (evidence) io.stdout.write(renderHeldOut(evidence).join('\n') + `\n  journey: recorded as the backtest of ${s.id} v${s.version} (dexterm autotrade journey ${s.id})\n`);
   if (opts['every-candidate']) io.stdout.write(`  every-candidate copy of ${s0.id}: each candidate entered at $${numOpt(opts, 'unit-usd', 20)} with the book caps lifted (an evaluation, not a strategy to run)\n`);
   if (recall) io.stdout.write(renderRecall(recall, s) + '\n');
   io.stdout.write('  Paper only, recorded data, not financial advice. A backtest is not a forecast.\n');

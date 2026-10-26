@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTION_FILE_ENV, ACTION_TOKEN_ENV, ANALYST_ACTION_TYPES, parseActionLine } from '@dexterm/data';
 import { basisLanguage, DEFAULT_PRICE_BASIS, fmtCap, isPriceBasis, knownSupply, NO_SUPPLY_REASON, pickBasis, type PriceBasis } from '@dexterm/data/basis';
-import { firewall, userSkillPreamble, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
+import { firewall, userSkillPreamble, JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
 import { skillStore } from '../kb-skill-cmd.ts';
 import { applyCodexEvent, buildCodexArgv, codexAllowedTools, codexDeveloperInstructions, codexFailure, expandSkillPrompt, newCodexTurn, strictSchema, type AnalystEngine } from './codex.ts';
 import { runOllamaTurn, type OllamaDeps } from './ollama.ts';
@@ -73,7 +73,8 @@ export function deniedActionTools(actionTypes: readonly string[] | undefined): s
   if (!actionTypes) return [];
   // task-1507: an observe-only session (AI scan) cannot propose a strategy edit either
   // task-1529: nor start or stop a parallel strategy
-  const propose = actionTypes.length === 0 ? [...STRATEGY_PROPOSE_TOOLS, ...PARALLEL_CONTROL_TOOLS] : [];
+  // task-1647: nor start / stop a forward test or propose a promotion
+  const propose = actionTypes.length === 0 ? [...STRATEGY_PROPOSE_TOOLS, ...PARALLEL_CONTROL_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...JOURNEY_PROPOSE_TOOLS] : [];
   return [...ANALYST_ACTION_TYPES.filter((t) => !actionTypes.includes(t)), ...propose].map((t) => `mcp__dexterm__${t}`);
 }
 

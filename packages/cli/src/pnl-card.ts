@@ -193,7 +193,7 @@ export function autotradeCardInput(events: AutotradeFillEvent[], o: { positionId
 
 /** The fields of a unified trade-ledger row (task-1530, `@dexterm/data/ledger` TradeRow) a card is built from. */
 export interface LedgerCardRow {
-  tradeId: string; source: 'paper' | 'desk' | 'autotrade' | 'live'; walletMode: 'paper' | 'devnet' | 'live';
+  tradeId: string; source: 'paper' | 'desk' | 'autotrade' | 'live'; walletMode: 'paper' | 'devnet' | 'live' | 'real';
   mint: string; symbol: string; decimals: number | null; runId: string | null;
   supply: { tokens: number; source: string } | null;
   fills: { t: number; side: 'buy' | 'sell'; sol: number | null; usd: number | null; tokens: number | null; feeSol: number | null; txSig: string | null }[];
@@ -206,6 +206,9 @@ export interface LedgerCardRow {
  * needs `solUsd`; a fill with no token amount refuses the card rather than guess.
  */
 export function ledgerCardInput(row: LedgerCardRow, o: { solUsd?: { usd: number; source: string } | null; name?: string | null; mark?: CardInput['mark']; image?: CardInput['image'] } = {}): CardInput {
+  // task-1655: a real-mode row is dexterm's model of a trade it signalled; the real fill is the executor's receipt.
+  // A card would stamp it PAPER or LIVE, and both are wrong, so there is none.
+  if (row.walletMode === 'real') throw new CardError('a real-mode trade: dexterm only modelled this fill (the signal it sent your executor); your executor\'s receipt is the record, so dexterm makes no card for it');
   const decimals = row.decimals ?? 6;
   const usdDesk = row.fills.some((f) => f.sol === null);
   if (usdDesk && !(o.solUsd && o.solUsd.usd > 0)) throw new CardError('this trade was booked in USD: a card needs a SOL/USD rate (--sol-usd)');

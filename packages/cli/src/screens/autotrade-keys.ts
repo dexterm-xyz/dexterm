@@ -10,6 +10,7 @@ import {
   startCompareBacktest, startSweep, toggleMark, undoEditor, type AutotradeUi,
 } from './autotrade-ui.ts';
 import { openReview, reviewKey } from './autotrade-proposals.ts';
+import { journeyForward, journeyPromote, journeyStopForward, openJourney, refreshJourney } from './autotrade-journey.ts';
 
 const PRINTABLE = (k: Key): string | null => (k.name === 'space' ? ' ' : k.name === 'char' && k.ch && !k.ctrl && !k.alt && !/[\u0000-\u001f\u007f]/.test(k.ch) ? k.ch : null);
 
@@ -80,6 +81,7 @@ export function autotradeAction(ui: AutotradeUi, action: AppAction): boolean {
     case 'autotrade.save': return say(ui.view === 'editor' ? saveEditor(ui) : 's saves in the editor');
     case 'autotrade.undo': return say(ui.view === 'editor' ? undoEditor(ui) : 'u undoes in the editor');
     case 'autotrade.backtest': {
+      if (ui.view === 'journey' && ui.journey) return say(startBacktest(ui, ui.journey.id));
       if (ui.view === 'compare') return say(startCompareBacktest(ui));
       if (ui.view === 'editor' && ui.editor) return say(`${startBacktest(ui, ui.editor.id)}${ui.editor.edits.length ? ' (the saved version; s saves your edits first)' : ''}`);
       if (ui.view === 'backtest') { const s = backtestSubject(ui); return say(s ? startBacktest(ui, s.id) : 'no strategy selected'); }
@@ -90,6 +92,13 @@ export function autotradeAction(ui: AutotradeUi, action: AppAction): boolean {
       return say(id ? startSweep(ui, id) : 'no strategy selected');
     }
     case 'autotrade.proposal': return say(ui.view === 'list' ? openReview(ui) || null : 'o reviews chat proposals on the strategies list (esc)');
+    // task-1647: the journey view
+    case 'autotrade.journey':
+      if (ui.view === 'journey') { refreshJourney(ui, true); return say(null); }
+      return say(openJourney(ui, ui.view === 'editor' ? ui.editor?.id : ui.view === 'backtest' ? backtestSubject(ui)?.id : e?.id));
+    case 'autotrade.forward': return say(ui.view === 'journey' ? journeyForward(ui) : 'F starts a forward test on the journey view (J)');
+    case 'autotrade.forwardstop': return say(ui.view === 'journey' ? journeyStopForward(ui) : 'X stops a forward test on the journey view (J)');
+    case 'autotrade.promote': return say(ui.view === 'journey' ? journeyPromote(ui) : 'A reviews a promotion on the journey view (J)');
     case 'autotrade.run':
       ui.view = 'runner';
       refreshRunner(ui);

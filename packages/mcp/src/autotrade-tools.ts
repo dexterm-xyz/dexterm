@@ -10,6 +10,19 @@
 //   strategy_backtest      observe  a strategy or a proposal on recorded history (days <= 14), read-only, rate-limited
 //   autotrade_status       observe  the paper runner's status file, strategies and pending proposals
 //
+// task-1647 (0.2.0 card C), the JOURNEY draft -> backtested -> forward-tested -> always-on -> real:
+//
+//   strategy_journey          observe  the ladder for one strategy: which rungs have evidence on these rules, what is next
+//   strategy_forward_report   observe  a forward test next to the backtest (held-out split) of the same rules
+//   strategy_forward_start    control  start a forward test: live data, paper, the strategy's OWN bankroll, a window
+//                                      (hours <= 72 or closed trades <= 200); only after a backtest; never real
+//   strategy_forward_stop     control  stop one (it flattens and writes its report; an early stop never counts)
+//   strategy_promote_propose  propose  a PROMOTION proposal (always-on or real) with an evidence card, never applied;
+//                                      no rung can be skipped; always-on is the user's y, real is the user's own
+//                                      caps + `signal arm` with a typed phrase on their terminal
+//   strategy_backtest now also runs the strategy on each half of the held-out split and records that as the
+//   strategy's backtest evidence (the engine's numbers on the recorded tape, never model text).
+//
 // A proposal is a file in `$DEXTERM_HOME/strategies/.proposals/`. Nothing in this module writes a strategy:
 // the user applies a proposal on the Q screen with a keypress (a LOOSER one needs a second keypress, the
 // "less safe" popup), and that path re-checks everything here from scratch (`checkProposal`) instead of trusting
@@ -20,12 +33,13 @@
 // @dexterm/autotrade imports @dexterm/mcp (the firewall), so the server loads the engine lazily (`loadEngine`);
 // the CLI hands its own static import to the same functions.
 
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { firewallText } from '@dexterm/data';
-import type { ExitProfile, Issue, ResolvedStrategy, Strategy, StrategyStore, Tape } from '@dexterm/autotrade';
+import type { ExitProfile, ForwardTest, Issue, ResolvedStrategy, Strategy, StrategyStore, Tape } from '@dexterm/autotrade';
 import type { PatchOp } from '@dexterm/custom';
 import { firewall } from './firewall.ts';
 import { dextermHome } from './user-content.ts';
@@ -55,6 +69,27 @@ export const PARALLEL_READ_TOOLS: readonly string[] = ['autotrade_parallel_list'
 export const PARALLEL_CONTROL_TOOLS: readonly string[] = ['autotrade_parallel_start', 'autotrade_parallel_stop'];
 export const PARALLEL_TOOLS: readonly string[] = [...PARALLEL_READ_TOOLS, ...PARALLEL_CONTROL_TOOLS];
 
+/** task-1647: the journey tools. Reads; forward-test control (paper, own bankroll); promotion PROPOSALS (never applied). */
+export const JOURNEY_READ_TOOLS: readonly string[] = ['strategy_journey', 'strategy_forward_report'];
+export const JOURNEY_CONTROL_TOOLS: readonly string[] = ['strategy_forward_start', 'strategy_forward_stop'];
+export const JOURNEY_PROPOSE_TOOLS: readonly string[] = ['strategy_promote_propose'];
+export const JOURNEY_TOOLS: readonly string[] = [...JOURNEY_READ_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...JOURNEY_PROPOSE_TOOLS];
+/** Forward tests a model may start per hour (each one is a background process on the user's machine). */
+export const FORWARD_START_RATE = { perHour: 3 } as const;
+
+/**
+ * How a forward test's host starts from the MCP server: the dexterm entry this server runs from (`dexterm mcp`),
+ * detached, `autotrade forward run <fid>`. Tests swap it. null = could not start (the user starts it in a terminal).
+ */
+export type ForwardSpawner = (home: string, t: ForwardTest, env: NodeJS.ProcessEnv) => number | null;
+export const defaultForwardSpawner: ForwardSpawner = (home, t, env) => {
+  const bin = process.argv[1] ?? '';
+  if (!/^dexterm(\.m?js)?$/.test(basename(bin))) return null;
+  const child = spawn(process.execPath, [bin, 'autotrade', 'forward', 'run', t.forwardId], { detached: true, stdio: 'ignore', env: { ...env, DEXTERM_HOME: home } });
+  child.unref();
+  return child.pid ?? null;
+};
+
 export const MAX_PROPOSAL_OPS = 20;
 export const BACKTEST_MAX_DAYS = 14;
 /** Backtests: one at a time, at least this far apart, and at most this many per hour per server process. */
@@ -71,7 +106,7 @@ const DAY_MS = 86_400_000;
  * to live, change the book, raise its own daily spend or lower the floor under which a bag counts as stuck.
  */
 export const STRATEGY_DENIED_FOR_MODELS: readonly { pointer: string; why: string }[] = [
-  { pointer: '/mode', why: 'only you can change the mode (a model can never switch a strategy to live)' },
+  { pointer: '/mode', why: 'only you can change the mode (a model can never switch a strategy to real or live; real is armed on your own terminal)' },
   { pointer: '/bankroll', why: 'only you can change the book' },
   { pointer: '/agent/budgetUsdPerDay', why: 'only you can change the daily spend (a model can never raise its own budget)' },
   { pointer: '/execution/minExitLiquidityUsd', why: 'only you can change the stuck-bag floor' },
@@ -669,6 +704,8 @@ export interface AutotradeToolsOpts {
   tape?: (o: { days: number; until: number }) => Tape;
   now?: () => number;
   engine?: () => Promise<Engine>;
+  /** task-1647: starts a forward test's host (default: the dexterm entry, detached). */
+  forwardSpawner?: ForwardSpawner;
 }
 
 export class AutotradeTools {
@@ -680,6 +717,7 @@ export class AutotradeTools {
   private backtestBusy = false;
   private readonly backtestTimes: number[] = [];
   private readonly proposalTimes: number[] = [];
+  private readonly forwardTimes: number[] = [];
 
   constructor(o: AutotradeToolsOpts = {}) {
     this.opts = o;
@@ -703,6 +741,11 @@ export class AutotradeTools {
         case 'strategy_propose_new': return await this.propose({ kind: 'new', id: String(args.id ?? ''), from: String(args.fromPreset ?? ''), name: args.name, ops: args.ops ?? [], why: args.why });
         case 'strategy_backtest': return await this.backtest(args);
         case 'autotrade_status': return await this.status();
+        case 'strategy_journey': return await this.journey(args);
+        case 'strategy_forward_start': return await this.forwardStart(args);
+        case 'strategy_forward_stop': return await this.forwardStop(args);
+        case 'strategy_forward_report': return await this.forwardReportTool(args);
+        case 'strategy_promote_propose': return await this.promotePropose(args);
         case 'autotrade_parallel_list': return await this.parallelList();
         case 'autotrade_parallel_compare': return await this.parallelCompare();
         case 'autotrade_parallel_start': return await this.parallelControl(args, 'start');
@@ -829,11 +872,21 @@ export class AutotradeTools {
         tape = at.tapeFromDoc(at.tapeFromDb(db, { since: until - days * DAY_MS, until, minPeakLiqUsd: 20_000, spanHours: 80 }));
       }
       const results: Record<string, unknown>[] = [];
+      let heldOut: Record<string, unknown> | null = null;
       for (const sub of subjects) {
-        const { report } = await at.backtest(sub.s, tape);
-        results.push({ label: sub.label, ...compactReport(report) });
+        const full = await at.backtest(sub.s, tape);
+        results.push({ label: sub.label, ...compactReport(full.report) });
+        // task-1647: a stored strategy's backtest is its journey evidence: the same rules on each half of the split.
+        if (args.id !== undefined) {
+          const { evidence } = await at.backtestEvidence(sub.s, tape, { by: this.actor, now: t, days, full });
+          at.recordBacktestEvidence(this.home(), evidence);
+          heldOut = { cutoff: evidence.heldOut.cutoff, train: evidence.heldOut.train, test: evidence.heldOut.test, verdict: evidence.verdict, claim: evidence.claim, rulesHash: evidence.rulesHash };
+        }
       }
-      return { paper: true, readOnly: true, days, tape: { source: tape.source, mints: tape.mints.length, ticks: tape.ticks.length }, results, limits: at.DATA_LIMITS, note: 'A backtest on recorded history with modelled fills, not a prediction. Nothing was saved. Quote the trade count: small n means little.' };
+      return {
+        paper: true, readOnly: true, days, tape: { source: tape.source, mints: tape.mints.length, ticks: tape.ticks.length }, results, ...(heldOut ? { heldOut } : {}), limits: at.DATA_LIMITS,
+        note: `A backtest on recorded history with modelled fills, not a prediction. ${heldOut ? 'The held-out split (the newest 30% of coins) is recorded as this strategy\'s backtest evidence for its journey; the strategy itself was not changed. Gain wording only when heldOut.claim is true.' : 'Nothing was saved.'} Quote the trade count: small n means little.`,
+      };
     } finally { this.backtestBusy = false; }
   }
 
@@ -846,6 +899,113 @@ export class AutotradeTools {
       runner: runnerStatus(at, this.home(), this.now()),
       strategies: store.list().length,
       pendingProposals: pending.map((p) => ({ proposalId: p.proposalId, id: p.id, kind: p.kind, riskDelta: p.riskDelta, createdAt: new Date(p.createdAt).toISOString() })),
+    };
+  }
+
+  // ───────────────────────────── the journey (task-1647) ─────────────────────────────
+
+  private async userStrategy(id: unknown): Promise<{ s: ResolvedStrategy; raw: Strategy } | { error: string }> {
+    const { at } = await this.eng();
+    if (typeof id !== 'string' || !at.STRATEGY_ID.test(id)) return { error: 'id must be a strategy id from strategy_list' };
+    const store = await this.store();
+    const got = store.get(id);
+    if (!got) return { error: `no strategy ${id} (strategy_list shows the ids)` };
+    if (got.source !== 'user') return { error: `${id} is a shipped preset: propose a copy first (strategy_propose_new), the user applies it, then work on the copy` };
+    if (!got.ok) return { error: `${id} does not validate: ${got.errors.map(at.fmtIssue).join('; ')}` };
+    return { s: got.strategy, raw: store.raw(id) as Strategy };
+  }
+
+  private async journey(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const { at } = await this.eng();
+    const r = await this.userStrategy(args.id);
+    if ('error' in r) return r;
+    const home = this.home();
+    const v = at.journeyView(home, r.s, { armedHash: at.loadArmings(home)[r.s.id]?.strategyHash ?? null });
+    const fw = at.findForwardTest(home, r.s.id, this.now());
+    const pending = new at.PromotionFiles(home).list({ status: 'pending', id: r.s.id });
+    return {
+      paper: r.s.mode !== 'real', id: v.id, version: v.version, rulesHash: v.rulesHash, mode: v.mode, stage: v.stage,
+      rungs: v.rungs.map((x) => ({ stage: x.stage, ok: x.ok, detail: cleanText(x.detail, 300) })), next: v.next, notes: v.notes.map((n) => cleanText(n, 200)),
+      forward: fw ? { forwardId: fw.forwardId, state: at.liveState(fw, this.now()), window: fw.window, progress: fw.progress, counts: fw.rulesHash === v.rulesHash && fw.state === 'done' && fw.source.startsWith('live') } : null,
+      pendingPromotions: pending.map((p) => ({ proposalId: p.proposalId, to: p.to, actor: p.actor })),
+      note: 'The ladder is draft → backtested → forward-tested → always-on → real, one rung at a time, each on evidence measured on these exact rules. Backtest with strategy_backtest, forward-test with strategy_forward_start, then propose a promotion with strategy_promote_propose; the user applies it. Never claim a result the evidence does not show.',
+    };
+  }
+
+  private async forwardStart(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const { at } = await this.eng();
+    const r = await this.userStrategy(args.id);
+    if ('error' in r) return r;
+    const home = this.home();
+    const t = this.now();
+    while (this.forwardTimes.length && t - this.forwardTimes[0] > 3_600_000) this.forwardTimes.shift();
+    if (this.forwardTimes.length >= FORWARD_START_RATE.perHour) return { error: `at most ${FORWARD_START_RATE.perHour} forward tests started per hour`, reason: 'rate-limited' };
+    const v = at.journeyView(home, r.s, {});
+    if (!v.backtest) return { error: `${r.s.id} has no backtest with the held-out split on its current rules: run strategy_backtest {id} first (the ladder is backtest, then forward test)`, reason: 'skip-refused' };
+    const hours = args.hours === undefined ? null : Number(args.hours);
+    const trades = args.trades === undefined ? null : Number(args.trades);
+    // No bankroll, no mode, no source: a model's forward test is always paper, live data, the strategy's own bankroll.
+    const c = at.createForwardTest(home, r.s, r.raw, { hours: hours ?? (trades === null ? 24 : null), trades, by: this.actor, now: t, source: 'live' });
+    if (!c.ok) return { error: cleanText(c.why, 300) };
+    const pid = (this.opts.forwardSpawner ?? defaultForwardSpawner)(home, c.test, this.env);
+    if (!pid) {
+      at.saveForwardTest(home, { ...c.test, state: 'failed', endedAt: t, endReason: 'could not start the host from the chat' });
+      return { error: `could not start the forward test from here; the user can start it in a terminal: dexterm autotrade forward start ${r.s.id}${hours ? ` --hours ${hours}` : ''}${trades ? ` --trades ${trades}` : ''}` };
+    }
+    this.forwardTimes.push(t);
+    return {
+      paper: true, started: true, forwardId: c.test.forwardId, id: r.s.id, version: c.test.version, window: c.test.window, bankrollUsd: c.test.bankrollUsd,
+      note: `A FORWARD TEST runs in the background on LIVE data, on paper, with ${r.s.id}'s own bankroll and its own run file, until its window ends (${at.windowText(c.test.window)}). Read it with strategy_forward_report; stop it with strategy_forward_stop. Say nothing about results until it ends, and then only with the trade counts: under 20 closed trades it proves nothing.`,
+    };
+  }
+
+  private async forwardRef(args: Record<string, unknown>): Promise<{ t: ForwardTest } | { error: string }> {
+    const { at } = await this.eng();
+    const ref = args.forwardId !== undefined ? String(args.forwardId) : args.id !== undefined ? String(args.id) : '';
+    if (!ref) return { error: 'pass id (a strategy id) or forwardId' };
+    const t = at.findForwardTest(this.home(), ref, this.now());
+    return t ? { t } : { error: `no forward test for ${cleanText(ref, 40)}` };
+  }
+
+  private async forwardStop(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const { at } = await this.eng();
+    const f = await this.forwardRef(args);
+    if ('error' in f) return f;
+    const r = at.requestForwardStop(this.home(), f.t.forwardId, this.actor, this.now());
+    if (!r.ok) return { error: cleanText(r.why, 200) };
+    return { paper: true, stopRequested: true, already: r.already, forwardId: f.t.forwardId, note: 'It flattens at its next tick, writes its report and ends. A forward test stopped early is shown in the journey but does not count as the forward-tested rung.' };
+  }
+
+  private async forwardReportTool(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const { at } = await this.eng();
+    const f = await this.forwardRef(args);
+    if ('error' in f) return f;
+    const r = at.forwardReport(this.home(), f.t, this.now());
+    return {
+      paper: true, readOnly: true, forwardId: r.forwardId, id: r.strategyId, version: r.version, state: r.state, source: r.source, window: r.window, elapsed: r.elapsed,
+      endReason: r.endReason ? cleanText(r.endReason, 200) : null, progress: r.progress, metrics: r.metrics,
+      comparison: { rows: r.comparison.rows, verdict: r.comparison.verdict, claim: r.comparison.claim, sampleOk: r.comparison.sampleOk },
+      note: r.comparison.claim ? 'Both halves of the evidence agree; still quote the trade counts and say it is paper with modelled fills.' : 'No performance claim: report the numbers with their trade counts and the verdict lines as they are. Paper, modelled fills, not financial advice.',
+    };
+  }
+
+  private async promotePropose(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const { at } = await this.eng();
+    const r = await this.userStrategy(args.id);
+    if ('error' in r) return r;
+    const t = this.now();
+    while (this.proposalTimes.length && t - this.proposalTimes[0] > 600_000) this.proposalTimes.shift();
+    if (this.proposalTimes.length >= 10) return { error: 'proposal rate limit: at most 10 proposals per 10 minutes', reason: 'rate-limited' };
+    const home = this.home();
+    const p = at.proposePromotion(home, r.s, String(args.to ?? ''), { actor: this.actor, why: cleanText(args.why), now: t, armedHash: at.loadArmings(home)[r.s.id]?.strategyHash ?? null });
+    if (!p.ok) return { ok: false, applied: false, reason: p.reason, error: cleanText(p.why, 300), note: p.reason === 'skip-refused' ? 'No rung can be skipped: do the missing step first (strategy_journey says which).' : p.reason === 'evidence-floor' ? 'Nothing was proposed. Real needs the evidence floor: a COMPLETED forward test of these exact rules with the user\'s minimum of closed paper trades, and a backtest on record. The floor is the user\'s limit: you cannot propose past it, lower it, skip it or override it. Say what is missing and stop.' : 'Nothing was proposed.' };
+    if (!p.duplicate) this.proposalTimes.push(t);
+    const pr = p.proposal;
+    return {
+      ok: true, applied: false, proposalId: pr.proposalId, id: pr.id, to: pr.to, version: pr.version, card: pr.card, duplicate: p.duplicate,
+      note: pr.to === 'real'
+        ? `This is a PROPOSAL and it is NOT applied. Real mode is the user's alone: they set their own caps (dexterm autotrade signal caps set) and arm it on their own terminal with a typed phrase (dexterm autotrade promote apply ${pr.proposalId}, which hands over to signal arm). You cannot apply it, set or suggest cap values, or arm anything.`
+        : `This is a PROPOSAL and it is NOT applied. The user applies it with y on a real terminal (dexterm autotrade promote apply ${pr.proposalId}) or on the Q screen journey view; then the always-on service runs it on paper. You cannot apply it.`,
     };
   }
 

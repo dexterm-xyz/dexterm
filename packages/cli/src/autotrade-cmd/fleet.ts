@@ -53,6 +53,14 @@ export interface FleetRunOverrides {
   loadavg?: () => number;
   hooks?: FleetHooks;
   sessions?: (m: FleetMemberSpec, gate: MemberGate, log: (kind: string, data: Record<string, unknown>) => void, clock: () => number) => RunSessionFactory;
+  /** 0.2.0 card B (the always-on service): more reasons to pause new entries (its guard), every step. */
+  extraSafety?: () => { pauseEntries: string | null };
+  /** 0.2.0 card B: wrap a member's vet (the service refuses coins a crashed run already took). */
+  vetWrap?: (m: FleetMemberSpec, inner: VetFn | undefined) => VetFn | undefined;
+  /** 0.2.0 card B: positions a crashed run of this strategy left open, adopted by its first run. */
+  adopt?: (member: string) => FleetMemberSpec['adopt'];
+  /** 0.2.0 card B: the fleet holds the runner lock and has its ledger (before any strategy starts). */
+  onStarted?: (fleetId: string, fleetLedger: { add(t: number, kind: string, data?: Record<string, unknown>): unknown }) => void;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -140,14 +148,15 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
   for (const m of fleetCfg.strategies) {
     const r = resolveStrategyArg(m.preset ?? m.file, io);
     if (!r || !r.ok) { problems.push(`${m.id}: ${r ? r.errors.map((e) => `${e.path || '/'} ${e.msg}`).join('; ') : 'no strategy'}`); continue; }
-    if (r.strategy.mode !== 'paper') { problems.push(`${m.id}: ${r.strategy.id} is mode "${r.strategy.mode}"; the runner refuses anything but paper`); continue; }
+    if (r.strategy.mode !== 'paper') { problems.push(`${m.id}: ${r.strategy.id} is mode "${r.strategy.mode}"; the runner refuses anything but paper${r.strategy.mode === 'real' ? ` in a parallel run (real mode runs one strategy on its own: dexterm autotrade run ${r.strategy.id} --real)` : ''}`); continue; }
     const acct = m.account ? accountOf.get(m.account) : undefined;
     if (m.account && !acct) continue; // its account already failed above
     const b = acct ? { usd: acct.startUsd } : bankrollUsd(m.bankroll, solUsd);
     if ('error' in b && b.error) { problems.push(`${m.id}: ${b.error}`); continue; }
     const { strategy, basedOn } = memberStrategy(r.strategy, m, b.usd);
     const sol = acct ? (acct.sol !== undefined ? { sol: acct.sol, solUsd: acct.solUsd! } : {}) : m.bankroll && 'sol' in m.bankroll ? { sol: m.bankroll.sol, solUsd: solUsd! } : {};
-    members.push({ config: m, strategy, basedOn, bankroll: { usd: strategy.bankroll.startUsd, ...sol } });
+    const adopt = over.adopt?.(m.id);
+    members.push({ config: m, strategy, basedOn, bankroll: { usd: strategy.bankroll.startUsd, ...sol }, ...(adopt?.length ? { adopt } : {}) });
   }
   if (problems.length) { io.stderr.write(`dexterm autotrade run --all: nothing started:\n${problems.map((p) => `  ${p}`).join('\n')}\n`); closeData(); return 1; }
 
@@ -160,6 +169,7 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
 
   const { ledger: fleetLedger, files: fleetFiles } = fileLedger(home, fleetId);
   const startedAt = Date.now();
+  over.onStarted?.(fleetId, fleetLedger);
   const guard = new FleetGuard(fleetCfg.global, runnerCfg, { loadavg: over.loadavg });
   const rawPath = opts.raw ? join(home, 'autotrade', 'runs', `${fleetId}.stream.jsonl`) : null;
   const sessions = over.sessions ?? (opts.stub
@@ -247,10 +257,12 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
     const res = await runFleet({
       fleetId, home, members, tape, source, runner: runnerCfg, guard, fleetLedger, fleetLedgerPath: fleetFiles.ledger, ...(accounts.length ? { accounts } : {}),
       pacing: replay ? { mode: 'paced', msPerTick: num(opts['ms-per-tick'], 2000) } : { mode: 'live' },
-      sessions, dossier, vet, newRunId: (id) => newRunId(id), verbose: true, onLine: say,
+      sessions, dossier, vet: over.vetWrap ? (m) => over.vetWrap!(m, vet?.(m)) : vet, newRunId: (id) => newRunId(id), verbose: true, onLine: say,
       globalSafety: () => {
         if (Date.now() >= stopAt) stop('max-minutes');
-        const v = safety.step();
+        const s0 = safety.step();
+        const extra = over.extraSafety?.().pauseEntries ?? null;
+        const v = extra && !s0.pauseEntries ? { ...s0, pauseEntries: extra } : s0;
         return stopping && !v.halt ? { ...v, halt: 'runner-stopped', detail: 'a signal or --max-minutes', endWhenFlat: true } : v;
       },
       hooks: {

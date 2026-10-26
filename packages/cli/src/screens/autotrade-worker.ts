@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { defaultDbPath } from '@dexterm/data';
 import { openHistoryReadOnly } from '@dexterm/recorder';
-import { backtest, sweep, tapeFromDb, tapeFromDoc, type Grid, type ResolvedStrategy, type SweepResult, type Tape } from '@dexterm/autotrade';
+import { backtest, backtestEvidence, sweep, tapeFromDb, tapeFromDoc, type Grid, type ResolvedStrategy, type SweepResult, type Tape } from '@dexterm/autotrade';
 import type { BacktestJobs, BacktestOutcome } from './autotrade-ui.ts';
 
 const DAY_MS = 86_400_000;
@@ -40,7 +40,9 @@ export async function backtestOn(tape: Tape, ss: ResolvedStrategy[]): Promise<Ba
   const out: BacktestOutcome[] = [];
   for (const s of ss) {
     const { report, run } = await backtest(s, tape);
-    out.push({ report, curve: resample(run.equityCurve.map((p) => p.equity), CURVE_POINTS) });
+    // task-1647: one strategy alone (not a compare) also runs on each half of the held-out split: journey evidence
+    const evidence = ss.length === 1 && s.mode === 'paper' ? (await backtestEvidence(s, tape, { by: 'user:tui', full: { report, run } })).evidence : undefined;
+    out.push({ report, curve: resample(run.equityCurve.map((p) => p.equity), CURVE_POINTS), ...(evidence ? { evidence } : {}) });
   }
   return out;
 }

@@ -12,7 +12,8 @@
 // never sleep (the source paces itself) and replies land when they land.
 //
 // Every step lands in the hash-chained run ledger (ledger.ts) with the exact inputs (the tick, the message text, the
-// raw reply, the clamp). Paper only: a strategy whose mode is not "paper" is refused before the first tick. The
+// raw reply, the clamp). Paper, or real (task-1645: the paper engine plus a trade-fire signal per fill, through the
+// real-mode hook only); any other mode is refused before the first tick. The
 // sessions' day caps and allowance guard live in SessionGate (sessions.ts); with none given, the strategy's own
 // limits apply; the gate counts real usage per wall-clock day, so a fast --replay over many tape days never resets
 // the $/day cap. The host part at the end of this file (lock, rendezvous, heartbeat) is what the CLI uses.
@@ -31,6 +32,8 @@ import { DEFAULT_RUNNER_CONFIG, effectiveCaps } from './runner-config.ts';
 import { DEFAULT_PRICE_BASIS, fillMcaps, levelText, type PriceBasis } from './basis-text.ts';
 import type { SafetyVerdict } from './safety.ts';
 import type { PaperAccount } from './paper-accounts.ts';
+import type { RealStatus } from './real-mode.ts';
+import type { Receipt } from './receipts.ts';
 
 export { Ledger, type LedgerEvent } from './ledger.ts';
 
@@ -116,6 +119,26 @@ export interface ApprovalHook {
   exitResult?(id: string, result: 'sold' | 'stuck' | 'partial' | 'not-held'): void;
 }
 
+/**
+ * task-1645: real mode. The run's executor (real-mode.ts RealSignalExecutor) turns every fill of the paper model into
+ * a LIVE TRADE FIRE signal for the user's own executor; this side of it is what the loop calls each tick.
+ */
+export interface RealRunHook {
+  readonly accountId: string;
+  /** New receipts (ledger rows) and a real-mode kill (the run halts). */
+  step(): { receipts: Receipt[]; halt: string | null };
+  /** The run's last signal (`halted`), idempotent. */
+  sendHalted(reason: string): void;
+  confirmOf(mint: string): string | null;
+  status(): RealStatus;
+  /** r2: real positions an earlier run of this strategy + account left open; the book adopts them at the start. */
+  inherited(): Position[];
+  /** r2: the run's end, before `halted`: the book's view of what is still open, saved for the next run. */
+  carry(open: Position[]): void;
+  /** task-1654: the maxHoldMinutes limit (the stricter of it and each exit profile's own cap applies), or null. */
+  maxHoldMinutes?(): number | null;
+}
+
 export interface RunOpts {
   strategy: ResolvedStrategy;
   /** task-1537: the price basis of the run's lines and the agents' messages (default market cap; the engine reads prices). */
@@ -161,6 +184,15 @@ export interface RunOpts {
    */
   account?: PaperAccount;
   member?: string;
+  /** task-1645: a strategy in mode "real" runs only with this hook, and `executor` must be the same signal executor. */
+  real?: RealRunHook;
+  /**
+   * 0.2.0 card B: positions a crashed run of this strategy left open (service-recover.ts). The book adopts them at
+   * the start; their exits run as usual. Nothing is bought for them, and no order of the crashed run is re-sent.
+   */
+  adopt?: Position[];
+  /** task-1654: a paper run's maxHoldMinutes limit (the `paper` scope of limits.json), or null. */
+  maxHoldMinutes?: () => number | null;
 }
 
 interface Candidate {
@@ -218,10 +250,12 @@ export interface RunnerState {
   spend: { todayUsd: number; dayCapUsd: number; turnsToday: number; candidateSessionsToday: number; positionSessionsToday: number; allowance: { fiveHour: number | null; sevenDay: number | null } | null };
   candidates: { mint: string; symbol: string; ageSec: number; matched: string[]; session: string | null }[];
   sessions: { id: string; kind: SessionKind; mint: string; symbol: string; turns: number; costUsd: number; budgetUsd: number; lastDecision: string | null }[];
-  positions: { mint: string; symbol: string; profile: string; costUsd: number; pnlUsd: number; pnlPct: number; next: string | null; freeBag?: boolean }[];
+  positions: { mint: string; symbol: string; profile: string; costUsd: number; pnlUsd: number; pnlPct: number; next: string | null; freeBag?: boolean; /** task-1645: real mode: unconfirmed until a receipt. */ confirm?: string }[];
   ledgerTail: { seq: number; t: number; kind: string; text: string }[];
   ledgerHead: string;
   events: number;
+  /** task-1645: real mode only: the account, caps, kill, outbox depth, channel health, unconfirmed positions. */
+  real?: RealStatus;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -234,7 +268,12 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   const s = o.strategy;
   // task-1571: autotrade runs on paper only. dexterm holds no key and places no live order; live trading happens in the
   // Telegram trading bot of the user's choice.
-  if (s.mode !== 'paper') throw new Error(`strategy ${s.id} is mode "${s.mode}": autotrade runs paper only (dexterm holds no key and places no live order)`);
+  // task-1645: mode "real" = the same paper engine, plus a LIVE TRADE FIRE signal per fill for the user's own executor;
+  // it needs the real-mode hook (armed on the user's terminal, checked by the host) and never runs without it.
+  if (s.mode === 'real' && !o.real) throw new Error(`strategy ${s.id} is mode "real": it runs only through the real-mode host (dexterm autotrade run ${s.id} --real, once armed on your own terminal)`);
+  if (s.mode !== 'paper' && s.mode !== 'real') throw new Error(`strategy ${s.id} is mode "${s.mode}": autotrade runs paper only (dexterm holds no key and places no live order); mode real runs only through the real-mode host`);
+  if (o.real && s.mode !== 'real') throw new Error(`strategy ${s.id} is mode "${s.mode}": the real-mode hook is for a strategy in mode "real" only`);
+  if (o.real && (!o.executor || (o.executor as unknown) !== (o.real as unknown))) throw new Error('real mode: the executor must be the real-mode signal executor itself');
   if (!o.tape && !o.source) throw new Error('runAutotrade needs a tape or a live source');
   const ledger = o.ledger ?? new Ledger();
   const say = o.onLine ?? (() => {});
@@ -279,7 +318,25 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   /** Proposals waiting for an answer, by mint (task-1527). */
   const approvalsOpen = new Map<string, Promise<void>>();
 
-  ledger.add(t0, 'run_start', { strategy: s.id, version: s.version, strategyHash: s.hash, mode: s.mode, ...(s.highRisk ? { highRisk: true } : {}), tape: o.tape?.source ?? o.source!.name, ticks: tapeTicks?.length ?? null, decide: decideAuto ? 'auto' : s.entry.decide, ...(o.approvals ? { approvals: o.approvals.required(s) ? 'required' : 'when-asked' } : {}), pacing: pacing.mode, executor: exec.name, caps: capsView(gate), ...(o.account ? { account: o.account.id } : {}) });
+  ledger.add(t0, 'run_start', { strategy: s.id, version: s.version, strategyHash: s.hash, mode: s.mode, ...(o.real ? { tag: 'real-signal', accountId: o.real.accountId } : {}), ...(s.highRisk ? { highRisk: true } : {}), tape: o.tape?.source ?? o.source!.name, ticks: tapeTicks?.length ?? null, decide: decideAuto ? 'auto' : s.entry.decide, ...(o.approvals ? { approvals: o.approvals.required(s) ? 'required' : 'when-asked' } : {}), pacing: pacing.mode, executor: exec.name, caps: capsView(gate), ...(o.account ? { account: o.account.id } : {}) });
+  // task-1645 r2: a real run takes over the real positions an earlier run of this strategy left open (held.json),
+  // so their exits keep firing. A profile the strategy no longer has falls back to its default profile.
+  for (const p of o.real?.inherited() ?? []) {
+    const from = p.profileId;
+    if (!s.exits.profiles[p.profileId]) p.profileId = s.exits.default;
+    if (!book.adopt(p)) continue;
+    ledger.add(t0, 'position_adopted', { tag: 'real-signal', positionId: p.id, mint: p.mint, symbol: p.symbol, ...(from !== p.profileId ? { profileFrom: from } : {}), position: { ...p, fills: p.fills } });
+    say(`CARRIED ${p.symbol} (${p.mint.slice(0, 4)}…): real position from an earlier run, ${p.profileId}, cost $${(p.costUsd - p.realizedUsd).toFixed(2)} still open; its exits keep running`);
+  }
+  // 0.2.0 card B: positions a crashed run left open. A profile the (re-read) strategy no longer has falls back to
+  // its default profile, so every adopted position has exits.
+  for (const p of o.adopt ?? []) {
+    const from = p.profileId;
+    if (!s.exits.profiles[p.profileId]) p.profileId = s.exits.default;
+    if (!book.adopt(p)) continue;
+    ledger.add(t0, 'position_adopted', { positionId: p.id, mint: p.mint, symbol: p.symbol, ...(from !== p.profileId ? { profileFrom: from } : {}), position: { ...p, fills: p.fills } });
+    say(`RESUMED ${p.symbol} (${p.mint.slice(0, 4)}…): ${p.profileId}, cost $${(p.costUsd - p.realizedUsd).toFixed(2)} still open; its exits keep running`);
+  }
 
   const count = (rule: string) => { refusals[rule] = (refusals[rule] ?? 0) + 1; };
   const refuse = (rule: string, data: Record<string, unknown>) => { count(rule); ledger.add(now, 'refused', { rule, ...data }); };
@@ -323,12 +380,12 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       return;
     }
     p.stuck = false;
-    ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, ...fillMcaps(fillView(f), k), detail });
+    ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, ...fillMcaps(fillView(f), k), detail, ...sigTag(f) });
     say(`SELL ${p.symbol} ${reason}: $${f.usd.toFixed(2)} at ${lvl(f.price, k)} (impact ${f.impactPct}%) — ${detail}`);
     const ct = book.sell(p, f);
     if (ct) {
       // task-1530: the price extremes the monitor saw while held (the trade ledger's MFE / MAE)
-      ledger.add(now, 'trade_closed', { trade: { ...ct, fills: undefined }, entryPrice: p.entryPrice, peakPrice: p.peakPrice, troughPrice: p.troughPrice ?? null });
+      ledger.add(now, 'trade_closed', { trade: { ...ct, fills: undefined }, entryPrice: p.entryPrice, peakPrice: p.peakPrice, troughPrice: p.troughPrice ?? null, ...(o.real ? { tag: 'real-signal' } : {}) });
       say(`CLOSED ${ct.symbol}: ${ct.pnlUsd >= 0 ? '+' : ''}$${ct.pnlUsd.toFixed(2)} (${ct.pnlPct}%) by ${ct.exitReason}`);
     }
   };
@@ -541,14 +598,14 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
         f.reason = 'ladder-add';
         const bookUsd = round4(book.bookEquity()); // task-1530: the book before the fill (the trade ledger's % of book)
         book.addTranche(p, f);
-        ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, ...fillMcaps(fillView(f), k), bookUsd });
+        ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, ...fillMcaps(fillView(f), k), bookUsd, ...sigTag(f) });
         say(`ADD ${k.symbol}: $${f.usd.toFixed(2)} at ${lvl(f.price, k)}`);
         continue;
       }
       const prof = s.exits.profiles[q.profile];
       const bookUsd = round4(book.bookEquity()); // task-1530: the book before the fill (the trade ledger's % of book)
       const p = book.openPosition(k, f, prof, q.sessionId, q.trigger, q.ladder);
-      ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, profile: prof.id, ...fillMcaps(fillView(f), k), bookUsd, ...(q.ctx?.proposalId ? { proposalId: q.ctx.proposalId } : {}) });
+      ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, profile: prof.id, ...fillMcaps(fillView(f), k), bookUsd, ...(q.ctx?.proposalId ? { proposalId: q.ctx.proposalId } : {}), ...sigTag(f) });
       say(`BUY ${k.symbol} [${prof.id}]: $${f.usd.toFixed(2)} at ${lvl(f.price, k)}${f.partial ? ' (PARTIAL: impact cap)' : ''} · liq $${Math.round(k.liq ?? 0)}`);
       const c = cands.get(q.mint);
       if (c) {
@@ -625,11 +682,12 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       sessions: live.map((c) => ({ id: c.session!.id, kind: c.sessionKind, mint: c.mint, symbol: c.symbol, turns: c.turns, costUsd: round4(c.session!.costUsd()), budgetUsd: gate.caps.budgetUsdPerSession, lastDecision: c.lastDecision })),
       positions: [...book.open.values()].map((p) => {
         const pnl = liquidationMark(p) + p.realizedUsd - p.costUsd;
-        return { mint: p.mint, symbol: p.symbol, profile: p.profileId, costUsd: round2(p.costUsd), pnlUsd: round2(pnl), pnlPct: p.costUsd ? Math.round((pnl / p.costUsd) * 1000) / 10 : 0, next: p.stuck ? 'stuck: retried every tick' : null, ...(p.costRecovered ? { freeBag: true } : {}) };
+        return { mint: p.mint, symbol: p.symbol, profile: p.profileId, costUsd: round2(p.costUsd), pnlUsd: round2(pnl), pnlPct: p.costUsd ? Math.round((pnl / p.costUsd) * 1000) / 10 : 0, next: p.stuck ? 'stuck: retried every tick' : null, ...(p.costRecovered ? { freeBag: true } : {}), ...(o.real ? { confirm: o.real.confirmOf(p.mint) ?? 'unconfirmed' } : {}) };
       }),
       ledgerTail: ledger.events.slice(-12).map((e) => ({ seq: e.seq, t: e.t, kind: e.kind, text: tailText(e) })),
       ledgerHead: ledger.head(),
       events: ledger.events.length,
+      ...(o.real ? { real: o.real.status() } : {}),
     };
   };
 
@@ -638,7 +696,10 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
     now = k.t;
 
     const v = o.safety?.() ?? null;
-    const haltWhy = v?.halt ?? (o.killSwitch?.() ? 'kill-switch' : null);
+    // task-1645: receipts land in the ledger as data; the real-mode kill switch halts like the panic file.
+    const rs = o.real?.step() ?? null;
+    for (const r of rs?.receipts ?? []) { const dv = (r as Receipt & { divergence?: unknown }).divergence; ledger.add(now, 'receipt', { tag: 'real-signal', nonce: r.nonce, signalId: r.signalId, status: r.status, fill: r.fill, reason: r.reason, executor: r.executor, ...(dv ? { divergence: dv } : {}) }); }
+    const haltWhy = v?.halt ?? (o.killSwitch?.() ? 'kill-switch' : null) ?? rs?.halt ?? null;
     if (!killed && haltWhy) {
       killed = true;
       haltReason = haltWhy;
@@ -693,7 +754,10 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
         if (c) { if (c.inflight) await c.inflight; await closeCandidate(c, 'position-closed'); }
       }
     } else if (pos) {
-      const prof = s.exits.profiles[pos.profileId];
+      const prof0 = s.exits.profiles[pos.profileId];
+      // task-1654: a real run's (or a paper scope's) maxHoldMinutes limit tightens the profile's holding cap (never loosens it).
+      const holdCap = o.real?.maxHoldMinutes?.() ?? o.maxHoldMinutes?.() ?? null;
+      const prof = holdCap !== null && (prof0.maxHoldMinutes == null || holdCap < prof0.maxHoldMinutes) ? { ...prof0, maxHoldMinutes: holdCap } : prof0;
       const acts = monitorTick(pos, prof, k, { minExitLiquidityUsd: x.minExitLiquidityUsd, sellUsd: (tok) => { const f = simSell(k, tok, x, 'estimate'); return 'refused' in f ? 0 : f.usd; } });
       const wakes: WakeEvent[] = [];
       for (const a of acts) {
@@ -780,6 +844,14 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   for (const c of everyLive()) { if (c.inflight) await c.inflight; await closeCandidate(c, o.tape ? 'end-of-tape' : 'runner-stopped'); }
   while (pumps.size) await Promise.allSettled([...pumps]);
   const openAtEnd = [...book.open.values()].map((p) => ({ mint: p.mint, symbol: p.symbol, markUsd: round2(liquidationMark(p)), costUsd: p.costUsd, stuck: p.stuck }));
+  if (o.real) {
+    // The dead-man's graceful half: the executor hears the run is over (its outstanding nonces may be cancelled).
+    const why = killed ? `halt:${haltReason ?? 'kill'}` : o.tape ? 'end-of-tape' : 'runner-stopped';
+    // r2: what is still open is carried (held.json): the next real run of this strategy adopts it and keeps its exits.
+    o.real.carry([...book.open.values()]);
+    o.real.sendHalted(why);
+    ledger.add(now, 'real_halted', { tag: 'real-signal', reason: why, openAtEnd: openAtEnd.length });
+  }
   ledger.add(now, 'run_end', { trades: book.closed.length, openAtEnd: openAtEnd.length, cashUsd: book.state.cashUsd, markedEquityUsd: book.markedEquity(), sessionCostUsd: sessionCost, sessions: sessionsOpened, positionSessions: positionSessionsOpened, head: ledger.head() });
   publishFocus();
   if (o.onState) o.onState(snapshot('stopped'));
@@ -799,6 +871,8 @@ export function exitPlanLine(p: import('./strategy.ts').ExitProfile): string {
   return `${p.id}: ${parts.join(', ')}`;
 }
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
+/** task-1645: a fill that went out as a trade-fire signal: the ledger row is tagged and names the signal. */
+const sigTag = (f: Fill): Record<string, unknown> => { const x = f as Fill & { signal?: { nonce: number; id: string }; limitClamps?: string[] }; const g = x.signal; return g ? { tag: 'real-signal', nonce: g.nonce, signalId: g.id, ...(x.limitClamps?.length ? { limitClamps: x.limitClamps } : {}) } : {}; };
 const fillView = (f: Fill) => ({ side: f.side, usd: f.usd, tokens: Number(f.tokens.toPrecision(8)), price: f.price, avgPrice: f.avgPrice, impactPct: f.impactPct, partial: f.partial, reason: f.reason });
 /** Infinity (no runner cap) is written as null so the ledger stays JSON. */
 /** The model a session actually runs (a run's --model override wins over the strategy's), for the ledger. */
@@ -871,7 +945,7 @@ export function releaseRunLock(home: string, runId: string): void {
   try { const held = JSON.parse(readFileSync(path, 'utf8')) as RunLock; if (held.runId === runId && held.pid === process.pid) rmSync(path, { force: true }); } catch { /* gone */ }
 }
 
-export interface RunnerRendezvous extends Omit<RunnerState, 't'> { schema: typeof RUNNER_RENDEZVOUS_SCHEMA; pid: number; mode: 'paper' | 'devnet' | 'live'; runId: string; startedAt: number; heartbeatAt: number; ledgerPath: string }
+export interface RunnerRendezvous extends Omit<RunnerState, 't'> { schema: typeof RUNNER_RENDEZVOUS_SCHEMA; pid: number; mode: 'paper' | 'real' | 'devnet' | 'live'; runId: string; startedAt: number; heartbeatAt: number; ledgerPath: string }
 
 export function writeRendezvous(home: string, r: RunnerRendezvous): void {
   mkdirSync(join(home, 'autotrade'), { recursive: true, mode: 0o700 });

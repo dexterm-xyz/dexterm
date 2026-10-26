@@ -22,7 +22,7 @@ sources:
 date: 2026-10-16
 ---
 
-Autotrade (paper) is a strategy file plus an engine that replays it. You write the rules: which coins count as candidates, how a position is sized, how it is exited, and how much loss is allowed. The engine applies exactly those rules, and every size is clamped by them. It runs on **paper** by default: there is no key, wallet or signer anywhere in a strategy, and a paper run never signs or sends anything. A strategy that says `"mode": "live"` validates with a warning and runs only with `dexterm autotrade run --live`, through the live signer (https://dexterm.xyz/docs/live-trading) and its caps (experimental, can lose all the funds in the trading wallet).
+Autotrade (paper) is a strategy file plus an engine that replays it. You write the rules: which coins count as candidates, how a position is sized, how it is exited, and how much loss is allowed. The engine applies exactly those rules, and every size is clamped by them. It runs on **paper** by default: there is no key, wallet or signer anywhere in a strategy, and a paper run never signs or sends anything. A strategy you switch to **real** yourself, on your own terminal, runs the same way and also sends each trade to your own executor as a signal: see real mode (https://dexterm.xyz/docs/real-mode) (experimental; dexterm still holds no key and signs nothing). A strategy that says `"mode": "live"` (the removed local signer) validates with a warning and never runs.
 
 It is self-directed: your strategies, on your machine, with your own recorded history. Nobody runs a strategy for you, and a preset is an example, not a recommendation.
 
@@ -38,6 +38,13 @@ What ships today, covered below:
 - What it costs (https://dexterm.xyz/docs/autotrade#what-it-costs-claude-usage-per-session): the Claude usage of a session, measured.
 - What it will not do (https://dexterm.xyz/docs/autotrade#what-it-will-not-do): live money, copy-trading automation, managing anyone else's money.
 
+The rest of the automated trading suite has its own pages:
+
+- Build a strategy by chat (https://dexterm.xyz/docs/build-a-strategy-by-chat): the ladder from a chat proposal to a backtest, a paper forward test on live data, always on and, only if you choose, real, one rung at a time on evidence.
+- The always-on service (https://dexterm.xyz/docs/autotrade#the-always-on-service): your listed strategies keep running from login and come back after a crash.
+- Real mode (https://dexterm.xyz/docs/real-mode) (experimental): a strategy you arm on your own terminal sends each trade as a signal to your own executor; dexterm never holds a key.
+- Going real, safely (https://dexterm.xyz/docs/going-real): your own limits for every number, the executor kit, executor health and the digest.
+
 On your phone: your own Telegram bot (https://dexterm.xyz/docs/telegram) sends the entries, exits, PnL cards and halts, takes `/pause` and `/kill`, and can make every entry wait for your tap (`entry.decide: "agent+approve"`).
 
-Still to come, documented here when it lands: a background service that keeps the runner going without a terminal, and the runner filling through the paper desk (https://dexterm.xyz/docs/autotrade#exits-and-wakes) with the exit monitor as its own process.
+Still to come, documented here when it lands: the runner filling through the paper desk (https://dexterm.xyz/docs/autotrade#exits-and-wakes) with the exit monitor as its own process.

@@ -32,4 +32,6 @@ Three switches, from soft to hard. You use them; your agent cannot. A session ha
 
 `p` on the `Q` screen pauses new entries, and `p` again resumes them; open positions keep their exits either way.
 
+Under the always-on service (https://dexterm.xyz/docs/autotrade#the-always-on-service), a stop or flatten from any of these (or `dexterm autotrade service stop`) also keeps the service stopped until `dexterm autotrade service start`; a pause does not stop it.
+
 With several strategies at once (https://dexterm.xyz/docs/autotrade#several-strategies-at-once), these switches act on every strategy, and `--strategy ID` on `stop`, `flatten`, `pause` and `resume` acts on one. An agent you connect over MCP can stop or pause one strategy you listed there, never all of them and never the panic.

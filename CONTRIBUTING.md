@@ -4,7 +4,7 @@ Thanks for looking. dexterm is small, opinionated and pre-1.0, so the most usefu
 
 ## Ground rules
 
-- **No key, no signing, paper inside dexterm.** dexterm never holds a key and never signs; live trading happens in the user's own Telegram trading bot. Pull requests that make dexterm hold, read, create or import a private key, build, sign or send a transaction, give the model, an agent or chat a path to a real order, or make a run start anywhere but paper will not be merged on the main line. That boundary is the product.
+- **No key, no signing, paper inside dexterm.** dexterm never holds a key and never signs; live trades happen in the user's own executor, which real mode only sends signals to. Pull requests that make dexterm hold, read, create or import a private key, build, sign or send a transaction, give the model, an agent or chat a path to a real order, or make a run start anywhere but paper will not be merged on the main line. That boundary is the product.
 - **Honest data.** A panel whose source is down shows `unavailable` or `needs key`, never a made-up number. Model output is labelled as such with the age of every input.
 - **Untrusted text stays untrusted.** Anything that comes from a token, a website or a feed goes through the prompt firewall before a model sees it.
 - **No new runtime dependencies** without a discussion. dexterm has zero third-party runtime dependencies on purpose (the SBOM and the scanners stay boring). Dev tooling is fine.

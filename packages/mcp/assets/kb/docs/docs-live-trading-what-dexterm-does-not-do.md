@@ -24,7 +24,7 @@ sources:
 date: 2026-10-16
 ---
 
-- It does not place an order in your trading bot for you. In this version you act in the bot yourself.
+- It does not place an order in your trading bot for you. In real mode (https://dexterm.xyz/docs/real-mode) it sends your executor a signal; your executor places the order, by its own rules.
 - It does not hold, import, create, decrypt or ask for a private key or seed phrase. Anything that asks you for one is not dexterm.
 - It does not sign or send a transaction. `dexterm wallet link` only proves which wallet is yours with a signed **message** in Phantom; dexterm keeps the public key to show your address. It never asks Phantom to sign a transaction.
 - It does not know what your trading bot did. Positions, fills and P/L in dexterm are paper.

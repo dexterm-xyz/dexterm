@@ -1,0 +1,40 @@
+  dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst        SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
+
+  PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER   JOURNEY
+╭─ JOURNEY · my-moon ──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ my-moon v1.0.0 · rules HHHHHHHH · mode paper · stage FORWARD-TESTED                                                  │
+│                                                                                                                      │
+│ [x] draft           v1.0.0 validates (mode paper)                                                                    │
+│ [x] backtested YYYY-MM-DD HH:MM UTC · 6 trades · win 66.7% (95% 30–90.3%) · net +$17.83 (1.78%) · max drawdown 6.54% │
+│ · rugs 1 (16.7%) · fill cost 296.3 bps · too few trades to claim anything (train 3, held-out 3; both need >= 20)     │
+│ [x] forward-tested fw_XXXXXXXX_XXXXXXXX · 3 trades · win 0% (95% 0–56.2%) · net -$43.69 (-4.37%) · max drawdown      │
+│ 5.11% · rugs 1 (33.3%) · fill cost 272.7 bps · window reached (1 closed trades)                                      │
+│ [ ] always-on       not in autotrade.json                                                                            │
+│ [ ] real            paper                                                                                            │
+│ next: always-on — a promotion: dexterm autotrade promote my-moon --to always-on (the analyst can propose it; you     │
+│ apply it)                                                                                                            │
+│                                                                                                                      │
+│ forward test fw_XXXXXXXX_XXXXXXXX · DONE · 1 closed trades                                                           │
+│ state DONE (window reached (1 closed trades)) · window 1 closed trades · ran N min                                   │
+│ result: 3 trades · win 0% (95% 0–56.2%) · net -$43.69 (-4.37%) · max drawdown 5.11% · rugs 1 (33.3%) · fill cost     │
+│ 272.7 bps                                                                                                            │
+│ forward vs backtest of the same rules (paper, modelled fills; not a prediction, not financial advice):               │
+│                          backtest               held-out               forward                                       │
+│ trades                   6                      3                      3                                             │
+│ win rate (95% interval)  66.7% (95% 30–90.3%)   100% (95% 43.8–100%)   0% (95% 0–56.2%)                              │
+│ net                      +$17.83 (1.78%)        +$20.20 (2.02%)        -$43.69 (-4.37%)                              │
+│ max drawdown             6.54%                  6.54%                  5.11%                                         │
+│ rug rate                 16.7% (1)              0% (0)                 33.3% (1)                                     │
+│ fill cost vs mid         296.3 bps              315 bps                272.7 bps              drift -23.6 bps        │
+│ · backtest: too few trades to claim anything (train 3, held-out 3; both need >= 20)                                  │
+│ · forward: 3 closed trades is too small a sample to claim anything (it needs >= 20); read the counts, not the rates  │
+│ · no performance claim: say the numbers and the trade counts, nothing more                                           │
+│                                                                                                                      │
+│ pending promotion pp_XXXXXXXX_XXXXXXXX → always-on (proposed by analyst) · A to review                               │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  b  backtest   F  forward test   X  stop it   A  promotion   J  refresh   esc  back   q  quit

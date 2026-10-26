@@ -83,6 +83,9 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   telegram_status: 'observe',
   trading_status: 'observe',
   backtest_requests: 'observe',
+  // THE JOURNEY (task-1647): a strategy's ladder and a forward test's report vs its backtest
+  strategy_journey: 'observe',
+  strategy_forward_report: 'observe',
   subscribe: 'observe',
   unsubscribe: 'observe',
   // ---- annotate: non-financial navigation + agent-owned annotations
@@ -100,6 +103,12 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   strategy_propose_new: 'propose',
   // a backtest REQUEST (task-1530): a file the user runs or dismisses with `dexterm autotrade requests`
   backtest_request: 'propose',
+  // THE JOURNEY (task-1647): a paper forward test (the strategy's own bankroll, a bounded window, never real) and a
+  // promotion PROPOSAL the user applies (always-on: a key; real: their own caps + a typed phrase on their terminal).
+  // Vetted by hand: "promote" is on the never-list for agent tiers; this one only writes a proposal file.
+  strategy_forward_start: 'propose',
+  strategy_forward_stop: 'propose',
+  strategy_promote_propose: 'propose',
 });
 
 /** Tools that are proposals (write-shaped): they need an idempotency key and count against the proposal quota. */

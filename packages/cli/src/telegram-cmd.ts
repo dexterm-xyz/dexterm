@@ -18,7 +18,7 @@
 import { dextermHome } from '@dexterm/custom';
 import {
   ChatAudit, PairingWindow, TelegramConnector, TIERS_ALL, chooseSecretStore, connectorsPath, defaultTelegram, loadConnectors, looksLikeBotToken, redact, saveConnectors,
-  secretStore, verifyChatAudit, ChatHub, type ConnectorsConfig, type SecretStore, type Tier, type ChatConnector,
+  secretStore, verifyChatAudit, ChatHub, enabledChannels, parseSignalsConfig, type ConnectorsConfig, type SecretStore, type Tier, type ChatConnector,
 } from '@dexterm/autotrade';
 
 export interface TelegramIo {
@@ -289,6 +289,8 @@ export async function telegramCommand(argv: string[], io: TelegramIo, deps: Tele
           paired: t.allow.map((a) => ({ senderId: a.senderId, chatId: a.chatId, tiers: a.tiers, pairedAt: a.pairedAt ? new Date(a.pairedAt).toISOString() : null })),
           approvals: t.approvals, approvalExpirySec: t.approvalExpirySec, repriceTolPct: t.repriceTolPct, notify: t.notify, dailySummaryAt: t.dailySummaryAt, quietHours: t.quietHours,
           audit: { days: chain.length, broken: chain.filter((c) => !c.check.ok).map((c) => c.day) },
+          // task-1645: the real-mode trade-fire channels live in the same file (dexterm autotrade signal channels).
+          signals: (() => { const sc = parseSignalsConfig(cfg.signals); return { channels: enabledChannels(sc.config), telegramCopy: sc.config.telegram.enabled, ttlSec: sc.config.ttlSec, problems: sc.problems }; })(),
         };
         if (argv.includes('--json')) { io.stdout.write(`${JSON.stringify(view, null, 2)}\n`); return 0; }
         io.stdout.write(`telegram · ${t.enabled && t.allow.length && hasToken ? 'ready (the runner starts it)' : 'not ready'}\n`);
@@ -297,6 +299,7 @@ export async function telegramCommand(argv: string[], io: TelegramIo, deps: Tele
         io.stdout.write(`  approvals ${t.approvals} · expiry ${t.approvalExpirySec} s · re-quote tolerance ${t.repriceTolPct}%\n`);
         io.stdout.write(`  notify candidates ${t.notify.candidates} · entries ${t.notify.entries ? 'on' : 'off'} · closes ${t.notify.closes ? 'on' : 'off'} · halts ${t.notify.halts ? 'on' : 'off'} · spend ${t.notify.spend ? 'on' : 'off'} · daily ${t.notify.daily ? `at ${t.dailySummaryAt ?? 'off'}` : 'off'}${t.quietHours ? ` · quiet ${t.quietHours}` : ''}\n`);
         io.stdout.write(`  audit ${chain.length} day file${chain.length === 1 ? '' : 's'}${view.audit.broken.length ? ` · BROKEN: ${view.audit.broken.join(', ')}` : ''}\n`);
+        io.stdout.write(`  trade-fire signals (real mode) · channels ${view.signals.channels.filter((c) => c !== 'telegram').join(', ') || 'none'} · Telegram copy ${view.signals.telegramCopy ? 'on' : 'off'} · ttl ${view.signals.ttlSec} s · set with dexterm autotrade signal channels${view.signals.problems.length ? ` · OFF: ${view.signals.problems.join('; ')}` : ''}\n`);
         return 0;
       }
 

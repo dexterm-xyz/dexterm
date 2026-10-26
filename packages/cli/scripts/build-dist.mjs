@@ -21,7 +21,8 @@ const PKGS = path.join(ROOT, 'packages');
 
 // Runtime files outside src/ that code loads by path (relative to each package dir).
 const RUNTIME_DIRS = {
-  autotrade: ['assets'],
+  // task-1654: examples/executor is the executor reference kit (`dexterm autotrade executor kit --out DIR` copies it).
+  autotrade: ['assets', 'examples'],
   cli: ['assets'],
   mcp: ['assets'],
   popup: ['vendor'],

@@ -50,7 +50,7 @@ export interface ListEntry {
   name?: string;
   version?: string;
   hash?: string;
-  mode?: 'paper' | 'live';
+  mode?: 'paper' | 'real' | 'live';
   /** task-1532: the strategy's HIGH RISK label (the yolo preset and its copies). */
   highRisk?: boolean;
   profiles?: string[];

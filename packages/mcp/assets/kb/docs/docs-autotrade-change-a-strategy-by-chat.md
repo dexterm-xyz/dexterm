@@ -42,8 +42,10 @@ Applying checks the proposal again from scratch: if the strategy changed since i
 
 **What the analyst can never change.** The mode (so it can never switch a strategy to live), the book, the daily session budget and the exit-liquidity floor are yours only: a proposal that touches them, directly or by replacing the section around them, is refused before it reaches you. It cannot apply a proposal or skip the second key either. A shipped preset is read-only, so the analyst proposes a copy under a new id instead, always on paper.
 
-**A backtest next to it.** The analyst can backtest a proposal next to the current version on the same window of your recorded history (up to 14 days). That backtest is read-only (nothing is saved), runs one at a time and is rate-limited, and it carries the limits above (https://dexterm.xyz/docs/autotrade#backtests-and-their-limits): read the number of trades before the totals.
+**A backtest next to it.** The analyst can backtest a proposal next to the current version on the same window of your recorded history (up to 14 days). A proposal's backtest saves nothing (a backtest of a strategy itself is recorded as its evidence for the journey (https://dexterm.xyz/docs/build-a-strategy-by-chat)), runs one at a time and is rate-limited, and it carries the limits above (https://dexterm.xyz/docs/autotrade#backtests-and-their-limits): read the number of trades before the totals.
 
 An agent you connect over MCP (`dexterm mcp`) gets the same seven tools under the same rules: `strategy_list`, `strategy_get`, `strategy_validate`, `strategy_propose_edit`, `strategy_propose_new`, `strategy_backtest` and `autotrade_status`. An AI scan (https://dexterm.xyz/docs/scan) session cannot propose at all.
+
+**From a chat to an always-on strategy.** Building a whole strategy by chat, backtesting it with the held-out split, forward-testing it on live data on paper and promoting it one rung at a time (always-on, then real, each applied only by you) has its own page: build a strategy by chat (https://dexterm.xyz/docs/build-a-strategy-by-chat).
 
 Paper only. Not financial advice.

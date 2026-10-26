@@ -76,6 +76,9 @@ export class NotifyBus {
   private warned = new Set<string>();
   private summarySentFor = '';
   private readonly dayStart: () => number;
+  /** task-1645: a run in mode real is LIVE in every message (its trades go to the user's executor as signals). */
+  private realRun = false;
+  private badge(): Badge { return this.realRun ? 'LIVE' : this.o.badge; }
 
   constructor(o: NotifyOpts) {
     this.o = o;
@@ -103,7 +106,7 @@ export class NotifyBus {
   }
 
   private emit(template: string, lines: string[], urgent = false): void {
-    this.post(template, { kind: 'text', badge: this.o.badge, lines }, urgent);
+    this.post(template, { kind: 'text', badge: this.badge(), lines }, urgent);
   }
 
   private post(template: string, msg: OutMessage, urgent: boolean): void {
@@ -122,7 +125,7 @@ export class NotifyBus {
   private ofBook(usd: number): string {
     const eq = this.state?.book.equityUsd ?? 0;
     const share = eq > 0 ? `${((usd / eq) * 100).toFixed(1)}% of book` : '% of book unknown';
-    return this.o.config().showAbsoluteBook && this.o.badge === 'PAPER' && eq > 0 ? `${share}, book ${usdShort(eq)}` : share;
+    return this.o.config().showAbsoluteBook && this.badge() === 'PAPER' && eq > 0 ? `${share}, book ${usdShort(eq)}` : share;
   }
 
   private sym(mint: string, fallback?: unknown): string { return `"${inert(this.symbols.get(mint) ?? fallback ?? '?', 20)}" ${shortMint(mint)}`; }
@@ -134,8 +137,9 @@ export class NotifyBus {
     switch (e.kind) {
       case 'run_start': {
         this.highRisk = e.highRisk === true;
+        this.realRun = e.mode === 'real';
         this.strategyLine = `${this.highRisk ? '⚠ HIGH RISK · ' : ''}${inert(e.strategy, 32)} v${inert(e.version, 12)} (${String(e.strategyHash ?? '').slice(0, 8)})`;
-        this.emit('run_start', [`RUNNER STARTED · ${this.strategyLine}`, ...(this.highRisk ? ['full-port strategy: one entry can be the whole stake, and one rug can zero it. Experimental; not financial advice.'] : []), `entries: ${e.decide === 'agent+approve' || e.approvals === 'required' ? 'each one waits for your tap' : String(e.decide) === 'auto' ? 'mechanical' : 'your agent decides'} · /status /pause /kill /help`], true);
+        this.emit('run_start', [`RUNNER STARTED · ${this.strategyLine}`, ...(this.highRisk ? ['full-port strategy: one entry can be the whole stake, and one rug can zero it. Experimental; not financial advice.'] : []), ...(this.realRun ? ['REAL MODE: every trade below also goes to YOUR executor as a LIVE TRADE FIRE signal (dexterm holds no key). Experimental; not financial advice.'] : []), `entries: ${e.decide === 'agent+approve' || e.approvals === 'required' ? 'each one waits for your tap' : String(e.decide) === 'auto' ? 'mechanical' : 'your agent decides'} · /status /pause /kill /help`], true);
         return;
       }
       case 'candidate': {
@@ -186,9 +190,12 @@ export class NotifyBus {
         if (!p.closes) return;
         const caption = `CLOSED · "${inert(t.symbol, 20)}" ${shortMint(t.mint)} · ${pct(t.pnlPct)} (${t.pnlUsd >= 0 ? '+' : ''}${usdShort(t.pnlUsd)}) by ${inert(t.exitReason, 40)} · held ${Math.max(1, Math.round((t.closedAt - t.openedAt) / 60_000))} min`;
         const card = this.o.card;
+        // task-1645: a real run's close is the monitor's modelled view, not your executor's fills: text only, no
+        // shareable card (the receipts say what really filled).
+        if (this.realRun) { this.emit('closed', [`${caption} · modelled; your executor's fills may differ (dexterm autotrade receipt list)`]); return; }
         if (!card) { this.emit('closed', [caption]); return; }
         void card(t).then((png) => {
-          if (png) this.post('closed_card', { kind: 'card', badge: this.o.badge, png, caption }, false);
+          if (png) this.post('closed_card', { kind: 'card', badge: this.badge(), png, caption }, false);
           else this.emit('closed', [caption]);
         }, () => this.emit('closed', [caption]));
         return;
@@ -241,7 +248,7 @@ export class NotifyBus {
     while (this.sentAt.length && now - this.sentAt[0] > 60_000) this.sentAt.shift();
     if (this.digest.length && !quiet && this.sentAt.length < DIGEST_ABOVE_PER_MIN / 2) {
       const lines = this.digest.splice(0);
-      this.post('digest', { kind: 'text', badge: this.o.badge, lines: [`DIGEST · ${lines.length} update${lines.length === 1 ? '' : 's'}`, ...lines.slice(-25)] }, true);
+      this.post('digest', { kind: 'text', badge: this.badge(), lines: [`DIGEST · ${lines.length} update${lines.length === 1 ? '' : 's'}`, ...lines.slice(-25)] }, true);
     }
     this.maybeSummary(now);
     await this.queue;
@@ -256,7 +263,7 @@ export class NotifyBus {
     const day = localDayOf(now);
     if (this.summarySentFor === day) return;
     this.summarySentFor = day;
-    this.post('daily', { kind: 'text', badge: this.o.badge, lines: this.summaryLines() }, true);
+    this.post('daily', { kind: 'text', badge: this.badge(), lines: this.summaryLines() }, true);
   }
 
   summaryLines(): string[] {

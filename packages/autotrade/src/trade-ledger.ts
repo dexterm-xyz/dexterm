@@ -9,7 +9,7 @@
 //
 // Where each ledger field comes from:
 //   strategy           run_start: strategy id, version and strategyHash
-//   wallet mode        run_start.mode (paper; a live run's executor name says devnet or mainnet)
+//   wallet mode        run_start.mode (paper; real = a real-mode run, task-1655; a live run's executor name says devnet or mainnet)
 //   profile            the entry fill's profile; 'structured' when the agent's DECISION named it, else 'default'
 //                      (the strategy's default profile), 'rule' for a mechanical (auto) entry
 //   entry reason       the agent's DECISION {"action":"enter","reason":…} of the session that entered (structured)
@@ -70,7 +70,7 @@ export function importRunLedger(path: string, runId: string): SourceResult & { h
   const start = events.find((e) => e.kind === 'run_start') ?? null;
   const strategy = start && str(start.strategy) ? { id: String(start.strategy), version: str(start.version), hash: str(start.strategyHash) } : null;
   const executor = String(start?.executor ?? '');
-  const walletMode: WalletMode = start?.mode === 'live' ? (/mainnet/.test(executor) ? 'live' : 'devnet') : 'paper';
+  const walletMode: WalletMode = start?.mode === 'real' ? 'real' : start?.mode === 'live' ? (/mainnet/.test(executor) ? 'live' : 'devnet') : 'paper';
   const auto = start?.decide === 'auto';
   // task-1538: a parallel-run strategy on a shared paper account names it in its first line (and run_start).
   const memberLine = events.find((e) => e.kind === 'fleet_member') ?? null;

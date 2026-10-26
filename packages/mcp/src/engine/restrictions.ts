@@ -15,7 +15,7 @@
 
 import { ANALYST_ACTION_TYPES } from '@dexterm/data';
 import { PAPER_NOTE_TOOLS, PAPER_READ_TOOLS, PAPER_WRITE_TOOLS, READ_ONLY_TOOLS } from '../server.ts';
-import { PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS } from '../autotrade-tools.ts';
+import { JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS } from '../autotrade-tools.ts';
 import { LEDGER_PROPOSE_TOOLS } from '../ledger-tools.ts';
 
 export const RESTRICTION_LEVELS = ['observe', 'propose', 'paper', 'full'] as const;
@@ -73,12 +73,12 @@ export function engineToolAllowlist(level: Restriction, actionTypes?: readonly s
   const out = new Set<string>(reads);
   const observeOnly = !!actionTypes && actionTypes.length === 0;
   if (allows(level, 'ui-actions') && !observeOnly) for (const t of actions) if (!actionTypes || actionTypes.includes(t)) out.add(t);
-  if (allows(level, 'strategy-proposals') && !observeOnly) for (const t of STRATEGY_PROPOSE_TOOLS) out.add(t);
+  if (allows(level, 'strategy-proposals') && !observeOnly) for (const t of [...STRATEGY_PROPOSE_TOOLS, ...JOURNEY_PROPOSE_TOOLS]) out.add(t);
   // Paper tools: the MCP server still refuses them unless the user armed a mandate and enabled agent paper trading.
   if (allows(level, 'paper-orders') && !observeOnly) for (const t of [...PAPER_READ_TOOLS, ...PAPER_WRITE_TOOLS]) out.add(t);
   // v0.1.7 integration: the other paper-side writes (start / stop / pause one listed parallel strategy, a paper
   // journal tag, a backtest request file) join at `paper`, so `paper` and `full` offer every tool the claude path has
-  if (allows(level, 'paper-orders') && !observeOnly) for (const t of [...PARALLEL_CONTROL_TOOLS, ...PAPER_NOTE_TOOLS, ...LEDGER_PROPOSE_TOOLS]) out.add(t);
+  if (allows(level, 'paper-orders') && !observeOnly) for (const t of [...PARALLEL_CONTROL_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...PAPER_NOTE_TOOLS, ...LEDGER_PROPOSE_TOOLS]) out.add(t);
   return [...out].filter((n) => !NEVER_TOOL.test(n));
 }
 

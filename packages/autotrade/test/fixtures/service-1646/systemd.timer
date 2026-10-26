@@ -1,0 +1,11 @@
+[Unit]
+Description=dexterm autotrade service tick (every minute)
+
+[Timer]
+OnStartupSec=30
+OnUnitActiveSec=60
+AccuracySec=10
+Unit=dexterm-autotrade.service
+
+[Install]
+WantedBy=timers.target

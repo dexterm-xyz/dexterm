@@ -23,4 +23,4 @@ sources:
 date: 2026-10-16
 ---
 
-Earlier 0.1.7 test builds had an experimental local live signer with a dedicated trading wallet, and a LIVE trade ticket signed in Phantom. Both were removed before release, because dexterm should not hold a key. Sending orders to a trading bot of your choice automatically is next (0.1.8, see the roadmap (https://dexterm.xyz/roadmap/)), still with no key in dexterm.
+Earlier 0.1.7 test builds had an experimental local live signer with a dedicated trading wallet, and a LIVE trade ticket signed in Phantom. Both were removed before release, because dexterm should not hold a key. Sending a strategy's trades to an executor of your choice automatically is real mode (https://dexterm.xyz/docs/real-mode), new in 0.2.0, still with no key in dexterm.

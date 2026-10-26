@@ -35,7 +35,7 @@ test('1503 cli: help, unknown subcommand, list shows the presets', async () => {
   const x = io();
   const h = await run(x, 'autotrade');
   assert.equal(h.code, 0);
-  assert.match(h.out, /PAPER ONLY, not financial advice/);
+  assert.match(h.out, /PAPER by default; mode real sends a LIVE TRADE FIRE signal per trade to YOUR executor .*dexterm holds no key\)\. Not financial advice/);
   const u = await run(x, 'autotrade', 'constructor');
   assert.equal(u.code, 2, 'an inherited name is not a subcommand');
   const l = await run(x, 'autotrade', 'list');

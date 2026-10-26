@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ACTION_FILE_ENV, ACTION_TOKEN_ENV, ANALYST_ACTION_TYPES } from '@dexterm/data';
-import { READ_ONLY_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
+import { JOURNEY_PROPOSE_TOOLS, READ_ONLY_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
 import { skillStore } from '../kb-skill-cmd.ts';
 
 /** The analyst engines dexterm can drive: the user's own claude or codex CLI, or (task-1543) a local model on their Ollama. */
@@ -79,7 +79,8 @@ export function codexAllowedTools(actionTypes: readonly string[] | undefined): s
   const reads = READ_ONLY_TOOLS.filter((n) => !/^paper_/.test(n) && !(ANALYST_ACTION_TYPES as readonly string[]).includes(n));
   const actions = (ANALYST_ACTION_TYPES as readonly string[]).filter((t) => !actionTypes || actionTypes.includes(t));
   // task-1507: strategy PROPOSALS (never applied by a tool) for a chat turn; an observe-only scan gets none
-  const propose = actionTypes && actionTypes.length === 0 ? [] : STRATEGY_PROPOSE_TOOLS;
+  // task-1647: promotion PROPOSALS too (a file the user applies); forward-test control stays off codex, like parallel control
+  const propose = actionTypes && actionTypes.length === 0 ? [] : [...STRATEGY_PROPOSE_TOOLS, ...JOURNEY_PROPOSE_TOOLS];
   return [...reads, ...actions, ...propose];
 }
 

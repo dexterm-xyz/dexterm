@@ -7,6 +7,7 @@ import { compareRows as fleetCompareRows, compareTable as fleetCompareTable, fle
 import { tokenize } from '../screener/filter.ts';
 import type { AppState } from '../state.ts';
 import { headerModel } from '../state.ts';
+import { journeyLines, refreshJourney } from './autotrade-journey.ts';
 import {
   AUTOTRADE_VIEWS, VIEW_TITLE, READ_ONLY_PATHS, backtestSubject, compareRows, getAt, heartbeatStale, issuesByField, screenHighlight,
   type AutotradeUi, type StrategyProposal,
@@ -40,8 +41,10 @@ export function renderAutotrade(c: Canvas, state: AppState): void {
   else if (ui.view === 'editor') renderEditor(c, ui, area);
   else if (ui.view === 'compare') renderCompare(c, ui, area);
   else if (ui.view === 'backtest') renderBacktest(c, ui, area, now);
+  else if (ui.view === 'journey') renderJourneyView(c, ui, area, now);
   else renderRunner(c, ui, area, now);
-  if (ui.confirm) confirmCard(c);
+  if (ui.confirm?.kind === 'flatten') confirmCard(c);
+  else if (ui.confirm?.kind === 'promote') promoteCard(c, ui, ui.confirm.proposalId);
   if (ui.review) reviewCard(c, ui);
   footer(c, hintsFor(ui), t.name);
 }
@@ -60,6 +63,7 @@ function tabs(c: Canvas, ui: AutotradeUi): void {
     const off = (v === 'compare' && !ui.compare) || (v === 'editor' && !ui.editor);
     x = c.text(x, y, ` ${VIEW_TITLE[v]} `, { fg: on ? t.text : off ? t.dim : t.muted, bg: on ? t.tabActiveBg : t.bg, b: on }) + 1;
   }
+  if (ui.view === 'journey') x = c.text(x, y, ` ${VIEW_TITLE.journey} `, { fg: t.text, bg: t.tabActiveBg, b: true }) + 1;
   const line = ui.input
     ? `${ui.input.kind === 'import' ? 'import file: ' : ui.input.kind === 'dup' ? `duplicate ${ui.input.from} as: ` : `new from ${ui.input.from} as: `}${ui.input.text}█  ⏎ ok · esc cancel`
     : ui.notice;
@@ -68,7 +72,7 @@ function tabs(c: Canvas, ui: AutotradeUi): void {
 
 function hintsFor(ui: AutotradeUi): Hint[] {
   const common: Hint[] = [['esc', 'back'], ['q', 'quit']];
-  if (ui.confirm) return [['y', 'flatten'], ['any key', 'cancel']];
+  if (ui.confirm) return [['y', ui.confirm.kind === 'promote' ? 'apply promotion' : 'flatten'], ['any key', 'cancel']];
   if (ui.review) return ui.review.stage === 'less-safe' ? [['y', 'apply (less safe)'], ['any key', 'cancel']] : [['y', ui.review.check.ok && ui.review.check.riskDelta === 'looser' ? 'apply… (less safe)' : 'apply'], ['n', 'dismiss'], ['any key', 'close']];
   if (ui.input) return [['⏎', 'ok'], ['esc', 'cancel']];
   switch (ui.view) {
@@ -78,6 +82,7 @@ function hintsFor(ui: AutotradeUi): Hint[] {
       : [['tab', 'view'], ['↑↓', 'field'], ['⏎', 'change'], ['s', 'save'], ['u', 'undo'], ['b', 'backtest'], ['w', 'sweep'], ...common];
     case 'compare': return [['tab', 'view'], ['↑↓', 'scroll'], ['b', 'backtest both, one tape'], ...common];
     case 'backtest': return [['tab', 'view'], ['b', 'run again'], ['w', 'sweep (held-out)'], ...common];
+    case 'journey': return [['b', 'backtest'], ['F', 'forward test'], ['X', 'stop it'], ['A', 'promotion'], ['J', 'refresh'], ...common];
     default: return [['tab', 'view'], ['!', 'kill'], ['p', 'pause entries'], ['f', 'flatten (confirm)'], ...common];
   }
 }
@@ -176,7 +181,7 @@ function renderList(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
 
 const running = (ui: AutotradeUi): boolean => ui.runner.kind === 'ok';
 /** task-1528: the running runner's mode from its rendezvous ('live' = mainnet through the live signer). */
-const runMode = (ui: AutotradeUi): 'paper' | 'devnet' | 'live' => { const m = ui.runner.kind === 'ok' ? (ui.runner.snap as { mode?: string }).mode : 'paper'; return m === 'live' || m === 'devnet' ? m : 'paper'; };
+const runMode = (ui: AutotradeUi): 'paper' | 'real' | 'devnet' | 'live' => { const m = ui.runner.kind === 'ok' ? (ui.runner.snap as { mode?: string }).mode : 'paper'; return m === 'live' || m === 'devnet' || m === 'real' ? m : 'paper'; };
 
 /** One chat proposal card (§2a): id, hashes, the diff lines, validation, LOOSER in the warn colour. */
 export function proposalCard(c: Canvas, p: StrategyProposal, x: number, y: number, w: number, maxY: number): number {
@@ -531,9 +536,9 @@ function sweepRow(x: SweepRow, pw: number): string {
 function renderRunner(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
   const t = c.theme;
   const rr = ui.runner;
-  const sh = 5;
   const mode = runMode(ui);
-  const sbox = c.box(a.x, a.y, a.w, sh, { title: `RUNNER · ${mode === 'live' ? 'LIVE · MAINNET' : mode === 'devnet' ? 'DEVNET (live signer rehearsal)' : 'PAPER'}`, caption: `status file: ${rr.path || '~/.dexterm/autotrade/runner.json'}`, focus: true });
+  const sh = mode === 'real' ? (ui.runner.kind === 'ok' && ui.runner.snap.real?.limits ? 8 : 6) : 5;
+  const sbox = c.box(a.x, a.y, a.w, sh, { title: `RUNNER · ${mode === 'live' ? 'LIVE · MAINNET' : mode === 'devnet' ? 'DEVNET (live signer rehearsal)' : mode === 'real' ? 'REAL · LIVE TRADE FIRE signals to your executor (no key here)' : 'PAPER'}`, caption: `status file: ${rr.path || '~/.dexterm/autotrade/runner.json'}`, focus: true });
   let y = sbox.y;
   const sl = (s: string, fg: Hex = t.text, b = false) => { if (y < sbox.y + sbox.h) { c.text(sbox.x + 1, y, fit(s, sbox.w - 2), { fg, bg: sbox.bg, b }); y += 1; } };
   if (rr.kind === 'none') {
@@ -550,6 +555,22 @@ function renderRunner(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
   sl(`${stale ? 'STALE' : s.state.toUpperCase()} · ${s.strategy.id} v${s.strategy.version} (${s.strategy.hash}) · pid ${s.pid} · heartbeat ${age} ago${stale ? ' (no heartbeat for over 30 s: treat it as down)' : ''}`, stateFg, true);
   sl(`book $${s.book.equityUsd.toFixed(2)} of $${s.book.startUsd.toFixed(2)} · cash $${s.book.cashUsd.toFixed(2)} · realized today ${usd(s.book.realizedTodayUsd)} · model spend $${s.spend.todayUsd.toFixed(2)} of $${s.spend.dayCapUsd.toFixed(2)} today`);
   sl(s.haltReason ? `halted: ${s.haltReason}` : 'no halt', s.haltReason ? t.down : t.dim, !!s.haltReason);
+  // task-1645: real mode: the account, the kill switch, the outbox, each channel's health, unconfirmed positions.
+  const rm = s.real;
+  if (rm) {
+    const chans = rm.channels.map((h) => `${h.name} ${h.failing ? `FAILING ×${h.failing}` : 'ok'}${h.pending ? ` (${h.pending} pending)` : ''}`).join(', ') || 'none';
+    const unconf = rm.positions.filter((p) => p.state === 'unconfirmed').length;
+    sl(`real · account ${rm.accountId} · ${rm.killed ? `KILL ON (${rm.killed})` : 'kill off'} · outbox ${rm.outboxDepth} pending · ${chans} · ${unconf} unconfirmed · today ${rm.day.buySol} of ${rm.caps.dailySol ?? 'off'} SOL`, rm.killed || rm.channels.some((h) => h.failing) || unconf ? t.warn : t.text, true);
+    // task-1654: the limits panel (status only: limits change on your own terminal, `dexterm autotrade limits`).
+    if (rm.limits) {
+      const L = rm.limits;
+      const v = (k: string, unit: string) => (typeof L[k] === 'number' ? `${L[k]}${unit}` : 'off');
+      const pause = rm.risk?.buyPause;
+      sl(`limits · ${v('perTradeSol', ' SOL')}/trade${typeof L.perTradePct === 'number' ? ` (${L.perTradePct}% of book)` : ''} · ${v('dailySol', ' SOL')}/day · ${v('buysPerDay', '')} buys · ${v('maxOpenPositions', '')} open · loss stop ${v('dailyLossSol', ' SOL')} · streak ${rm.risk?.lossStreak ?? 0}/${v('lossStreak', '')}${rm.risk?.breaker ? ' · BREAKER TRIPPED' : ''}${pause ? ` · BUYS PAUSED: ${pause}` : ''} · dexterm autotrade limits show`, pause || rm.risk?.breaker ? t.warn : t.muted, !!pause);
+      const ex = rm.executor;
+      if (ex) sl(`executor · ${ex.alive === false ? 'SILENT' : ex.alive ? 'alive' : 'not judged'}${ex.silentSec !== null && ex.lastSeenBy !== 'run-start' ? ` · last ${ex.lastSeenBy} ${fmtAgeSec(ex.silentSec)} ago` : ''}${ex.heartbeat ? ` · ${ex.heartbeat.executor}${ex.heartbeat.dryRun ? ' (dry run)' : ''}` : ' · no heartbeat yet'}${ex.lastReceipt ? ` · receipt #${ex.lastReceipt.nonce} ${ex.lastReceipt.status}` : ''}${ex.receiptLagSec !== null ? ` · lag ${ex.receiptLagSec} s` : ''}${ex.windowMin !== null ? ` · pauses buys after ${ex.windowMin} min silent` : ''}`, ex.alive === false ? t.down : t.muted, ex.alive === false);
+    }
+  }
 
   // task-1529: a `run --all` shows its strategies side by side above the shared panels (rows tagged [strategy]).
   const fleet = ui.fleet;
@@ -588,7 +609,7 @@ function renderRunner(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
     [`  last: ${k.lastDecision ?? '—'}`, t.muted],
   ]));
   panel(a.x + 2 * third, a.w - 2 * third, `POSITIONS · ${s.positions.length}`, s.positions.flatMap((p): Array<[string, Hex]> => [
-    [`${tag(p)}${p.symbol.padEnd(8)}${pct(p.pnlPct).padStart(8)}${usd(p.pnlUsd).padStart(9)}${p.freeBag ? ' free bag' : ''}`, p.pnlUsd >= 0 ? t.up : t.down],
+    [`${tag(p)}${p.symbol.padEnd(8)}${pct(p.pnlPct).padStart(8)}${usd(p.pnlUsd).padStart(9)}${p.freeBag ? ' free bag' : ''}${p.confirm ? ` · ${p.confirm}` : ''}`, p.pnlUsd >= 0 ? t.up : t.down],
     [`  ${p.profile} · next: ${p.next ?? '—'}`, t.muted],
   ]));
   const lb = c.box(a.x, a.y + sh + fh + upper, a.w, ledgerH, { title: 'RUN LEDGER · newest last', caption: 'hash-chained; every step with its exact inputs' });
@@ -608,4 +629,30 @@ function confirmCard(c: Canvas): void {
   c.text(b.x + 1, b.y, fit('Sell every paper position of this runner at the next tick.', b.w - 2), { fg: t.text, bg: b.bg });
   c.text(b.x + 1, b.y + 1, fit('New entries stop first; mechanical exits keep running.', b.w - 2), { fg: t.muted, bg: b.bg });
   c.text(b.x + 1, b.y + 3, 'y flatten · any other key cancels', { fg: t.warn, bg: b.bg, b: true });
+}
+
+// ───────────────────────────── journey (task-1647) ─────────────────────────────
+
+function renderJourneyView(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
+  const t = c.theme;
+  refreshJourney(ui);
+  const j = ui.journey;
+  const box = c.box(a.x, a.y, a.w, a.h, { title: `JOURNEY · ${j?.id ?? '—'}`, caption: 'draft → backtested → forward-tested → always-on (paper) → real · one rung at a time, on these exact rules', focus: true });
+  const bg = box.bg;
+  if (!j) { c.text(box.x + 1, box.y, 'J on a strategy opens its journey', { fg: t.dim, bg }); return; }
+  const tone = { text: t.text, ok: t.up, warn: t.warn, dim: t.dim } as const;
+  // tables keep their columns: only a line wider than the box wraps
+  const lines = journeyLines(j, now).flatMap((l) => (l.text.length <= box.w - 2 ? [l] : wrap(l.text, box.w - 2).map((x) => ({ text: x, tone: l.tone }))));
+  lines.slice(0, box.h).forEach((l, i) => c.text(box.x + 1, box.y + i, fit(l.text, box.w - 2), { fg: tone[l.tone], bg }));
+}
+
+function promoteCard(c: Canvas, ui: AutotradeUi, proposalId: string): void {
+  const t = c.theme;
+  const p = ui.journey?.pending.find((x) => x.proposalId === proposalId);
+  const body = p ? p.card : [`promotion ${proposalId}`];
+  const w = Math.min(c.w - 4, 104), h = Math.min(c.h - 4, body.length + 5);
+  const x = Math.floor((c.w - w) / 2), y = Math.floor((c.h - h) / 2);
+  const box = c.box(x, y, w, h, { title: 'APPLY PROMOTION? (paper: the always-on service)', focus: true });
+  body.slice(0, h - 4).forEach((l, i) => c.text(box.x + 1, box.y + i, fit(l, box.w - 2), { fg: t.text, bg: box.bg }));
+  c.text(box.x + 1, box.y + h - 3, fit(`proposed by ${p?.actor ?? '?'} · y applies (autotrade.json gets the paper member) · any other key cancels`, box.w - 2), { fg: t.warn, bg: box.bg, b: true });
 }

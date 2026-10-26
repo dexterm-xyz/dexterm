@@ -22,6 +22,10 @@
 // execution-port  where an approved entry goes: the paper port (local single-use proofs) and the live stub (task-1527)
 // chat       Telegram notify, control and approve-to-trade through the user's own bot; chat/ (task-1527)
 // yolo       task-1532: the full-port replay (rugs, loss spread, how often it zeroed the wallet); paper only
+// signal / outbox / signal-channels / receipts / real-mode  task-1645: mode real = the paper engine + a LIVE TRADE FIRE
+//            signal per fill to the user's own executor (webhook, command hook, JSONL, MCP feed, Telegram copy); no key
+// limits / executor-health / report  task-1654: every real-mode limit user-set per scope (stricter wins), executor
+//            heartbeats + the silence pause, the paper-vs-real divergence report and the digest
 //
 // The screener filter grammar is imported by path from the CLI's screener (one parser for the screen and
 // for strategies); nothing in this package touches a key or a wallet, and nothing places a live order (task-1571). The desk executor
@@ -52,3 +56,18 @@ export * from './trade-ledger.ts';
 export * from './execution-port.ts';
 export * from './chat/index.ts';
 export * from './yolo.ts';
+export * from './signal.ts';
+export * from './outbox.ts';
+export * from './signal-channels.ts';
+export * from './receipts.ts';
+export * from './real-mode.ts';
+export * from './journey.ts';
+export * from './forward.ts';
+export * from './service.ts';
+export * from './service-guard.ts';
+export * from './service-recover.ts';
+export * from './service-install.ts';
+export * from './limits.ts';
+export * from './paper-limits.ts';
+export * from './executor-health.ts';
+export * from './report.ts';

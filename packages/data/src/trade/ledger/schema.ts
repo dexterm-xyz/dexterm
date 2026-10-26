@@ -26,9 +26,11 @@ export const LEDGER_VERSION = 1;
 export const GENESIS = 'genesis';
 
 export type LedgerSource = 'paper' | 'desk' | 'autotrade' | 'live';
-export type WalletMode = 'paper' | 'devnet' | 'live';
+// task-1655: `real` = a real-mode autotrade run (0.2.0): the fill is dexterm's model of the trade it signalled to the
+// user's own executor (dexterm holds no key); the executor's fill is its receipt. Never paper, never a dexterm signer.
+export type WalletMode = 'paper' | 'devnet' | 'live' | 'real';
 export const LEDGER_SOURCES: readonly LedgerSource[] = ['paper', 'desk', 'autotrade', 'live'];
-export const WALLET_MODES: readonly WalletMode[] = ['paper', 'devnet', 'live'];
+export const WALLET_MODES: readonly WalletMode[] = ['paper', 'devnet', 'live', 'real'];
 
 /**
  * Where a PROFILE / EXIT came from, best first:

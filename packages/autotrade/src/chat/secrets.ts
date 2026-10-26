@@ -27,44 +27,54 @@ export const accountFor = (home: string): string => `bot-token-${createHash('sha
 
 const has = (bin: string): boolean => spawnSync('/usr/bin/env', ['which', bin], { stdio: 'ignore' }).status === 0;
 
+/** task-1645: which secret. The Telegram bot token (default) or the real-mode webhook's HMAC secret. */
+export interface SecretItem { service: string; label: string; file: string; account: (home: string) => string }
+export const TELEGRAM_TOKEN_ITEM: SecretItem = { service: SECRET_SERVICE, label: 'dexterm telegram bot', file: 'telegram-bot.token', account: accountFor };
+export const SIGNAL_HMAC_ITEM: SecretItem = {
+  service: 'xyz.dexterm.signal', label: 'dexterm trade-fire webhook secret', file: 'signal-webhook.secret',
+  account: (home) => `signal-hmac-${createHash('sha256').update(resolve(home)).digest('hex').slice(0, 12)}`,
+};
+
 class KeychainStore implements SecretStore {
   readonly kind = 'keychain' as const;
   private readonly account: string;
-  constructor(account: string) { this.account = account; }
+  private readonly item: SecretItem;
+  constructor(account: string, item: SecretItem = TELEGRAM_TOKEN_ITEM) { this.account = account; this.item = item; }
   get(): string | null {
-    const r = spawnSync('security', ['find-generic-password', '-a', this.account, '-s', SECRET_SERVICE, '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const r = spawnSync('security', ['find-generic-password', '-a', this.account, '-s', this.item.service, '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     const v = r.status === 0 ? r.stdout.trim() : '';
     return v || null;
   }
   set(value: string): void {
     if (!/^[A-Za-z0-9:_-]+$/.test(value)) throw new Error('refusing to store a value with characters a bot token never has');
     // The add command (with the value) goes through stdin; argv only says "-i".
-    const r = spawnSync('security', ['-i'], { input: `add-generic-password -U -a ${this.account} -s ${SECRET_SERVICE} -l "dexterm telegram bot" -w "${value}"\n`, encoding: 'utf8', stdio: ['pipe', 'ignore', 'pipe'] });
+    const r = spawnSync('security', ['-i'], { input: `add-generic-password -U -a ${this.account} -s ${this.item.service} -l "${this.item.label}" -w "${value}"\n`, encoding: 'utf8', stdio: ['pipe', 'ignore', 'pipe'] });
     if (r.status !== 0 || this.get() !== value) throw new Error('the macOS keychain did not store the token');
   }
-  remove(): void { spawnSync('security', ['delete-generic-password', '-a', this.account, '-s', SECRET_SERVICE], { stdio: 'ignore' }); }
+  remove(): void { spawnSync('security', ['delete-generic-password', '-a', this.account, '-s', this.item.service], { stdio: 'ignore' }); }
 }
 
 class LibsecretStore implements SecretStore {
   readonly kind = 'libsecret' as const;
   private readonly account: string;
-  constructor(account: string) { this.account = account; }
+  private readonly item: SecretItem;
+  constructor(account: string, item: SecretItem = TELEGRAM_TOKEN_ITEM) { this.account = account; this.item = item; }
   get(): string | null {
-    const r = spawnSync('secret-tool', ['lookup', 'service', SECRET_SERVICE, 'account', this.account], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const r = spawnSync('secret-tool', ['lookup', 'service', this.item.service, 'account', this.account], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     const v = r.status === 0 ? r.stdout.trim() : '';
     return v || null;
   }
   set(value: string): void {
-    const r = spawnSync('secret-tool', ['store', '--label=dexterm telegram bot', 'service', SECRET_SERVICE, 'account', this.account], { input: value, encoding: 'utf8', stdio: ['pipe', 'ignore', 'pipe'] });
+    const r = spawnSync('secret-tool', ['store', `--label=${this.item.label}`, 'service', this.item.service, 'account', this.account], { input: value, encoding: 'utf8', stdio: ['pipe', 'ignore', 'pipe'] });
     if (r.status !== 0 || this.get() !== value) throw new Error('libsecret did not store the token');
   }
-  remove(): void { spawnSync('secret-tool', ['clear', 'service', SECRET_SERVICE, 'account', this.account], { stdio: 'ignore' }); }
+  remove(): void { spawnSync('secret-tool', ['clear', 'service', this.item.service, 'account', this.account], { stdio: 'ignore' }); }
 }
 
 class FileStore implements SecretStore {
   readonly kind = 'file' as const;
   readonly path: string;
-  constructor(home: string) { this.path = join(home, 'secrets', 'telegram-bot.token'); }
+  constructor(home: string, item: SecretItem = TELEGRAM_TOKEN_ITEM) { this.path = join(home, 'secrets', item.file); }
   get(): string | null {
     if (!existsSync(this.path)) return null;
     const v = readFileSync(this.path, 'utf8').trim();
@@ -90,18 +100,18 @@ export class MemoryStore implements SecretStore {
 }
 
 /** The store a kind names (the one setup recorded), for this home. */
-export function secretStore(kind: SecretStoreKind, home: string): SecretStore {
-  if (kind === 'keychain') return new KeychainStore(accountFor(home));
-  if (kind === 'libsecret') return new LibsecretStore(accountFor(home));
+export function secretStore(kind: SecretStoreKind, home: string, item: SecretItem = TELEGRAM_TOKEN_ITEM): SecretStore {
+  if (kind === 'keychain') return new KeychainStore(item.account(home), item);
+  if (kind === 'libsecret') return new LibsecretStore(item.account(home), item);
   if (kind === 'memory') return new MemoryStore();
-  return new FileStore(home);
+  return new FileStore(home, item);
 }
 
 /** The best store on this machine: DEXTERM_SECRET_STORE wins, then the OS store, then the 0600 file. */
-export function chooseSecretStore(home: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): SecretStore {
+export function chooseSecretStore(home: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, item: SecretItem = TELEGRAM_TOKEN_ITEM): SecretStore {
   const want = env.DEXTERM_SECRET_STORE;
-  if (want === 'file' || want === 'keychain' || want === 'libsecret') return secretStore(want, home);
-  if (platform === 'darwin' && has('security')) return secretStore('keychain', home);
-  if (platform === 'linux' && has('secret-tool')) return secretStore('libsecret', home);
-  return secretStore('file', home);
+  if (want === 'file' || want === 'keychain' || want === 'libsecret') return secretStore(want, home, item);
+  if (platform === 'darwin' && has('security')) return secretStore('keychain', home, item);
+  if (platform === 'linux' && has('secret-tool')) return secretStore('libsecret', home, item);
+  return secretStore('file', home, item);
 }

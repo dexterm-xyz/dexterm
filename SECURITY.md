@@ -1,6 +1,6 @@
 # Security policy
 
-dexterm is a local terminal app that reads public market data and never holds a key and never signs: trading in dexterm is simulated (paper), and live trading happens in a Telegram trading bot of your choice, outside dexterm. It can talk to your own Telegram bot (alerts, run control, paper approvals). It also opens WebSockets, runs loopback HTTP servers for the chart window and the wallet-link page, fetches token websites on request, and feeds untrusted text to a language model. Bugs in any of that matter to us.
+dexterm is a local terminal app that reads public market data and never holds a key and never signs: trading in dexterm is simulated (paper), and in real mode (experimental) dexterm sends signals to an executor you run, which holds its own wallet and places the orders, outside dexterm. It can talk to your own Telegram bot (alerts, run control, paper approvals). It also opens WebSockets, runs loopback HTTP servers for the chart window and the wallet-link page, fetches token websites on request, and feeds untrusted text to a language model. Bugs in any of that matter to us.
 
 ## Report a vulnerability
 
@@ -30,7 +30,8 @@ In scope:
 - anything that makes dexterm build, sign or send a transaction, or hold, read or ask for a private key or seed phrase (it should have no code that can);
 - the wallet link: the one-shot loopback page, its token, Host/Origin checks and CSP, and the signed-message check;
 - the Telegram connector: the bot token (keychain only, redacted everywhere), pairing, the allow-listed chat, the command list, and anything that lets chat make a run less safe or reach anything but the paper book;
-- any path from a model, voice command, agent, chat message or token metadata to arming a plan or raising a limit;
+- any path from a model, voice command, agent, chat message or token metadata to arming a plan, switching a strategy to real, arming it or raising a limit;
+- real mode's signal path: the outbox (nonce, TTL, dedupe, restart), the webhook HMAC, the command hook (argv, no shell), the limits file and its integrity check, the kill switch, and anything that lets a paper strategy emit a signal or a signal leave its limits;
 - the loopback chart server and the native shell: ticket, token, Host/Origin checks, CSP, navigation pinning;
 - the prompt firewall: untrusted text (token metadata, fetched pages, feeds) escaping its wrapping or steering the analyst into actions;
 - the SSRF-safe page fetcher (private ranges, redirects, content types, size caps);
