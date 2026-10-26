@@ -4,7 +4,7 @@
 // the recorded tape, stub sessions. No network, no key, no signal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,9 @@ const run = async (x: X, ...argv: string[]) => {
 };
 const ledgerOf = (home: string) => {
   const dir = join(home, 'autotrade', 'runs');
-  const f = readdirSync(dir).filter((n) => n.endsWith('.jsonl') && !n.includes('stream')).sort().at(-1)!;
+  // task-1679: the newest run file by mtime. Run ids are second-resolution timestamps + a random suffix, so runs
+  // started within one second (a fast CI runner) do not sort by name in start order.
+  const f = readdirSync(dir).filter((n) => n.endsWith('.jsonl') && !n.includes('stream')).map((n) => ({ n, t: statSync(join(dir, n)).mtimeMs })).sort((a, b) => a.t - b.t).at(-1)!.n;
   return readLedgerFile(join(dir, f));
 };
 const args = ['scalp', '--paper', '--stub', '--replay', TAPE, '--ms-per-tick', '1', '--no-telegram'];
