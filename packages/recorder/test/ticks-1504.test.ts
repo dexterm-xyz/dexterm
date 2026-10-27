@@ -11,6 +11,7 @@ import { drive, json, loadSample, sampleLayer } from '../../data/test/helpers.ts
 import { Recorder } from '../src/recorder.ts';
 import { candlesFromDb, dbFocus, focusFilePath, mergeFocus, readFocusFile, writeFocusFile, FOCUS_FILE_SCHEMA, FOCUS_FILE_STALE_MS, type FocusEntry } from '../src/ticks.ts';
 import { dbSize, enforceCap } from '../src/retention.ts';
+import { posixPermissions } from '../../../scripts/test-support.ts';
 
 const MIN = 60_000;
 const H1 = 3_600_000;
@@ -170,25 +171,26 @@ test('tick lane budget: maxCoins cap (overCap counted), low priority without hel
   }
 });
 
-test('focus sources: watchlist + paper positions from the DB; the focus file (atomic 0600, stale and expired entries ignored)', () => {
+test('focus sources: watchlist + paper positions from the DB; the focus file (atomic 0600, stale and expired entries ignored)', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'dexterm-1504-'));
   try {
     const db = join(dir, 'app.db');
     const wl = new WatchlistStore({ path: db });
     wl.add({ mint: mintN(1), symbol: 'AAA', name: 'a', launchpad: 'pump.fun', entryPrice: null });
     const wallet = new PaperWallet({ path: db });
-    void wallet;
     const rec = new Recorder({ path: db });
     rec.database.prepare("INSERT INTO paper_positions (mint, symbol, decimals, tokens_raw, cost_lamports, updated_at) VALUES (?, 'BBB', 6, '1000', '5', 0), (?, 'CCC', 6, '0', '5', 0)").run(mintN(2), mintN(3));
     assert.deepEqual(mergeFocus(dbFocus(rec.database)), [{ mint: mintN(2), role: 'held' }, { mint: mintN(1), role: 'watch' }], 'a closed position (0 tokens) is not held');
-    assert.deepEqual(dbFocus(new Recorder({ path: ':memory:' }).database), [], 'fresh DB: no tables, no focus');
-    rec.close();
+    const fresh = new Recorder({ path: ':memory:' });
+    assert.deepEqual(dbFocus(fresh.database), [], 'fresh DB: no tables, no focus');
+    // Every handle on app.db is closed before the temp dir is removed (Windows cannot delete an open file; task-1712).
+    fresh.close(); rec.close(); wallet.close(); wl.close();
 
     const path = focusFilePath(join(dir, 'home'));
     const now = Date.parse('2026-10-21T00:00:00Z');
     assert.deepEqual(readFocusFile(path, now), [], 'missing file');
     writeFocusFile(path, [{ mint: mintN(4), role: 'candidate', until: now + MIN }, { mint: mintN(5), role: 'held' }, { mint: mintN(6), role: 'open', until: now - 1 }], now);
-    assert.equal(statSync(path).mode & 0o777, 0o600);
+    await posixPermissions(t, () => { assert.equal(statSync(path).mode & 0o777, 0o600); });
     assert.deepEqual(readFocusFile(path, now), [{ mint: mintN(5), role: 'held' }, { mint: mintN(4), role: 'candidate' }], 'expired entry dropped');
     assert.deepEqual(readFocusFile(path, now + 2 * MIN), [{ mint: mintN(5), role: 'held' }]);
     assert.deepEqual(readFocusFile(path, now + FOCUS_FILE_STALE_MS + 1), [], 'a stale file (dead writer) pins nothing');

@@ -17,6 +17,7 @@ import { ChatAudit, MemoryStore, PAIR_MAX_TRIES, PairingWindow, TelegramConnecto
 import { telegramCommand, type TelegramDeps } from '../src/telegram-cmd.ts';
 import { LIVE_APPROVALS_REFUSED, TelegramHost } from '../src/autotrade-cmd/telegram-host.ts';
 import { FakeConnector, loadPreset, type Executor, type PortOrder, type RemoteButtonEvidence } from '@dexterm/autotrade';
+import { posixPermissions } from '../../../scripts/test-support.ts';
 
 const TOKEN = '7712345678:AAHk3X9vQ_pZr8T2mN4bW6yC1dE5fG7hJ0kL';
 const SECRET = TOKEN.split(':')[1];
@@ -223,7 +224,7 @@ test('1527 attack A4c (A-F7): the chat audit with the known token strips a URL-e
   assert.ok(!leaks(s), s);
 });
 
-test('1527 attack A4d: setup with the file store: the token is only in secrets/telegram-bot.token (0600 in 0700); an argv token is refused', async () => {
+test('1527 attack A4d: setup with the file store: the token is only in secrets/telegram-bot.token (0600 in 0700); an argv token is refused', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'tg1527-tok-'));
   const out: string[] = []; const err: string[] = [];
   const io = { stdout: { write: (s: string) => out.push(s) }, stderr: { write: (s: string) => err.push(s) }, env: { DEXTERM_HOME: home, DEXTERM_SECRET_STORE: 'file', PATH: process.env.PATH ?? '' } };
@@ -235,8 +236,10 @@ test('1527 attack A4d: setup with the file store: the token is only in secrets/t
   walk(home);
   const tf = join(home, 'secrets', 'telegram-bot.token');
   assert.deepEqual(files.filter((f) => readFileSync(f, 'utf8').includes(SECRET)), [tf]);
-  assert.equal(statSync(tf).mode & 0o777, 0o600);
-  assert.equal(statSync(join(home, 'secrets')).mode & 0o777, 0o700);
+  await posixPermissions(t, () => {
+    assert.equal(statSync(tf).mode & 0o777, 0o600);
+    assert.equal(statSync(join(home, 'secrets')).mode & 0o777, 0o700);
+  });
   assert.ok(!leaks(out.join('') + err.join('')));
   assert.equal(secretStore('file', home).get(), TOKEN);
   assert.ok(!readdirSync(home).includes('autotrade') || !readdirSync(chatDir(home)).some((f) => leaks(readFileSync(join(chatDir(home), f), 'utf8'))));

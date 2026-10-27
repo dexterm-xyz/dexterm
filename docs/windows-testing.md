@@ -22,6 +22,10 @@ whether this Windows gate passes.
   Native Windows ACL isolation is **unverified**: review the account/directory's
   Security permissions before storing sensitive material. `doctor` and X status
   warn rather than claiming a successful `chmod` made the files private.
+- The autotrade `oauth-token` account hands the token to `claude` on an inherited
+  file descriptor 3. Only the fd-3 receipt check is a named POSIX subtest, skipped
+  on Windows; the same test's no-leak checks (argv, environment, every run file)
+  still run there. The fd-3 handoff itself is **unverified** on Windows.
 - Python's `pty`/`termios` harness is POSIX-only; tests explicitly check that
   capability. Those tests still run on Linux/macOS. This does not establish
   Windows ConPTY behavior. The in-process input/queue/interrupt/render tests and

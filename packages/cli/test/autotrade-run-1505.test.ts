@@ -9,10 +9,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { autotradeCommand } from '../src/autotrade-cmd.ts';
+import { useNodeScripts } from '../../../scripts/test-support.ts';
 import { acquireRunLock, presetPath, readLedgerFile, releaseRunLock, runLockPath, runnerRendezvousPath, verifyChain } from '@dexterm/autotrade';
 
 const TAPE = fileURLToPath(new URL('../../autotrade/test/fixtures/autotrade-1498-tape.json', import.meta.url));
 const FAKE = fileURLToPath(new URL('../../autotrade/test/fixtures/fake-claude.mjs', import.meta.url));
+// `--claude-bin` names the #! fake: spawn it through Node, which Windows needs (task-1712); real pipes, argv and exit.
+useNodeScripts({ [FAKE]: FAKE });
 
 function io(extra: Record<string, string> = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dexterm-at-run-'));
@@ -103,8 +106,13 @@ test('1505 run: claude sessions on a fake CLI — init proof logged; an apiKeySo
   const eb = ledgerOf(bad.home).events;
   const ends = eb.filter((e) => e.kind === 'session_end');
   assert.ok(ends.length >= 1);
-  assert.equal(ends.filter((e) => e.reason === 'account-mismatch').length, 1, 'the first mismatch ends its session ...');
-  assert.ok(eb.some((e) => e.kind === 'guard' && e.state === 'account-mismatch'), '... and blocks new sessions for the run');
+  assert.ok(ends.some((e) => e.reason === 'account-mismatch'), 'the first mismatch ends its session ...');
+  assert.equal(eb.filter((e) => e.kind === 'guard' && e.state === 'account-mismatch').length, 1, '... and blocks new sessions for the run');
+  // task-1712: no session starts after the first failed proof. (A session already started before that proof also
+  // fails its own and ends: how many there are depends on spawn timing, so the test pins the order, not a count.)
+  const proof = eb.findIndex((e) => e.kind === 'session_init' && e.ok === false);
+  assert.ok(proof >= 0);
+  assert.deepEqual(eb.slice(proof).filter((e) => e.kind === 'session_start').map((e) => e.sessionId), [], 'no session after the failed proof');
   assert.ok(ends.every((e) => e.reason === 'account-mismatch' || e.reason === 'candidate-ttl'), JSON.stringify(ends.map((e) => e.reason)));
   assert.equal(eb.filter((e) => e.kind === 'clamp').length, 0, 'nothing a mismatched session said was executed');
 });

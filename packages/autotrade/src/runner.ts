@@ -261,6 +261,8 @@ export interface RunnerState {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const REVIEW: WakeEvent['event'][] = ['time_review', 'time_tighten'];
 const INFO_ONLY: WakeEvent['event'][] = ['mechanical_exit', 'stuck'];
+/** Session ends that fail the same way every time: no new session for the rest of the run. */
+const GUARD_REASONS = new Set(['account-mismatch', 'not-tool-less', 'account-unavailable']);
 
 async function* fromArray(ticks: MarketTick[]): AsyncIterable<MarketTick> { for (const k of ticks) yield k; }
 
@@ -355,6 +357,25 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
     inflight: null, pendingText: [], notes: [], closing: false, positionId, awaitingReview: null, oneShot: kind === 'position', costSeen: 0, turns: 0, lastDecision: null,
   });
 
+  /**
+   * Why the session's process ended on its own (null while alive). A session that proved the account or its tool list
+   * wrong (or had no account) blocks new sessions for the run; the guard is logged once, by the session that set it.
+   * Checked on every path that learns of a death: a null reply AND a close (a candidate's TTL can close a session that
+   * already died, before its null reply is read; task-1712).
+   */
+  let guardLogged = false;
+  const sessionDied = (c: Candidate): string | null => {
+    const died = (c.session as { endReason?: () => string | null } | null)?.endReason?.() ?? null;
+    if (c.session && died && GUARD_REASONS.has(died)) {
+      if (!guardLogged && (gate.blocked === null || gate.blockedBy === c.session.id)) {
+        guardLogged = true;
+        ledger.add(now, 'guard', { state: died, effect: 'no new sessions this run; mechanical exits continue', sessionId: c.session.id });
+      }
+      gate.block(died, c.session.id);
+    }
+    return died;
+  };
+
   const closeCandidate = async (c: Candidate, reason: string) => {
     if (c.closing) return;
     c.closing = true;
@@ -367,8 +388,11 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       const st = await c.session.close(reason);
       if (st.costUsd > c.costSeen) { gate.spend(st.costUsd - c.costSeen); c.costSeen = st.costUsd; }
       sessionCost += st.costUsd;
-      ledger.add(now, 'session_end', { sessionId: c.session.id, sessionKind: c.sessionKind, mint: c.mint, reason, turns: st.turns, costUsd: st.costUsd });
-      say(`session ${c.session.id} ended (${reason}) · ${st.turns} turns · $${st.costUsd.toFixed(4)}`);
+      // A session that had already failed its proof ended for that reason, whatever closed its candidate.
+      const died = sessionDied(c);
+      const why = died && GUARD_REASONS.has(died) ? died : reason;
+      ledger.add(now, 'session_end', { sessionId: c.session.id, sessionKind: c.sessionKind, mint: c.mint, reason: why, turns: st.turns, costUsd: st.costUsd });
+      say(`session ${c.session.id} ended (${why}) · ${st.turns} turns · $${st.costUsd.toFixed(4)}`);
     }
   };
 
@@ -517,12 +541,8 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       c.costSeen = Math.max(c.costSeen, r.costUsd);
     }
     if (!r || !r.decision.ok) {
-      const died = (c.session as { endReason?: () => string | null }).endReason?.() ?? null;
+      const died = sessionDied(c);
       if (!r) ledger.add(now, 'session_timeout', { sessionId: c.session.id, mint: c.mint, ended: died });
-      if (died === 'account-mismatch' || died === 'not-tool-less' || died === 'account-unavailable') {
-        if (!gate.blocked) ledger.add(now, 'guard', { state: died, effect: 'no new sessions this run; mechanical exits continue', sessionId: c.session.id });
-        gate.block(died);
-      }
       if (review) await noAnswer(review, !r ? (died ?? 'timeout') : 'invalid-decision');
       if (!r) {
         // A dead process (account mismatch, a tool list that is not empty, an exit) ends the session for good; a

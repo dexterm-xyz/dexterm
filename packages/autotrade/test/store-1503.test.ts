@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StrategyStore, bumpPatch, semverGreater } from '../src/store.ts';
 import { presetPath } from '../src/strategy.ts';
+import { posixPermissions } from '../../../scripts/test-support.ts';
 
 const home = () => mkdtempSync(join(tmpdir(), 'dexterm-at-store-'));
 const preset = (id: string) => JSON.parse(readFileSync(presetPath(id), 'utf8'));
@@ -22,14 +23,16 @@ test('1503 store: $DEXTERM_HOME is honoured; list shows the presets until a user
   assert.equal(existsSync(s.dir), false, 'listing writes nothing');
 });
 
-test('1503 store: create from a preset, patch, update, remove: every write journaled with actor + before/after hash', () => {
+test('1503 store: create from a preset, patch, update, remove: every write journaled with actor + before/after hash', async (t) => {
   const s = new StrategyStore({ home: home(), now });
   const c = s.createFrom('swing', 'my-swing', { actor: 'user', name: 'My swing' });
   assert.ok(c.ok, JSON.stringify(c));
   assert.equal(c.strategy.version, '1.0.0');
   const file = s.pathOf('my-swing');
-  assert.equal(statSync(file).mode & 0o777, 0o600);
-  assert.equal(statSync(s.dir).mode & 0o777, 0o700);
+  await posixPermissions(t, () => {
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.equal(statSync(s.dir).mode & 0o777, 0o700);
+  });
 
   const p = s.patch('my-swing', [{ op: 'replace', path: '/exits/profiles/0', value: 'builtin:swing' }, { op: 'replace', path: '/sizing/pct', value: 8 }], { actor: 'user', why: 'smaller tickets' });
   assert.ok(p.ok, JSON.stringify(p));

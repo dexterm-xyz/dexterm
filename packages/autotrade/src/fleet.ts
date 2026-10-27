@@ -248,7 +248,7 @@ export class MemberGate extends SessionGate {
   override spend(usd: number): void { super.spend(usd); this.fleet.gate.spend(usd); }
   override overDay(): string | null { const o = super.overDay(); if (o) return o; const g = this.fleet.gate.overDay(); return g ? `fleet-${g}` : null; }
   override rateLimit(r: AllowanceReading): void { super.rateLimit(r); this.fleet.rateLimit(r, this); }
-  override block(reason: string): void { super.block(reason); this.fleet.block(reason, this); }
+  override block(reason: string, sessionId?: string): void { super.block(reason, sessionId); this.fleet.block(reason, this); }
   override paused(): boolean { return super.paused() || this.fleet.paused(); }
   /** A reading another strategy's session made (the same Claude account). */
   shareRateLimit(r: AllowanceReading): void { super.rateLimit(r); }

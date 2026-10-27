@@ -20,7 +20,7 @@
 // Only PATH is copied into the job's environment (the service needs to find `claude`); nothing else, no secrets.
 
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
 export const SERVICE_LABEL = 'xyz.dexterm.autotrade';
 export const INSTALL_MANIFEST_SCHEMA = 'dexterm-autotrade-service-install/1';
@@ -71,7 +71,9 @@ export const ensureArgs = (s: InstallSpec): string[] => [s.nodePath, s.binPath, 
 
 const xml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export const launchAgentPath = (s: InstallSpec): string => join(s.userHome, 'Library', 'LaunchAgents', `${s.label}.plist`);
+// LaunchAgent and systemd paths are macOS / Linux paths whatever host computes the plan (task-1712: a Windows host
+// joined them with `\`); the Windows task and the manifest live under the local dexHome and use the host's join.
+export const launchAgentPath = (s: InstallSpec): string => posix.join(s.userHome, 'Library', 'LaunchAgents', `${s.label}.plist`);
 
 export function renderLaunchAgent(s: InstallSpec): string {
   const args = ensureArgs(s).map((a) => `    <string>${xml(a)}</string>`).join('\n');
@@ -112,7 +114,7 @@ ${env}  <key>StartInterval</key>
 // ───────────────────────────── Linux (systemd user) ─────────────────────────────
 
 export const systemdUnit = (s: InstallSpec): string => s.label.replace(/^xyz\./, '').replace(/\./g, '-');
-export const systemdDir = (s: InstallSpec): string => join(s.userHome, '.config', 'systemd', 'user');
+export const systemdDir = (s: InstallSpec): string => posix.join(s.userHome, '.config', 'systemd', 'user');
 
 /** systemd quoting: double quotes, backslash and quote escaped, `%` doubled (specifier expansion). */
 const sd = (a: string): string => `"${a.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%')}"`;
@@ -231,7 +233,7 @@ export function installPlan(s: InstallSpec, dexHome: string): InstallPlan {
     const dir = systemdDir(s);
     return {
       platform: s.platform, label: s.label, name: `${unit}.timer`,
-      files: [{ path: join(dir, `${unit}.service`), content: renderSystemdService(s) }, { path: join(dir, `${unit}.timer`), content: renderSystemdTimer(s) }],
+      files: [{ path: posix.join(dir, `${unit}.service`), content: renderSystemdService(s) }, { path: posix.join(dir, `${unit}.timer`), content: renderSystemdTimer(s) }],
       activate: [['systemctl', '--user', 'daemon-reload'], ['systemctl', '--user', 'enable', '--now', `${unit}.timer`]],
       deactivate: [['systemctl', '--user', 'disable', '--now', `${unit}.timer`]],
       notes: ['A systemd user timer runs while you are logged in; `loginctl enable-linger` (your choice) keeps it running after logout and from boot.'],

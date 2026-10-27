@@ -17,9 +17,12 @@ import { DEFAULT_RUNNER_CONFIG, effectiveCaps, loadRunnerConfig, parseRunnerConf
 import { EXPECTED_API_KEY_SOURCE, prepareAccount } from '../src/account.ts';
 import { SessionGate, claudeArgs, claudeSessionFactory, parseRateLimit, renderDossierRecord, runnerSystemPrompt, spawnClaudeSession, tapeDossierRecord } from '../src/sessions.ts';
 import { LiveSource, tickFromRow } from '../src/live-source.ts';
+import { posixPermissions, useNodeScripts } from '../../../scripts/test-support.ts';
 import { acquireRunLock, releaseRunLock, runAutotrade, runLockPath, runnerHeartbeatAge, runnerRendezvousPath, writeRendezvous, RUNNER_RENDEZVOUS_SCHEMA, type RunSessionFactory, type RunnerState } from '../src/runner.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
+// The fake CLI is a #! script: spawn it through Node, which Windows needs (task-1712); real pipes, argv and exit.
+useNodeScripts({ [FAKE]: FAKE });
 const T0 = 1_792_000_000_000;
 const MIN = 60_000;
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), `at1505-${p}-`));
@@ -61,13 +64,13 @@ test('1505 ledger regression: a data field named kind/seq/t/prev/hash never over
   assert.ok(verifyChain(l.events).ok);
 });
 
-test('1505 ledger: runs/<runId>.jsonl is appended as it happens (0600); verifyChain catches an edit, a removal and a reorder', () => {
+test('1505 ledger: runs/<runId>.jsonl is appended as it happens (0600); verifyChain catches an edit, a removal and a reorder', async (t) => {
   const home = tmp('ledger');
   const runId = newRunId('moonbag', T0, 'beef');
   assert.match(runId, /^\d{8}T\d{6}Z-moonbag-beef$/);
   const { ledger, files } = fileLedger(home, runId);
   for (let i = 0; i < 5; i++) ledger.add(T0 + i, 'tick', { i, text: undefined });
-  assert.equal(statSync(files.ledger).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(files.ledger).mode & 0o777, 0o600); });
   const ev = readLedgerFile(files.ledger);
   assert.equal(ev.length, 5);
   assert.deepEqual(verifyChain(ev), { ok: true, events: 5, head: ledger.head() });
@@ -215,7 +218,7 @@ test('1505 session cleanup: a fake session whose test fails is still closed (the
   assert.equal(alive(pid!), false, 'the cleanup ended the fake CLI');
 });
 
-test('1505 accounts: the oauth token reaches claude on fd 3 and appears in no argv, env, ledger, rendezvous or run file', async () => {
+test('1505 accounts: the oauth token reaches claude on fd 3 and appears in no argv, env, ledger, rendezvous or run file', async (t) => {
   const token = `sk-test-${createHash('sha256').update(String(Date.now())).digest('hex').slice(0, 24)}`;
   const home = tmp('tok');
   const out = join(home, 'fake-report.json');
@@ -229,14 +232,19 @@ test('1505 accounts: the oauth token reaches claude on fd 3 and appears in no ar
   const { ledger, files } = fileLedger(home, newRunId('swing', T0, '0001'));
   const gate = gateWith(s, {});
   const sessions = claudeSessionFactory({
-    bin: FAKE, account: () => prepareAccount({ kind: 'oauth-token', source: { command: [helper] } }, fakeEnv({ FAKE_OUT: out, FAKE_REPLIES: JSON.stringify(['DECISION {"action":"skip","reason":"no"}']) })),
+    // The helper runs through Node (a #! script does not execute on Windows); the source is still an argv, no shell.
+    bin: FAKE, account: () => prepareAccount({ kind: 'oauth-token', source: { command: [process.execPath, helper] } }, fakeEnv({ FAKE_OUT: out, FAKE_REPLIES: JSON.stringify(['DECISION {"action":"skip","reason":"no"}']) })),
     model: 'haiku', systemPrompt: (x) => runnerSystemPrompt(x, { live: false }), gate, log: (kind, data) => ledger.add(T0, kind, data),
   });
   let last: RunnerState | null = null;
   await runAutotrade({ strategy: s, tape: tape([tick(), tick({ t: T0 + MIN })]), sessions, gate, ledger, verbose: true, onState: (st) => { last = st; } });
   writeRendezvous(home, { schema: RUNNER_RENDEZVOUS_SCHEMA, pid: process.pid, mode: 'paper', runId: files.runId, startedAt: T0, heartbeatAt: Date.now(), ledgerPath: files.ledger, ...(({ t: _t, ...b }: RunnerState) => b)((last as RunnerState | null)!) });
   const rep = JSON.parse(readFileSync(out, 'utf8')) as { argv: string[]; envNames: string[]; fd3Sha256: string };
-  assert.equal(rep.fd3Sha256, createHash('sha256').update(token).digest('hex'), 'claude received exactly the token on fd 3');
+  // The leak checks below run everywhere; only the fd-3 receipt is POSIX (an inherited descriptor 3 is not a Windows
+  // handle the child can read; task-1712).
+  await t.test('the child reads exactly the token on fd 3', { skip: process.platform === 'win32' ? 'POSIX-only: the token handoff is an inherited file descriptor 3' : false }, () => {
+    assert.equal(rep.fd3Sha256, createHash('sha256').update(token).digest('hex'), 'claude received exactly the token on fd 3');
+  });
   assert.ok(rep.envNames.includes('CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'));
   assert.ok(!rep.envNames.includes('CLAUDE_CODE_OAUTH_TOKEN'));
   assert.ok(!rep.argv.join(' ').includes(token), 'not in argv');
@@ -250,6 +258,61 @@ test('1505 accounts: the oauth token reaches claude on fd 3 and appears in no ar
   assert.notEqual(s.agent.model, 'haiku');
   const starts = ledger.events.filter((e) => e.kind === 'session_start');
   assert.ok(starts.length > 0 && starts.every((e) => e.model === 'haiku'), JSON.stringify(starts.map((e) => e.model)));
+});
+
+test('1505 guard regression (task-1712): a session that failed its account proof blocks new sessions even when its candidate TTL closes it before its reply is read', async () => {
+  const s = loadPreset('swing');
+  const ledger = new Ledger();
+  const opened: string[] = [];
+  // The process failed its init proof at once (endReason set), but the runner has not read its (null) reply yet: the
+  // send settles when the session is closed (or after 5 s, so a regression fails instead of hanging the run; the TTL
+  // close comes after a few 1 ms ticks). The gate is NOT blocked by the session layer here, so this pins the
+  // runner's own path: before the fix only onReply tripped the guard, and a candidate that hit its TTL first left the
+  // gate open for one more session on the wrong account per candidate (hosted CI node 22, a 2 !== 1).
+  const dead: RunSessionFactory = (id): AgentSession & { endReason(): string | null } => {
+    opened.push(id);
+    let settle: ((v: null) => void) | null = null;
+    return {
+      id, kind: 'claude', costUsd: () => 0, endReason: () => 'account-mismatch',
+      send: () => new Promise((r) => { settle = r; setTimeout(() => r(null), 5000).unref(); }),
+      async close(reason) { settle?.(null); return { turns: 0, costUsd: 0, reason }; },
+    };
+  };
+  const A = 'A'.repeat(44), B = 'B'.repeat(44);
+  const ticks = [
+    tick({ mint: A }),
+    // A stops matching (liquidity gone) for longer than candidateTtlSec (300 s): its candidate closes on the TTL.
+    ...Array.from({ length: 6 }, (_, i) => tick({ mint: A, t: T0 + (i + 1) * MIN, liq: 1000 })),
+    tick({ mint: B, t: T0 + 7 * MIN }),
+    tick({ mint: B, t: T0 + 8 * MIN }),
+  ];
+  const gate = gateWith(s, {});
+  await runAutotrade({ strategy: s, tape: tape(ticks), sessions: dead, gate, ledger, pacing: { mode: 'paced', msPerTick: 1 } });
+  assert.deepEqual(opened, ['s1'], 'no session after the failed proof');
+  assert.equal(gate.blocked, 'account-mismatch');
+  const guards = ledger.events.filter((e) => e.kind === 'guard');
+  assert.equal(guards.length, 1);
+  assert.equal(guards[0].sessionId, 's1');
+  const ends = ledger.events.filter((e) => e.kind === 'session_end');
+  assert.deepEqual(ends.map((e) => e.reason), ['account-mismatch'], 'the session ended for the reason it died, not the TTL that closed it');
+});
+
+test('1505 guard (task-1712): the claude session layer closes the gate at the failed init proof itself', async () => {
+  const s = loadPreset('swing');
+  const gate = gateWith(s, {});
+  const logged: string[] = [];
+  const factory = claudeSessionFactory({
+    bin: FAKE, account: () => prepareAccount({ kind: 'native' }, fakeEnv({ FAKE_API_KEY_SOURCE: 'ANTHROPIC_API_KEY' })),
+    systemPrompt: () => 'SYS', gate, log: (kind) => logged.push(kind),
+  });
+  const sess = factory('s1', s, { kind: 'candidate', mint: 'M' });
+  assert.equal(await sess.send('DOSSIER'), null, 'no answer from a session on the wrong account');
+  assert.equal(sess.endReason(), 'account-mismatch');
+  assert.equal(gate.blocked, 'account-mismatch', 'blocked by the proof, before any runner reads the reply');
+  assert.equal(gate.blockedBy, 's1');
+  assert.deepEqual(gate.canOpen('candidate', 0), { ok: false, reason: 'account-mismatch' });
+  await sess.close('test');
+  assert.ok(logged.includes('session_init'));
 });
 
 // ───────────────────────────── day caps + allowance ─────────────────────────────
