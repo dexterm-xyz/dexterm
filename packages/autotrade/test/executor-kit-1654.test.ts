@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildTestSignal, buildTradeSignal, signBody, signalLine, type TradeFireSignal } from '../src/signal.ts';
 import { CommandChannel, JsonlChannel, WebhookChannel } from '../src/signal-channels.ts';
 import { readReceipts, validateReceipt } from '../src/receipts.ts';
@@ -149,7 +149,8 @@ test('the kit holds no wallet code: no key, no signing, no chain call, no networ
   }
   assert.match(readFileSync(join(KIT, 'kit.mjs'), 'utf8'), /DRY RUN, always/);
   // The kit's HMAC check matches dexterm's signer byte for byte.
-  return import(join(KIT, 'kit.mjs')).then((k: { verify: (s: string, h: string, b: string, n: number) => { ok: boolean } }) => {
+  // import() takes a URL (a `D:\…` path is read as the scheme `d:` on Windows; task-1712)
+  return import(pathToFileURL(join(KIT, 'kit.mjs')).href).then((k: { verify: (s: string, h: string, b: string, n: number) => { ok: boolean } }) => {
     const now = Date.now();
     assert.equal(k.verify(SECRET, signBody(SECRET, 'body', now), 'body', now).ok, true);
     assert.equal(k.verify(SECRET, signBody(SECRET, 'body', now), 'b0dy', now).ok, false);

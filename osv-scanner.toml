@@ -18,3 +18,9 @@ reason = "GitHub alias of RUSTSEC-2024-0429 (see above)."
 id = "RUSTSEC-2024-0370"
 ignoreUntil = 2027-01-11
 reason = "proc-macro-error 1.0.4 is unmaintained (no fix version); build-time proc macro of the optional user-built shell, not shipped."
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+ignoreUntil = 2027-01-11
+reason = "block-buffer 0.10.4 (published 2026-08-19): a caught panic inside a compress callback can corrupt the EagerBuffer cursor. Pulled in through the RustCrypto digest chain of the optional user-built wry shell, not shipped; the fix is block-buffer 0.12.1, which needs a digest/sha2 major upgrade through tao/wry. Re-check at expiry."
+

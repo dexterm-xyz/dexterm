@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { autotradeCommand, autotradeHelp } from '../src/autotrade-cmd.ts';
 import { signalCmd, type SignalDeps } from '../src/autotrade-cmd/signal.ts';
 import { Outbox, buildTradeSignal, loadArmings, loadConnectors, readRealJournal, SignalReceiver, type TradeFireSignal } from '@dexterm/autotrade';
+import { posixPermissions } from '../../../scripts/test-support.ts';
 
 const TAPE = fileURLToPath(new URL('../../autotrade/test/fixtures/autotrade-1498-tape.json', import.meta.url));
 const MINT = 'So1aNaMint11111111111111111111111111111111';
@@ -48,7 +49,7 @@ test('the dispatcher has the signal and receipt rows; help says paper by default
   assert.match(h, /PAPER by default/);
 });
 
-test('channels live in connectors.json next to the Telegram setup; bad URLs and shell strings are refused', async () => {
+test('channels live in connectors.json next to the Telegram setup; bad URLs and shell strings are refused', async (t) => {
   const x = io();
   writeFileSync(join(x.home, 'connectors.json'), JSON.stringify({ schema: 'dexterm-connectors/1', telegram: { enabled: true, approvals: 'on', allow: [{ senderId: '1', chatId: '1', tiers: ['notify'] }] } }));
   let r = await run(x, 'autotrade', 'signal', 'channels', '--webhook', 'http://10.0.0.5/fire');
@@ -74,9 +75,12 @@ test('channels live in connectors.json next to the Telegram setup; bad URLs and 
   assert.equal(r.code, 0, r.err);
   const secret = readFileSync(f, 'utf8').trim();
   assert.ok(secret.length >= 40);
-  assert.equal(statSync(f).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(f).mode & 0o777, 0o600); });
   assert.ok(!r.out.includes(secret) && !r.err.includes(secret), 'the secret is never printed');
   assert.equal(readFileSync(join(x.home, 'secrets', 'signal-webhook.secret'), 'utf8').trim(), secret);
+  // task-1712: absolute means the host's absolute path (C:\… on Windows), never a relative one
+  r = await run(x, 'autotrade', 'signal', 'secret', 'generate', '--out', 'exec.secret');
+  assert.equal(r.code, 2, 'a relative --out is refused');
 });
 
 test('arming needs a real terminal and the exact typed phrase; presets and pipes never arm; the panel shows the evidence', async () => {

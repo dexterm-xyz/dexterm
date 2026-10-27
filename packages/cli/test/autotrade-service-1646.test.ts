@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KillSwitch } from '@dexterm/data';
 import {
@@ -177,7 +177,8 @@ test('1646 install: dry-run writes nothing; install writes exactly its files and
   assert.deepEqual(ran.map((c) => c.slice(0, 3).join(' ')), ['systemctl --user daemon-reload', 'systemctl --user enable']);
   const manifest = JSON.parse(readFileSync(installManifestPath(x.home), 'utf8')) as { files: { path: string }[]; loaded: boolean };
   assert.equal(manifest.loaded, true);
-  assert.deepEqual(manifest.files.map((f) => f.path).sort(), files.map((f) => join(unitDir, f)).sort());
+  // The plan joins systemd paths the Linux way whatever the host (task-1712); on a Windows CI host userHome is `C:\…`.
+  assert.deepEqual(manifest.files.map((f) => f.path).sort(), files.map((f) => posix.join(user, '.config', 'systemd', 'user', f)).sort());
   // A file the user changed is kept (exit 1) unless --force.
   writeFileSync(join(unitDir, files[1]), '# edited\n');
   assert.equal(await serviceCmd(['uninstall'], x.io, deps), 1);

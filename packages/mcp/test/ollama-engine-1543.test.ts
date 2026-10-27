@@ -293,7 +293,8 @@ test('1543 isolation: the engine never imports the signer, caps, keys or the kil
   const writers: string[] = [];
   const walk = (d: string): void => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules' && e.name !== 'test') walk(p); } else if (p.endsWith('.ts') && /saveAiConfig\(/.test(fs.readFileSync(p, 'utf8'))) writers.push(path.relative(APP, p)); } };
   walk(path.join(APP, 'packages'));
-  assert.deepEqual(writers.sort(), ['packages/cli/src/ai-cmd.ts', 'packages/mcp/src/engine/config.ts']);
+  // compared as repo paths with `/` on every host (path.relative gives `\` on Windows; task-1712)
+  assert.deepEqual(writers.map((w) => w.split(path.sep).join('/')).sort(), ['packages/cli/src/ai-cmd.ts', 'packages/mcp/src/engine/config.ts']);
   for (const t of TOOLS) assert.ok(!/(^|_)(ai|engine|restrictions?|profile|caps?)(_|$)/.test(t.name), t.name);
   assert.ok(!/ai\.json|saveAiConfig|loadAiConfig/.test(fs.readFileSync(path.join(APP, 'packages', 'mcp', 'src', 'server.ts'), 'utf8')), 'the MCP server never reads or writes the AI profile');
 });

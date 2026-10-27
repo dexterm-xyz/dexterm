@@ -72,6 +72,8 @@ export interface CliSessionOpts extends ClaudeArgsOpts {
   onLate?: (text: string) => void;
   /** Every stream line (the smoke evidence); never includes the account secret, which only goes to fd 3. */
   onRaw?: (line: string) => void;
+  /** The init proof failed (account-mismatch, not-tool-less): called before the process is killed. */
+  onProofFailed?: (why: string) => void;
   now?: () => number;
 }
 
@@ -162,8 +164,8 @@ class ClaudeCliSession implements CliSession {
           tools: iso.tools, mcpServers: iso.mcpServers, plugins: iso.plugins, agents: iso.agents, skills: iso.skills, slashCommands: iso.slashCommands,
         };
         this.o.onInit?.(init);
-        if (!this.o.account.expectApiKeySource.includes(init.apiKeySource)) { this.kill('account-mismatch'); return; }
-        if (init.tools !== 0 || init.mcpServers !== 0) { this.kill('not-tool-less'); return; }
+        const failed = !this.o.account.expectApiKeySource.includes(init.apiKeySource) ? 'account-mismatch' : init.tools !== 0 || init.mcpServers !== 0 ? 'not-tool-less' : null;
+        if (failed) { this.o.onProofFailed?.(failed); this.kill(failed); return; }
         continue;
       }
       if (ev.type === 'rate_limit_event') {
@@ -245,6 +247,8 @@ export class SessionGate {
   private pausedUntil = 0;
   /** Set when a session proved the account or the tool list wrong: no new session until the runner restarts. */
   blocked: string | null = null;
+  /** The session whose own failure set `blocked` (null when the block came from elsewhere, e.g. a sibling strategy). */
+  blockedBy: string | null = null;
 
   constructor(caps: EffectiveCaps, guard: RunnerConfig['allowanceGuard'], opts: { clock?: () => number } = {}) {
     this.caps = caps; this.guard = guard; this.clock = opts.clock ?? Date.now;
@@ -316,7 +320,11 @@ export class SessionGate {
   paused(): boolean { return this.clock() < this.pausedUntil; }
 
   /** A misconfigured account (or a CLI that reports tools) fails the same way every time: stop spawning for this run. */
-  block(reason: string): void { this.blocked ??= reason; }
+  block(reason: string, sessionId?: string): void {
+    if (this.blocked !== null) return;
+    this.blocked = reason;
+    this.blockedBy = sessionId ?? null;
+  }
 }
 
 // ───────────────────────────── the dossier (v1: @dexterm/mcp buildDossier) ─────────────────────────────
@@ -472,7 +480,7 @@ export function claudeSessionFactory(f: ClaudeFactoryOpts): (id: string, s: Reso
     const model = f.model ?? s.agent.model;
     const start = (): Promise<CliSession | null> => (starting ??= (async () => {
       let account: SpawnAccount;
-      try { account = await f.account(); } catch (e) { failed = 'account-unavailable'; f.log('session_account_error', { sessionId: id, error: (e as Error).message }); return null; }
+      try { account = await f.account(); } catch (e) { failed = 'account-unavailable'; f.log('session_account_error', { sessionId: id, error: (e as Error).message }); f.gate.block(failed, id); return null; }
       if (closed) return null;
       f.log('session_account', { sessionId: id, sessionKind: ctx.kind, account: account.label, expectApiKeySource: account.expectApiKeySource });
       inner = spawnClaudeSession(id, {
@@ -482,6 +490,9 @@ export function claudeSessionFactory(f: ClaudeFactoryOpts): (id: string, s: Reso
         onRateLimit: (r) => { f.gate.rateLimit(r); f.log('allowance', { sessionId: id, status: r.status, fiveHour: r.fiveHour, sevenDay: r.sevenDay, resetsAt: r.resetsAt }); },
         onLate: (text) => f.log('late_reply_ignored', { sessionId: id, why: 'arrived after decideWithinSec', text: text.slice(0, 400) }),
         onRaw: f.onRaw ? (line) => f.onRaw!(id, line) : undefined,
+        // The gate closes at the failed proof itself, not when the runner later reads this session's (null) reply: a
+        // candidate that closes first (its TTL) must not leave the gate open for more sessions on the wrong account.
+        onProofFailed: (why) => f.gate.block(why, id),
       });
       return inner;
     })());

@@ -35,10 +35,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          json="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName,publishedAt,url)"
+          # `gh release list --json` has no `url` field (the runner's gh refuses it: "Unknown JSON field"); the release's
+          # url comes from `gh release view`, which has it.
+          json="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName,publishedAt)"
           tag="$(echo "$json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8'))[0]?.tagName || ''")"
           [ -n "$tag" ] || { echo "no published release yet; nothing to re-scan"; echo "tag=" >> "$GITHUB_OUTPUT"; exit 0; }
-          { echo "tag=$tag"; echo "published=$(echo "$json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8'))[0].publishedAt")"; echo "url=$(echo "$json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8'))[0].url")"; } >> "$GITHUB_OUTPUT"
+          url="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          [ -n "$url" ] || { echo "::error::no url for release $tag"; exit 1; }
+          { echo "tag=$tag"; echo "published=$(echo "$json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8'))[0].publishedAt")"; echo "url=$url"; } >> "$GITHUB_OUTPUT"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir release
           ls -l release
 

@@ -43,7 +43,7 @@ test('1532 yolo preset: valid, hashed, HIGH RISK; the four entry gates; cost bac
   assert.equal(s.risk.maxConcurrent, 1);
   assert.equal(s.risk.perCoin.maxEntries, 1);
   // the store lists it as a HIGH RISK preset; the schema refuses a larp gate with a bad shape
-  const home = mkdtempSync('/tmp/dxy1532s-');
+  const home = mkdtempSync(join(tmpdir(), 'dxy1532s-'));
   try {
     const row = new StrategyStore({ DEXTERM_HOME: home } as NodeJS.ProcessEnv).list().find((e) => e.id === 'yolo');
     assert.equal(row?.highRisk, true);

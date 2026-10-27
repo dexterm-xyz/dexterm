@@ -22,7 +22,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { dextermHome } from '@dexterm/custom';
 import {
   DEFAULT_REAL_CAPS, EXECUTOR_CHANNELS, Outbox, buildTestSignal, capsProblem, capsRaised, channelsFromConfig, codeHash, confirmPhrase, deadManSweep, disarm, driftReport, enabledChannels,
@@ -270,7 +270,7 @@ function secretCmd(argv: string[], io: AutotradeIo, home: string): number | Prom
   };
   if (argv[0] === 'generate') {
     const { opts } = parseArgs(argv.slice(1));
-    if (typeof opts.out !== 'string' || !opts.out.startsWith('/')) { err(io, 'secret generate --out /absolute/file (0600; your executor reads it there; the secret is never printed)'); return 2; }
+    if (typeof opts.out !== 'string' || !isAbsolute(opts.out)) { err(io, 'secret generate --out /absolute/file (0600; your executor reads it there; the secret is never printed)'); return 2; }
     const v = randomBytes(32).toString('base64url');
     try { writeFileSync(opts.out, `${v}\n`, { mode: 0o600, flag: 'wx' }); } catch (e) { err(io, `cannot create ${opts.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message} (it must not exist yet)`); return 1; }
     save(v);

@@ -11,6 +11,7 @@ import { fmtUsdPrice, PRICE_BASIS_ENV } from '@dexterm/data/basis';
 import { analystBasis, analystContextBlock, analystSystemPrompt, buildArgv, selectedSnapshotLines, writeAnalystSystemPrompt } from '../src/analyst/backend.ts';
 import { configPriceMode, parseDisplayCommand, priceModeNotice, setPriceMode, takeBasisFlags } from '../src/display.ts';
 import { makeFixtureState } from '../src/state.ts';
+import { posixPermissions } from '../../../scripts/test-support.ts';
 
 const DETAIL = {
   source: 'live feed', mint: 'GiGa111111111111111111111111111111111pump', symbol: 'GIGA', priceUsd: 0.0000697, chg: { m5: 1, h1: 2, h6: 3, h24: 4 },
@@ -18,7 +19,7 @@ const DETAIL = {
   interval: '1h', candles: [[0, 0.00005, 0.00008, 0.00004, 0.00006, 1], [3_600_000, 0.00006, 0.00009, 0.00005, 0.0000697, 1]], spark: null, asOf: 0,
 };
 
-test('the analyst system prompt carries the basis paragraph for the basis in effect (mcap default, price when set)', () => {
+test('the analyst system prompt carries the basis paragraph for the basis in effect (mcap default, price when set)', async (t) => {
   const m = analystSystemPrompt('mcap');
   assert.match(m, /You are the dexterm analyst/);
   assert.match(m, /## Price basis\nPRICE BASIS: MARKET CAP/);
@@ -30,7 +31,7 @@ test('the analyst system prompt carries the basis paragraph for the basis in eff
   // the per-turn copy is private (0600) and is what the CLI flag points at
   const tmp = mkdtempSync(join(tmpdir(), 'dexterm-1537-'));
   const f = writeAnalystSystemPrompt(tmp, 'price');
-  assert.equal(statSync(f).mode & 0o777, 0o600);
+  await posixPermissions(t, () => { assert.equal(statSync(f).mode & 0o777, 0o600); });
   assert.equal(readFileSync(f, 'utf8'), p);
   const argv = buildArgv({ prompt: 'hi', screenState: {} }, join(tmp, 'mcp.json'), undefined, f);
   assert.equal(argv[argv.indexOf('--append-system-prompt-file') + 1], f);
