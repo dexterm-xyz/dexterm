@@ -61,7 +61,7 @@ for (const f of jsFiles) {
   let src = fs.readFileSync(f, 'utf8');
   const before = src;
   // bare workspace specifiers in static import/export ... from '...' and import('...')
-  src = src.replace(/(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(@dexterm\/[a-z]+(?:\/[a-z]+)?)\2/g, (m, lead, q, spec) => {
+  src = src.replace(/(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(@dexterm\/[a-z]+(?:\/[a-z-]+)?)\2/g, (m, lead, q, spec) => {
     const target = entries.get(spec);
     if (!target) throw new Error(`build-dist: no export for ${spec} (in ${path.relative(DIST, f)})`);
     let rel = path.relative(path.dirname(f), target).split(path.sep).join('/');
