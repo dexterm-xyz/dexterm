@@ -29,7 +29,7 @@ date: 2026-10-16
 
 - **LARP check, links only.** The links-based baseline is a weak signal: MCC 0.039 before tuning, 0.054 after. Its tuned `LARP` grade caught 4 of 14 bad coins, too few to rate. `EARLY_BUT_REAL` coins still went bad 10.3 % of the time, and coins with no website 29.2 %. The skill now treats the baseline as a weak prior and never calls `LARP` from links alone.
 - **Rug check.** The verdict rules improved from MCC 0.043 to 0.159. Liquidity under $5k is the one strong signal (`SPECULATIVE` coins went bad 54.8 % of the time, `WATCH` 14.4 %). Dev percentage, organic score and top-10 share did not predict a worse 72 h outcome and now only lower confidence.
-- **LARP score, link-shape part** (`dexterm backtest --subject larp-score`, task-1471). Points fitted on the train split only. On the 328 held-out coins its AUROC is 0.69 (0.73 on train): a modest ranking signal. 27 of 218 low-band coins went bad (12.4 %), 34 of 110 medium-band coins (30.9 %), against 18.6 % overall; no coin reaches the high band from link shape alone. The page, domain, GitHub and X points are not measured: that evidence was not recorded at the time, and looking it up now would leak the outcome (dead coins' sites and accounts disappear).
+- **LARP score, link-shape part** (`dexterm backtest --subject larp-score`). Points fitted on the train split only. On the 328 held-out coins its AUROC is 0.69 (0.73 on train): a modest ranking signal. 27 of 218 low-band coins went bad (12.4 %), 34 of 110 medium-band coins (30.9 %), against 18.6 % overall; no coin reaches the high band from link shape alone. The page, domain, GitHub and X points are not measured: that evidence was not recorded at the time, and looking it up now would leak the outcome (dead coins' sites and accounts disappear).
 - **Not measured.** The model stage (fetched pages, RDAP, GitHub) cannot be replayed: a past page cannot be fetched as it was. It is measured going forward with `dexterm backtest --subject larp`, below.
 
 The method, every number and the limits are in the repository at `packages/packs/eval/README.md`. A grade is a risk flag, not a certificate.
@@ -38,7 +38,7 @@ Measured 2026-10-12 with `dexterm backtest --subject larp` over this project's l
 
 | history | outcome labels at 1 h (observed) | LARP verdicts recorded | matched |
 |---|---|---|---|
-| research recorder (task-1287 prototype DB) | 149 (137 flat · 9 fade · 2 runner · 1 dead; 29 unobserved) | 0 | 0 |
+| research recorder (prototype DB) | 149 (137 flat · 9 fade · 2 runner · 1 dead; 29 unobserved) | 0 | 0 |
 | the app's recorder on the development machine | 0 | 0 | 0 |
 | the same, re-measured later that day after the recorder fix | 401 (361 flat · 18 dead · 13 runner · 5 fade · 4 rug; 1,206 unobserved) | 0 | 0 |
 

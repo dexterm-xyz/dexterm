@@ -8,8 +8,10 @@
 // terminal bell) and PROPOSALS. Acting on a ticket proposal opens the PAPER ticket in its editing phase (the user
 // sizes and confirms there, signer caps apply); acting on an ask proposal sends a question to the analyst. Nothing
 // in this module can arm, sign, confirm, open a live ticket or touch a mandate — there is no code path for it.
+import { classifierLiveTick } from './classifier-live.ts';
 import type { AppState } from './state.ts';
 import { devBookOf } from './live/dev-history.ts';
+import { narrativeRuleFields } from './narratives.ts';
 import type { CustomUi } from './custom.ts';
 import type { ScreenerRow } from './screener/rows.ts';
 import {
@@ -122,6 +124,12 @@ export function larpGrade(verdict: string | null | undefined): number | null {
  * `mintable > 0` fires on the real streaming values, not the on-open snapshot. A token opened by `--mint` that is
  * not in the screener feed is appended as its own row so rules still see it.
  */
+/** task-1822: the classifier's drain estimate for the `rugp` field (null when unscored or the scoring failed). */
+function rugpOf(state: AppState, mint: string): number | null {
+  const p = state.classifierByMint?.get(mint)?.p;
+  return typeof p === 'number' && Number.isFinite(p) ? p : null;
+}
+
 export function ruleRowsOf(state: AppState): RuleRow[] {
   const out: RuleRow[] = [];
   const seen = new Set<string>();
@@ -135,10 +143,12 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
   // 0.1.5 dev history: the creator's recorded rugs as the `devrugs` field (local recorder only; null = unknown).
   const book = devBookOf(state);
   const devRugsOf = (mint: string): number | null => book ? book.rugsFor(mint) : null;
+  // task-1818: narrative_rank / narrative_score / narrative:<state> from the ALREADY-built narratives tracker (never builds one)
+  const narr = (mint: string) => narrativeRuleFields(state, mint);
   for (const r of state.screener.rows as ScreenerRow[]) {
     if (!r.mint || r.skeleton || seen.has(r.mint)) continue;
     seen.add(r.mint);
-    const row = Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict), devRugs: devRugsOf(r.mint) }) as RuleRow;
+    const row = Object.assign(Object.create(null), r, { cluster: clusterOf(r.mint), larp: larpGrade(state.larpByMint?.get(r.mint)?.verdict), devRugs: devRugsOf(r.mint), rugP: rugpOf(state, r.mint) }, narr(r.mint)) as RuleRow;
     if (r.mint === openMint) overlaySignalFields(row, state, r.mint);
     out.push(row);
   }
@@ -148,9 +158,9 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
     const row = Object.assign(Object.create(null), {
       mint: v.mint, symbol: v.symbol, price: v.price, mcap: v.mcap, fdv: v.fdv, liq: v.liq, vol24: v.vol24,
       holders: v.holders, org: v.org, top10: v.top10, dev: v.dev, lpLocked: v.lpLocked,
-      cluster: clusterOf(v.mint), larp: larpGrade(state.larpByMint?.get(v.mint)?.verdict), devRugs: devRugsOf(v.mint),
+      cluster: clusterOf(v.mint), larp: larpGrade(state.larpByMint?.get(v.mint)?.verdict), devRugs: devRugsOf(v.mint), rugP: rugpOf(state, v.mint),
       ageMin: v.ageMin, chg: v.chg, launchpad: v.launchpad, flags: v.flags, verified: v.verified, sus: v.sus,
-    }) as RuleRow;
+    }, narr(v.mint)) as RuleRow;
     overlaySignalFields(row, state, v.mint);
     out.push(row);
   }
@@ -168,7 +178,7 @@ export function ruleRowsOf(state: AppState): RuleRow[] {
       out.push(Object.assign(Object.create(null), {
         mint: p.mint, symbol: p.symbol, mcap: p.mcap, liq: p.liq, holders: p.holders, launchpad: p.launchpad,
         ageMin: p.createdAt ? Math.max(0, (now - p.createdAt) / 60_000) : null, bonding: p.bonding, devRugs,
-      }) as RuleRow);
+      }, narr(p.mint)) as RuleRow);
     }
   }
   return out;
@@ -204,6 +214,7 @@ export function rulesTick(state: AppState, now: number): RuleTickSummary | null 
   ui.lastTickAt = now;
   const rows = ruleRowsOf(state);
   if (!rows.length) return null;
+  classifierLiveTick(state, rows, now); // task-1822: fills classifierByMint for `rugp` rules (a no-op without one)
   ui.engine.observe(rows, now);
   const watch = state.live?.watch.store ?? null;
   const positions = state.live?.positions ?? null;

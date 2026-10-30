@@ -28,6 +28,6 @@ sources:
 date: 2026-10-16
 ---
 
-Stop here until you are comfortable reading the app. Trading in dexterm is PAPER simulation, which uses pretend funds, and the keypress gate (a required physical key press) is on by default. dexterm signs nothing and sends no transaction; live trading happens in a Telegram trading bot of your choice, outside dexterm. No analyst, voice, or connected program can trade.
+Stop here until you are comfortable reading the app. Trading in dexterm is PAPER simulation by default, which uses pretend funds, and the keypress gate (a required physical key press) is on by default. dexterm signs nothing and sends no transaction. Real mode is experimental; signals to your own executor; dexterm never holds a key; not financial advice. No analyst, voice, or connected program can trade or turn real mode on.
 
-Never enter a seed phrase, private key, password, API key, or authentication token. Read the paper trading guide (https://dexterm.xyz/docs/paper-trading) and live trading (https://dexterm.xyz/docs/live-trading) before considering anything beyond the read-only walkthrough.
+Never enter a seed phrase, private key, password, API key, or authentication token. Read the paper trading guide (https://dexterm.xyz/docs/paper-trading), real mode (https://dexterm.xyz/docs/real-mode) and live trading (https://dexterm.xyz/docs/live-trading) before considering anything beyond the read-only walkthrough.

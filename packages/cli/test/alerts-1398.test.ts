@@ -97,6 +97,7 @@ test('larp grade maps the verdicts and the engine exposes it as a field with .de
   assert.equal(larpGrade('nonsense'), null);
   assert.equal(larpGrade(null), null);
   assert.ok(FIELD_NAMES.includes('larp'));
+  assert.ok(FIELD_NAMES.includes('narrative_rank') && FIELD_NAMES.includes('narrative_score'), 'task-1818: the narrative fields are rule fields');
   assert.doesNotThrow(() => parseExpr('larp.delta < 0'));
   // a plain `larp <= 0` matches a LARP-graded row
   const e = new RulesEngine({ rules: [ruleToJson('when larp <= 0 then alert(warn, "larp") scope screener name "l"')] });

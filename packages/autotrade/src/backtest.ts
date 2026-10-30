@@ -19,7 +19,8 @@
 
 import { SKILL_MIN_N, wilson } from '@dexterm/packs';
 import { EntryRules } from './engine.ts';
-import { runAutotrade, type RunResult } from './runner.ts';
+import { runAutotrade, type RunResult, type VetFn } from './runner.ts';
+import { rugproofTapeVet } from './rugproof.ts';
 import { validateStrategy, round, type ResolvedStrategy, type Strategy } from './strategy.ts';
 import type { MarketTick, Tape } from './replay.ts';
 import type { SessionFactory } from './session.ts';
@@ -75,9 +76,12 @@ export interface BacktestReport {
   limits: string[];
 }
 
-export async function backtest(strategy: ResolvedStrategy, tape: Tape, sessions: SessionFactory | null = null): Promise<{ report: BacktestReport; run: RunResult }> {
+export async function backtest(strategy: ResolvedStrategy, tape: Tape, sessions: SessionFactory | null = null, opts: { vet?: VetFn | null } = {}): Promise<{ report: BacktestReport; run: RunResult }> {
+  // task-1748: a rug-proof strategy replays its tick gates + the pump.fun-mint proxy (the chain gates need live data).
+  const rp = strategy.entry.safety.rugproof;
+  const vet = opts.vet === null ? undefined : opts.vet ?? (rp ? rugproofTapeVet(rp) : undefined);
   // task-1645: a strategy in mode real backtests as its paper twin (a backtest never emits a trade-fire signal).
-  const run = await runAutotrade({ strategy: strategy.mode === 'real' ? { ...strategy, mode: 'paper' } : strategy, tape, sessions, pacing: { mode: 'lockstep' } });
+  const run = await runAutotrade({ strategy: strategy.mode === 'real' ? { ...strategy, mode: 'paper' } : strategy, tape, sessions, pacing: { mode: 'lockstep' }, ...(vet ? { vet } : {}) });
   return { report: report(strategy, tape, run), run };
 }
 

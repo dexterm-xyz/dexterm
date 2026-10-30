@@ -23,7 +23,7 @@ import { uptime } from 'node:os';
 import { join } from 'node:path';
 import { Ledger, writeJsonAtomic } from './ledger.ts';
 import type { ResolvedStrategy } from './strategy.ts';
-import { EntryRules, SimBook, clampEntry, simBuy, simSell, type ClosedTrade, type Exec, type Fill, type Position } from './engine.ts';
+import { EntryRules, SimBook, clampEntry, simBuy, simSell, type ClampResult, type ClosedTrade, type Exec, type Fill, type Position } from './engine.ts';
 import { monitorTick, type WakeEvent } from './monitor.ts';
 import type { MarketTick, Tape } from './replay.ts';
 import { buildDelta, renderDelta, renderEvent, urgent, view, type AgentSession, type Bounds, type Decision, type Reply, type TickView } from './session.ts';
@@ -43,7 +43,26 @@ export type RunSessionFactory = (id: string, strategy: ResolvedStrategy, ctx: { 
 /** The model-facing first message for a candidate. Default: @dexterm/mcp buildDossier over what the tape row has. */
 export type DossierFn = (k: MarketTick, history: MarketTick[], matched: string[], bounds: Bounds) => string | Promise<string>;
 /** task-1532: a check that needs the network (the LARP gate) before a coin becomes a candidate. Once per coin per run. */
-export type VetFn = (k: MarketTick) => Promise<{ ok: true; note?: string } | { ok: false; rule: string; detail: string }>;
+export type VetFn = (k: MarketTick, ctx?: VetContext) => Promise<VetResult>;
+/** task-1748: what a vet may read besides the tick: the coin's own tick history and the size the clamp would give it. */
+export interface VetContext { history: readonly MarketTick[]; sizeUsd: number; exitFloorUsd: number; maxTop10Pct: number | null; maxDevPct: number | null; unknownHolders?: 'reject' | 'allow' }
+/**
+ * ok: `recheck` = do not cache the pass (rug-proof gates run again at the next entry); `sizeCapPct` = a young or
+ * partly verified pool takes at most this % of the strategy's size; `pool` = what the drain guard polls.
+ * refused: `retryAfterMs` = a time gate (pool age, the second liquidity read) that may pass later; otherwise for good.
+ */
+export type VetResult =
+  | { ok: true; note?: string; recheck?: boolean; sizeCapPct?: number; pool?: { address: string; quoteVault: string | null } }
+  | { ok: false; rule: string; detail: string; retryAfterMs?: number };
+
+/** task-1748: an open position as the drain guard watches it. */
+export interface DrainWatchPosition { positionId: string; mint: string; entryLiqUsd: number | null; poolAddress: string | null; quoteVault: string | null; tokens: () => number }
+/** task-1748: polls open positions' pools outside the tick cadence (rugproof-probe.ts DrainPoller); the runner reads verdicts every step. */
+export interface DrainWatch {
+  watch(p: DrainWatchPosition): void;
+  unwatch(positionId: string): void;
+  verdict(positionId: string): { exit: true; reason: string; detail: string; liqUsd: number | null } | null;
+}
 
 /** What an order carries to the executor besides its size (task-1527: an approved entry's single-use proof). */
 export interface OrderContext { proofId?: string; proposalId?: string; orderHash?: string }
@@ -168,6 +187,8 @@ export interface RunOpts {
   dossier?: DossierFn;
   /** task-1532: the strategy's network gates (entry.safety.larp) on live data; absent in replays and backtests. */
   vet?: VetFn;
+  /** task-1748: the drain guard's pool poller (live runs with entry.safety.rugproof.drainGuard); absent on a tape. */
+  drain?: DrainWatch;
   executor?: Executor;
   /** The run's state after each step (the host writes the TUI rendezvous from it, throttled). */
   onState?: (s: RunnerState) => void;
@@ -220,6 +241,9 @@ interface Candidate {
   costSeen: number;
   turns: number;
   lastDecision: string | null;
+  /** task-1748: the rug-proof vet's size cap (% of the strategy's pick) and the pool the drain guard watches. */
+  sizeCapPct?: number;
+  pool?: { address: string; quoteVault: string | null };
 }
 
 interface PendingOrder { mint: string; fillAt: number; decidedPrice: number; usd: number; firstUsd: number; profile: string; sessionId: string | null; trigger: string[]; ladder: Position['ladder']; kind: 'open' | 'add'; positionId?: string; ctx?: OrderContext }
@@ -343,11 +367,65 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   const count = (rule: string) => { refusals[rule] = (refusals[rule] ?? 0) + 1; };
   const refuse = (rule: string, data: Record<string, unknown>) => { count(rule); ledger.add(now, 'refused', { rule, ...data }); };
   // A vet that throws or hangs is a check that could not run: the strategy's `unknown` decides (reject by default).
-  const vetCoin = async (k: MarketTick): Promise<Awaited<ReturnType<VetFn>>> => {
-    let r: Awaited<ReturnType<VetFn>>;
-    try { r = await o.vet!(k); } catch (e) { r = { ok: false, rule: 'vet-error', detail: (e as Error).message.slice(0, 160) }; }
-    if (r.ok) { vetted.add(k.mint); if (r.note) ledger.add(now, 'vetted', { mint: k.mint, note: r.note.slice(0, 200) }); }
+  const vetCoin = async (k: MarketTick, ctx: VetContext): Promise<VetResult> => {
+    let r: VetResult;
+    try { r = await o.vet!(k, ctx); } catch (e) { r = { ok: false, rule: 'vet-error', detail: (e as Error).message.slice(0, 160) }; }
+    if (r.ok) { if (!r.recheck) vetted.add(k.mint); if (r.note) ledger.add(now, 'vetted', { mint: k.mint, note: r.note.slice(0, 200), ...(r.sizeCapPct !== undefined ? { sizeCapPct: r.sizeCapPct } : {}) }); }
     return r;
+  };
+  const vetCtx = (k: MarketTick, sizeUsd: number, h: readonly MarketTick[]): VetContext => ({ history: h, sizeUsd, exitFloorUsd: x.minExitLiquidityUsd, maxTop10Pct: s.entry.safety.maxTop10Pct, maxDevPct: s.entry.safety.maxDevPct, unknownHolders: s.entry.safety.unknownHolders });
+  const drainGuard = s.entry.safety.rugproof?.drainGuard ?? null;
+  const stuckSince = new Map<string, number>();
+  /** The liquidity read each position was bought at (the drain guard's base). */
+  const entryLiq = new Map<string, number | null>();
+  // Paper only: a real-signal bag is still in the user's wallet, so it keeps its exit signals and carries to the next
+  // real run (validateStrategy also refuses the option outside mode paper).
+  const writeOffMin = !o.real && s.mode === 'paper' ? x.stuckWriteOffMin ?? null : null;
+  /** Positions the pool probe saw drained (no feed-priced retry while it still says so). */
+  const drained = new Set<string>();
+
+  /**
+   * task-1748, every step, for every open position:
+   *  - the drain guard: an exit verdict from the pool poller (SOL vault / Jupiter, <= 10 s apart), or this coin's own
+   *    feed liquidity down more than drainGuard.liqDropPct from the entry read, sells the whole position at once. The
+   *    sale is priced on the liquidity the guard saw (0 when the route is gone), not on a lagging feed row: an
+   *    emptied pool leaves nothing to sell into, the bag goes stuck and the write-off below closes it.
+   *  - execution.stuckWriteOffMin (paper): a bag stuck that long is closed at its realizable value (sells already
+   *    made kept, the rest 0), with a written_off event and a trade_closed line, so crash recovery never adopts it.
+   */
+  const sweepOpen = async (tick?: MarketTick) => {
+    for (const p of [...book.open.values()]) {
+      if (p.status !== 'open') continue;
+      const k = latest.get(p.mint) ?? p.lastTick;
+      if (drainGuard && !p.stuck) {
+        const v = o.drain?.verdict(p.id) ?? null;
+        const base = entryLiq.has(p.id) ? entryLiq.get(p.id) ?? null : (p.liqWindow[0]?.liq || null);
+        const own = tick && tick.mint === p.mint && base && tick.liq !== null && (1 - tick.liq / base) * 100 > drainGuard.liqDropPct
+          ? { reason: 'drain-liquidity', detail: `liquidity $${Math.round(base)} -> $${Math.round(tick.liq)} since entry (-${((1 - tick.liq / base) * 100).toFixed(1)}% > ${drainGuard.liqDropPct}%)`, liqUsd: tick.liq } : null;
+        const hit = v ?? own;
+        if (hit) {
+          ledger.add(now, 'drain_guard', { positionId: p.id, mint: p.mint, reason: hit.reason, detail: hit.detail, liqUsd: hit.liqUsd, source: v ? 'pool-probe' : 'feed' });
+          say(`DRAIN GUARD ${p.symbol}: ${hit.detail}`);
+          await sellPosition(p, { ...k, t: now, liq: hit.liqUsd ?? 0 }, p.tokens, hit.reason, hit.detail);
+          // The probe saw the pool emptied or the route gone: the lagging feed must not "sell" the bag at its old
+          // liquidity. While the probe still says so, the monitor's stuck retry is off for this position.
+          if (v && p.status === 'open' && p.stuck) drained.add(p.id);
+        }
+      }
+      const since = stuckSince.get(p.id);
+      if (writeOffMin !== null && p.status === 'open' && p.stuck && since !== undefined && now - since >= writeOffMin * 60e3) {
+        const ct = book.close(p, now, 'written-off', true);
+        o.drain?.unwatch(p.id);
+        stuckSince.delete(p.id);
+        ledger.add(now, 'written_off', { positionId: p.id, mint: p.mint, stuckMin: Math.round((now - since) / 6e3) / 10, realizedUsd: ct.proceedsUsd, costUsd: ct.costUsd, why: `stuck ${writeOffMin} min under the exit floor: closed at realizable value (the rest counts 0)` });
+        ledger.add(now, 'trade_closed', { trade: { ...ct, fills: undefined }, entryPrice: p.entryPrice, peakPrice: p.peakPrice, troughPrice: p.troughPrice ?? null, writtenOff: true });
+        say(`WRITTEN OFF ${p.symbol}: stuck ${writeOffMin} min, ${ct.pnlPct}% realized`);
+      }
+      if ((p.status as Position['status']) === 'closed') {
+        const c = byPosition.get(p.id);
+        if (c) { if (c.inflight) await c.inflight; await closeCandidate(c, 'position-closed'); }
+      }
+    }
   };
   const liveCandidateSessions = () => [...cands.values()].filter((q) => q.session && !q.positionId).length;
   const everyLive = () => [...new Set([...cands.values(), ...byPosition.values()])];
@@ -400,18 +478,30 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
     if (tokens <= 0) return;
     const f = await exec.sell(k, Math.min(tokens, p.tokens), reason);
     if ('refused' in f) {
-      if (!p.stuck) { p.stuck = true; ledger.add(now, 'stuck', { positionId: p.id, mint: p.mint, why: f.refused, reason }); say(`STUCK ${p.symbol}: cannot sell (${f.refused})`); }
+      if (!p.stuck) { p.stuck = true; stuckSince.set(p.id, now); ledger.add(now, 'stuck', { positionId: p.id, mint: p.mint, why: f.refused, reason }); say(`STUCK ${p.symbol}: cannot sell (${f.refused})`); }
       return;
     }
     p.stuck = false;
+    stuckSince.delete(p.id);
     ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, ...fillMcaps(fillView(f), k), detail, ...sigTag(f) });
     say(`SELL ${p.symbol} ${reason}: $${f.usd.toFixed(2)} at ${lvl(f.price, k)} (impact ${f.impactPct}%) — ${detail}`);
     const ct = book.sell(p, f);
+    if (ct) o.drain?.unwatch(p.id);
     if (ct) {
       // task-1530: the price extremes the monitor saw while held (the trade ledger's MFE / MAE)
       ledger.add(now, 'trade_closed', { trade: { ...ct, fills: undefined }, entryPrice: p.entryPrice, peakPrice: p.peakPrice, troughPrice: p.troughPrice ?? null, ...(o.real ? { tag: 'real-signal' } : {}) });
       say(`CLOSED ${ct.symbol}: ${ct.pnlUsd >= 0 ? '+' : ''}$${ct.pnlUsd.toFixed(2)} (${ct.pnlPct}%) by ${ct.exitReason}`);
     }
+  };
+
+  /** task-1748: a young or partly verified pool takes at most the vet's sizeCapPct of the strategy's pick. */
+  const capYoungPool = (r: ClampResult, c: Candidate): ClampResult => {
+    if (!r.ok || c.sizeCapPct === undefined) return r;
+    const capUsd = Math.round(r.usd * c.sizeCapPct) / 100;
+    if (capUsd >= r.usd) return r;
+    if (capUsd < s.sizing.minUsd) return { ok: false, refused: 'below-min-after-rugproof-young-pool', clamps: [...r.clamps, { rule: 'rugproof-young-pool', fromUsd: r.usd, toUsd: capUsd }] };
+    const f = r.usd ? capUsd / r.usd : 1;
+    return { ...r, usd: capUsd, firstTrancheUsd: Math.round(r.firstTrancheUsd * f * 100) / 100, clamps: [...r.clamps, { rule: 'rugproof-young-pool', fromUsd: r.usd, toUsd: capUsd }] };
   };
 
   /** Apply a validated decision at the current virtual time. */
@@ -426,7 +516,7 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       if (orders.some((q) => q.mint === c.mint)) return;
       if (entriesPaused && !killed) { refuse('entries-paused', { mint: c.mint, why: entriesPaused }); await closeCandidate(c, 'refused:entries-paused'); return; }
       const req = { profile: d.profile, sizePct: d.sizePct, sizeUsd: d.sizeUsd, confidence: d.confidence };
-      const r = clampEntry(book, k, req, killed);
+      const r = capYoungPool(clampEntry(book, k, req, killed), c);
       ledger.add(now, 'clamp', { mint: c.mint, sessionId: c.session?.id ?? null, request: req, result: r.ok ? { ok: true, usd: r.usd, firstTrancheUsd: r.firstTrancheUsd, profile: r.profile.id, basis: r.basis, clamps: r.clamps } : r });
       for (const cl of r.clamps) clampCount[cl.rule] = (clampCount[cl.rule] ?? 0) + 1;
       if (!r.ok) { refuse(r.refused, { mint: c.mint, stage: 'entry' }); await closeCandidate(c, `refused:${r.refused}`); return; }
@@ -628,6 +718,8 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       ledger.add(now, 'fill', { positionId: p.id, mint: p.mint, profile: prof.id, ...fillMcaps(fillView(f), k), bookUsd, ...(q.ctx?.proposalId ? { proposalId: q.ctx.proposalId } : {}), ...sigTag(f) });
       say(`BUY ${k.symbol} [${prof.id}]: $${f.usd.toFixed(2)} at ${lvl(f.price, k)}${f.partial ? ' (PARTIAL: impact cap)' : ''} · liq $${Math.round(k.liq ?? 0)}`);
       const c = cands.get(q.mint);
+      entryLiq.set(p.id, k.liq ?? null);
+      o.drain?.watch({ positionId: p.id, mint: p.mint, entryLiqUsd: k.liq ?? null, poolAddress: c?.pool?.address ?? null, quoteVault: c?.pool?.quoteVault ?? null, tokens: () => p.tokens });
       if (c) {
         c.positionId = p.id; byPosition.set(p.id, c);
         c.notes.push(`ENGINE: your entry filled: $${f.usd.toFixed(2)} at ${lvl(f.price, k)} (impact ${f.impactPct}%${f.partial ? ', PARTIAL at the impact cap' : ''}), profile ${prof.id}. The monitor runs the exits now; you hear from it only through EVENTs.`);
@@ -754,6 +846,7 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
     const haltedBefore = book.state.halted;
     book.roll(now);
     if (book.state.halted && book.state.halted !== haltedBefore) { ledger.add(now, 'halt', { reason: book.state.halted }); o.approvals?.cancelAll(`halted:${book.state.halted}`); }
+    await sweepOpen(k);
 
     // Held coin → the monitor (mechanical first, then wakes).
     const pos = book.open.get(k.mint);
@@ -773,7 +866,10 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
         const c = byPosition.get(pos.id);
         if (c) { if (c.inflight) await c.inflight; await closeCandidate(c, 'position-closed'); }
       }
+    } else if (pos && drained.has(pos.id) && o.drain?.verdict(pos.id)) {
+      // task-1748: still drained per the pool probe: nothing sells into an emptied pool (the write-off closes it).
     } else if (pos) {
+      drained.delete(pos.id);
       const prof0 = s.exits.profiles[pos.profileId];
       // task-1654: a real run's (or a paper scope's) maxHoldMinutes limit tightens the profile's holding cap (never loosens it).
       const holdCap = o.real?.maxHoldMinutes?.() ?? o.maxHoldMinutes?.() ?? null;
@@ -813,11 +909,17 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
         if (sr.pass) {
           // Cheap pre-check so a full book does not spawn sessions it could never act on.
           const pre = clampEntry(book, k, {}, killed);
-          const v = pre.ok && o.vet && !vetted.has(k.mint) ? await vetCoin(k) : null;
+          const v = pre.ok && o.vet && !vetted.has(k.mint) ? await vetCoin(k, vetCtx(k, pre.usd, h)) : null;
           if (!pre.ok) { if (!['already-open'].includes(pre.refused)) count(`precheck:${pre.refused}`); }
-          else if (v && !v.ok) { refuse(v.rule, { mint: k.mint, symbol: k.symbol, stage: 'vet', detail: v.detail }); skippedUntil.set(k.mint, Infinity); say(`SKIP ${k.symbol} (${k.mint.slice(0, 4)}…): ${v.rule} (${v.detail})`); }
-          else if (decideAuto) {
+          else if (v && !v.ok) {
+            // task-1748: a time gate (pool age, the second liquidity read) looks again later; any other refusal is for good.
+            const retry = v.retryAfterMs !== undefined;
+            refuse(v.rule, { mint: k.mint, symbol: k.symbol, stage: 'vet', detail: v.detail, ...(retry ? { retryAfterMs: v.retryAfterMs } : {}) });
+            skippedUntil.set(k.mint, retry ? now + (v.retryAfterMs as number) : Infinity);
+            say(`SKIP ${k.symbol} (${k.mint.slice(0, 4)}…): ${v.rule} (${v.detail})${retry ? `; again in ${Math.round((v.retryAfterMs as number) / 1000)} s` : ''}`);
+          } else if (decideAuto) {
             const cand = newCand(k, sr.matched, null, 'candidate', null);
+            if (v?.ok) { if (v.sizeCapPct !== undefined) cand.sizeCapPct = v.sizeCapPct; if (v.pool) cand.pool = v.pool; }
             cands.set(k.mint, cand);
             ledger.add(now, 'candidate', { mint: k.mint, symbol: k.symbol, matched: sr.matched, tick: view(k) });
             await apply(cand, { action: 'enter', reason: 'auto' });
@@ -830,6 +932,7 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
               const session = o.sessions!(sid, s, { kind: 'candidate', mint: k.mint });
               gate.opened('candidate');
               const cand = newCand(k, sr.matched, session, 'candidate', null);
+              if (v?.ok) { if (v.sizeCapPct !== undefined) cand.sizeCapPct = v.sizeCapPct; if (v.pool) cand.pool = v.pool; }
               cands.set(k.mint, cand);
               ledger.add(now, 'candidate', { mint: k.mint, symbol: k.symbol, matched: sr.matched, tick: view(k) });
               ledger.add(now, 'session_start', { sessionId: sid, sessionKind: 'candidate', agent: session.kind, mint: k.mint, model: sessionModel(session, s), budgetUsd: gate.caps.budgetUsdPerSession });

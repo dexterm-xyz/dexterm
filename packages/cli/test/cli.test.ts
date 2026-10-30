@@ -212,7 +212,7 @@ test('renders at the minimum supported size without throwing', () => {
 
 test('task-1376: --version and the help banner match packages/cli/package.json (release.yml refuses a tag that differs)', async () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
-  assert.equal(pkg.version, '0.2.0');
+  assert.equal(pkg.version, '0.2.1');
   const v = fakeIo();
   assert.equal(await main(['--version'], v.io), 0);
   assert.equal(v.out(), `${pkg.version}\n`);

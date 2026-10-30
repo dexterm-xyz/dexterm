@@ -37,3 +37,5 @@ A strategy you build climbs one ladder, one rung at a time:
 | real | real mode armed on your own terminal, with caps you set, above the evidence floor: a completed forward test with at least 10 closed paper trades and a backtest | only you, with a typed phrase (real mode (https://dexterm.xyz/docs/real-mode)) |
 
 Every rung counts evidence measured on the strategy's **exact rules**. Renaming it, rewording its description or arming it for real keeps its evidence; changing any rule (an entry filter, a size, an exit, a limit) starts the ladder again from draft. No rung can be skipped, and `dexterm autotrade journey <id>` (or `J` on the `Q` screen) always shows where a strategy stands and what the next rung needs.
+
+the journey view (J on the Q screen): one rung at a time, the forward test set beside its backtest (PAPER)

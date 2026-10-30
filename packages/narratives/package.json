@@ -1,0 +1,24 @@
+{
+  "name": "@dexterm/narratives",
+  "version": "0.0.1",
+  "private": true,
+  "description": "dexterm MEMES + NARRATIVES tracker (task-1818): keyless local clustering of coins into narratives (ticker puns, animals, celebrities, AI agents, seasonal, copy-cat spawns) with per-window heat metrics and lifecycle states. Measured heat, never advice.",
+  "author": "The dexterm authors",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p ../../tsconfig.json",
+    "smoke:live": "node scripts/smoke-live.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@dexterm/packs": "0.0.1",
+    "@dexterm/recorder": "0.0.1"
+  }
+}

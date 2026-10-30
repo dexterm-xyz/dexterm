@@ -40,6 +40,8 @@ export interface McpSpectatorRecord {
     position?: { mint: string; symbol: string; qty: number; costSol: number; realizedSol: number };
     caps?: { perTradeUsd: number; totalUsd: number; maxPriceImpactPct: number | null };
     refusal?: string;
+    /** task-1427: the top-10 holder share (percent) from the tool's own result; see SpectatorDetail.holders. */
+    holders?: { top10Pct: number; count?: number | null; basis: 'ex-pools' | 'raw'; ageSec?: number | null };
   } | null;
   /** The channel token, so the TUI tailing the file can confirm the writer (never printed). */
   token?: string;
@@ -169,6 +171,13 @@ export function detailFor(tool: string, args: Record<string, unknown>, result: R
     const mint = mintOf(args.mint);
     if (mint) d.coin = { mint, symbol: str(args.symbol) };
   }
+  // task-1427: the holder concentration a streamer overlay draws as a bar, copied from the result (never computed here)
+  const hold = holdersOf(tool, result);
+  if (hold) d.holders = hold;
+  if (tool === 'get_dossier') {
+    const mint = mintOf(result.mint) ?? mintOf(args.mint);
+    if (mint && !d.coin) d.coin = { mint, symbol: str(args.symbol) };
+  }
   if (tool === 'paper_open_ticket' || tool === 'paper_size_ticket') {
     const t = (result.ticket ?? {}) as Record<string, unknown>;
     const mint = mintOf(t.mint);
@@ -189,6 +198,24 @@ export function detailFor(tool: string, args: Record<string, unknown>, result: R
     if (m && num(m.perTradeUsd) !== null && num(m.totalUsd) !== null) d.caps = { perTradeUsd: num(m.perTradeUsd)!, totalUsd: num(m.totalUsd)!, maxPriceImpactPct: num(m.maxPriceImpactPct) };
   }
   return Object.keys(d).length ? d : null;
+}
+
+/** task-1427: the top-10 share a holder read reported: get_holders / get_dossier (pools left out), get_token (Jupiter audit, raw). */
+function holdersOf(tool: string, result: Record<string, unknown>): NonNullable<McpSpectatorRecord['detail']>['holders'] | null {
+  const pct = (x: unknown): number | null => { const n = num(x); return n !== null && n >= 0 && n <= 100 ? n : null; };
+  if (tool === 'get_holders' || tool === 'get_dossier') {
+    const h = (tool === 'get_holders' ? result : result.concentration) as Record<string, unknown> | null | undefined;
+    if (!h || typeof h !== 'object' || typeof h.error === 'string') return null;
+    const p = pct(h.top10PctExLp);
+    return p === null ? null : { top10Pct: p, count: num(h.holderCount), basis: 'ex-pools', ageSec: num(h.ageSec) };
+  }
+  if (tool === 'get_token') {
+    const a = (result.audit ?? null) as Record<string, unknown> | null;
+    const p = a ? pct(a.top10Pct) : null;
+    const stats = (result.stats ?? null) as Record<string, unknown> | null;
+    return p === null ? null : { top10Pct: p, count: stats ? num(stats.holderCount) : null, basis: 'raw', ageSec: num(a!.ageSec) };
+  }
+  return null;
 }
 
 /** A sink that appends records to a file (0600). Returns null when no spectator file is configured. */

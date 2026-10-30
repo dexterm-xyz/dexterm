@@ -27,7 +27,7 @@ sources:
 date: 2026-10-16
 ---
 
-Open Terminal, a Linux terminal, or PowerShell again and run:
+Open Terminal or a Linux terminal again and run:
 
 ```sh reopen dexterm
 dexterm

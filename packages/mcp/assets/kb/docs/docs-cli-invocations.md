@@ -36,7 +36,7 @@ $ dexterm --screen screener --replay /tmp/rec.json           # the same frame, n
 $ dexterm mcp                                 # the read-only MCP server on stdio
 $ dexterm popup --self-test                   # chart popup self-test
 $ dexterm x login                             # Login with X (your own X app; read scopes only)
-$ dexterm --workspace morning-hud             # start in a workspace (task-1358)
+$ dexterm --workspace morning-hud             # start in a workspace
 $ dexterm pack verify ./some-pack             # the install card for a shareable pack
 ```
 

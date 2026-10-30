@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at aca6811 and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 43a0ddf and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -11,10 +11,12 @@ built-in type stripping; no build step is needed for development.
 |---|---|
 | `packages/agents` (`@dexterm/agents`) | bring-your-own-agent layer (task-1345): per-agent identity and session tokens, server-side capability tiers (observe / annotate / propose), the gate every agent call passes, rate limits and quotas, proposals, the audit log, the loopback agent bus and the TS SDK. No agent path can arm, sign, raise a cap or change the gate. |
 | `packages/autotrade` (`@dexterm/autotrade`) | autotrade engine (AUTOTRADE-SPEC, paper only): the dexterm-strategy/1 document + validator, exit profiles 1.0.0..1.2.0, presets, the clamp, the constant-product fill model, the position monitor, the replay tape, the run loop + hash-chained ledger, backtests + held-out sweeps, and the ~/.dexterm/strategies store. No keys, no wallet, no signer: mode live validates with a warning and the runner refuses it. |
+| `packages/classifier` (`@dexterm/classifier`) | pluggable classification models (task-1822): typed questions about a coin dossier answered with calibrated probabilities by a decision model (Kev local via llama.cpp, hosted Jev with the user's own key, JEV students via vLLM, LLM zero-shot baselines) or the always-available heuristic. Outputs are model estimates, never advice; every document goes through the prompt firewall. |
 | `packages/cli` (`dexterm`) | terminal DEX screener with a local Claude CLI analyst |
 | `packages/custom` (`@dexterm/custom`) | customization layer (task-1358, from the task-1288 design): versioned config.json (no secrets, ever), the layout solver + named workspaces, user themes, keymap overrides, the rules engine (parsed, never eval'd; alerts + PROPOSALS only), shareable packs (hash lock + ssh signature; never executes pack code) and the popup widget API. Zero runtime dependencies. |
 | `packages/data` (`@dexterm/data`) | data layer: normalized model, source adapters, cache, rate limiter, health registry (SPEC §3) |
 | `packages/mcp` (`@dexterm/mcp`) | read-only MCP server over stdio (SPEC §5, D-09). |
+| `packages/narratives` (`@dexterm/narratives`) | MEMES + NARRATIVES tracker (task-1818): keyless local clustering of coins into narratives (ticker puns, animals, celebrities, AI agents, seasonal, copy-cat spawns) with per-window heat metrics and lifecycle states. Measured heat, never advice. |
 | `packages/packs` (`@dexterm/packs`) | AI analysis suite (task-1356, AI-SUITE-DESIGN): analysis packs (token/wallet dossier), narrative board, watchlist/new-pair digests, rug-probability model + honest backtest, replay-based backtest harness. Facts come from tools or recorded history, never model memory; every model stage is labelled output with data ages; untrusted text is firewalled. |
 | `packages/popup` (`@dexterm/popup`) | popup host: loopback-only server + frameless HUD windows (wry) with graceful browser fallback (task-1290) |
 | `packages/recorder` (`@dexterm/recorder`) | history recorder (AI-SUITE-DESIGN §4, lane R-01): snapshot-on-change from the data layer, feed membership, outcome sweeps, code-only labels, retention, export for the eval |

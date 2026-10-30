@@ -52,6 +52,18 @@ export interface SpectatorDetail {
   caps?: { perTradeUsd: number; totalUsd: number; maxPriceImpactPct: number | null };
   /** A paper desk refusal's stable reason code (per-trade cap, paused, stopped, …). */
   refusal?: string;
+  /**
+   * task-1427: holder concentration from the tool's own result: the top-10 share in percent (0..100), `basis`
+   * 'ex-pools' when pools / curves / vaults / locks / burns are left out (get_holders), 'raw' when the source
+   * counts every account (the Jupiter audit). `ageSec` is the age the result itself reported.
+   */
+  holders?: { top10Pct: number; count?: number | null; basis: 'ex-pools' | 'raw'; ageSec?: number | null };
+  /**
+   * task-1427: the coin's live holder / rug signals (the task-1404 engine) as the owner's terminal saw them fire.
+   * Each is a risk flag with its source and the age of the reading it fired from (at `at`); never a verdict.
+   * (Named liveFlags, not "signals": SENSITIVE_KEY_RE matches "sig", so the redactor would blank the whole list.)
+   */
+  liveFlags?: Array<{ kind: string; level: 'up' | 'down' | 'info' | 'warn'; title: string; text: string; source: string; at: number; ageSec: number; stale: boolean }>;
 }
 
 /** One observable action. Stored raw in the hub; redacted on the way to any non-local audience. */
@@ -160,14 +172,19 @@ const finiteOr = (x: unknown, d: number | null = null): number | null => (typeof
 // eslint-disable-next-line no-control-regex
 const UNSAFE_RE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g;
 const shortStr = (x: unknown, max: number): string => (typeof x === 'string' ? x.replace(UNSAFE_RE, '').slice(0, max) : '');
-const isMintish = (x: unknown): x is string => typeof x === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(x);
+const isFullMint = (x: unknown): x is string => typeof x === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(x);
+/** A mint as the redactor leaves it (maskAddress: head4…tail4). */
+const isMaskedMint = (x: unknown): x is string => typeof x === 'string' && /^[1-9A-HJ-NP-Za-km-z]{4}…[1-9A-HJ-NP-Za-km-z]{4}$/.test(x);
 
 /**
  * task-1466: re-validate a detail read off the local channel (shape, types, lengths). The channel is our own
  * server's 0600 file and token-checked, but the viewer still treats it as data: anything malformed is dropped,
  * strings are stripped of control/bidi characters and capped, numbers must be finite. Returns null when empty.
  */
-export function sanitizeDetail(raw: unknown): SpectatorDetail | null {
+export function sanitizeDetail(raw: unknown, opts: { masked?: boolean } = {}): SpectatorDetail | null {
+  // task-1427: a detail read off the SHARED stream (or a saved file) is already redacted, so its mints are head…tail;
+  // `masked` accepts that shape (and only that shape) instead of a full mint. The local channel keeps the strict check.
+  const isMintish = (x: unknown): x is string => (opts.masked ? isMaskedMint(x) : isFullMint(x));
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   const out: SpectatorDetail = {};
@@ -198,6 +215,24 @@ export function sanitizeDetail(raw: unknown): SpectatorDetail | null {
   const cp = r.caps as Record<string, unknown> | undefined;
   if (cp && finiteOr(cp.perTradeUsd) !== null && finiteOr(cp.totalUsd) !== null) out.caps = { perTradeUsd: cp.perTradeUsd as number, totalUsd: cp.totalUsd as number, maxPriceImpactPct: finiteOr(cp.maxPriceImpactPct) };
   if (typeof r.refusal === 'string' && r.refusal) out.refusal = shortStr(r.refusal, 40);
+  const h = r.holders as Record<string, unknown> | undefined;
+  const top10 = h ? finiteOr(h.top10Pct) : null;
+  if (h && top10 !== null && top10 >= 0 && top10 <= 100 && (h.basis === 'ex-pools' || h.basis === 'raw')) {
+    const count = finiteOr(h.count), ageSec = finiteOr(h.ageSec);
+    out.holders = { top10Pct: top10, count: count !== null && count >= 0 ? Math.round(count) : null, basis: h.basis, ageSec: ageSec !== null && ageSec >= 0 ? ageSec : null };
+  }
+  if (Array.isArray(r.liveFlags)) {
+    const LEVELS = ['up', 'down', 'info', 'warn'] as const;
+    const sigs = r.liveFlags.slice(0, 8).flatMap((x) => {
+      const o = x as Record<string, unknown> | null;
+      if (!o || typeof o !== 'object') return [];
+      const kind = shortStr(o.kind, 16), title = shortStr(o.title, 24), text = shortStr(o.text, 120);
+      const at = finiteOr(o.at), ageSec = finiteOr(o.ageSec);
+      if (!kind || !title || at === null || ageSec === null || ageSec < 0 || !(LEVELS as readonly unknown[]).includes(o.level)) return [];
+      return [{ kind, level: o.level as typeof LEVELS[number], title, text, source: shortStr(o.source, 24) || '?', at, ageSec, stale: o.stale === true }];
+    });
+    if (sigs.length) out.liveFlags = sigs;
+  }
   return Object.keys(out).length ? out : null;
 }
 

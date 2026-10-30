@@ -20,13 +20,17 @@
 // re-installed with them: `--retention-mb N` replaces that pause with eviction of the oldest history (observation
 // never pauses), `--retention-days D` is the age rule for snapshot rows, and `--focus-ticks` runs the autotrade
 // tick lane (5–10 s DexScreener samples of watchlist / held / candidate / open coins, plus 1m candles).
+// task-1786 (winner-recall DATA-GAPS items 1-2), opt-in the same way: `--focus-module PATH` loads an ESM module whose
+// `focus(now)` adds focus coins to the tick lane (the challenge / control coins live outside the app; the module that
+// reads them lives with them), and `--exit-probes` adds a keyless Jupiter sell quote for every held focus coin once a
+// minute (exit-probes.ts). Both imply --focus-ticks.
 import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defaultDbPath, resolveRpcUrl, extraRpcUrls, redactSecrets, type DataLayer } from '@dexterm/data';
 import { PumpPortalClient } from '@dexterm/data';
-import { Recorder, recorderEnabled, dbFocus, focusFilePath, readFocusFile, DEFAULT_TICKS, type TickPollResult } from '@dexterm/recorder';
+import { Recorder, recorderEnabled, dbFocus, focusFilePath, readFocusFile, exitProbeDeps, DEFAULT_TICKS, type FocusEntry, type TickPollResult } from '@dexterm/recorder';
 import { dextermHome } from './boot-state.ts';
 import { createLiveFeed } from './feed.ts';
 import { NewPairsLive } from './live/index.ts';
@@ -67,7 +71,7 @@ export interface CollectorEngine {
 /** Build the real collector engine: the keyless live feed, the recorder attached to its store, and (unless
  *  disabled) the PumpPortal new-pairs stream folded into the feed's candidate pool so fresh launches get
  *  recorded before the REST feeds index them. */
-export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; noNewpairs?: boolean; verbose?: boolean; onLog?: (s: string) => void; retentionBytes?: number | null; retentionDays?: number | null; focusTicks?: boolean }): CollectorEngine {
+export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; noNewpairs?: boolean; verbose?: boolean; onLog?: (s: string) => void; retentionBytes?: number | null; retentionDays?: number | null; focusTicks?: boolean; extraFocus?: () => Iterable<FocusEntry>; exitProbes?: boolean }): CollectorEngine {
   const rpc = resolveRpcUrl({ env });
   const feed = createLiveFeed({
     dbPath: opts.dbPath, rpcUrl: rpc.url, rpcFallbackUrl: rpc.fallbackUrl, rpcPublicPool: true, rpcExtraUrls: extraRpcUrls(env),
@@ -76,13 +80,23 @@ export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; 
   // Focus coins for the tick lane: the watchlist + paper positions in this DB, and whatever the autotrade runner /
   // the app publish in the focus file. Read on every poll (two indexed reads + one small file).
   const focusFile = focusFilePath(dextermHome(env));
+  // task-1786: the focus module's coins. A throwing module costs its own coins only (logged at most every 10 min).
+  let extraFailedAt = -Infinity;
+  const extra = (): FocusEntry[] => {
+    if (!opts.extraFocus) return [];
+    try { return [...opts.extraFocus()]; } catch (e) {
+      if (Date.now() - extraFailedAt > 600_000) { extraFailedAt = Date.now(); opts.onLog?.(`record: focus module failed: ${redactSecrets((e as Error).message)}\n`); }
+      return [];
+    }
+  };
   const recorder: Recorder = new Recorder({
     path: opts.dbPath, onLog: opts.verbose ? opts.onLog : undefined,
     // The cap reclaims the data layer's expired cache entries (its own rule: a day past their TTL) before it evicts
     // any history; `feed` is built above, so the hook can reach it.
     ...(opts.retentionBytes ? { cap: { maxBytes: opts.retentionBytes, reclaim: () => feed.dl.cache.prune() } } : {}),
     ...(opts.retentionDays ? { retention: { columnsDays: opts.retentionDays } } : {}),
-    ...(opts.focusTicks ? { ticks: { focus: () => [...dbFocus(recorder.database), ...readFocusFile(focusFile, Date.now())] } } : {}),
+    ...(opts.focusTicks ? { ticks: { focus: () => [...dbFocus(recorder.database), ...readFocusFile(focusFile, Date.now()), ...extra()] } } : {}),
+    ...(opts.focusTicks && opts.exitProbes ? { exitProbes: {} } : {}),
   });
   recorder.attach(feed.dl.store);
   let newpairs: NewPairsLive | null = null;
@@ -97,6 +111,7 @@ export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; 
     feed.extraMints = () => [...np.rows.keys()];
   }
   const dl: DataLayer = feed.dl;
+  const probeDeps = exitProbeDeps(dl);
   return {
     async observe(): Promise<number> {
       const before = recorder.counters.written;
@@ -106,7 +121,13 @@ export function buildLiveEngine(env: NodeJS.ProcessEnv, opts: { dbPath: string; 
     async maintain(): Promise<void> { await recorder.maintain(dl); },
     prune(): void { try { recorder.prune(); } catch { /* logged inside; never fatal */ } },
     enforceCap() { return recorder.enforceCap(); },
-    ...(opts.focusTicks ? { pollTicks: () => recorder.pollTicks(dl) } : {}),
+    ...(opts.focusTicks ? { pollTicks: async () => {
+      const r = await recorder.pollTicks(dl);
+      // Detached: a quote waiting on the Jupiter bucket must never delay the next 5 s tick (the lane's own in-flight
+      // guard keeps one probe pass at a time; it never throws).
+      if (opts.exitProbes) void recorder.probeExits(probeDeps).catch(() => {});
+      return r;
+    } } : {}),
     dbBytes(): number | null {
       try {
         const db = recorder.database;
@@ -308,18 +329,23 @@ interface RunArgs {
   /** task-1504: age rule for snapshot rows in days; null = the recorder default (90). */
   retentionDays: number | null;
   focusTicks: boolean;
+  /** task-1786: absolute path of the focus module (null = none). */
+  focusModule: string | null;
+  exitProbes: boolean;
 }
 
 /** task-1504: the shared `--retention-mb` / `--retention-days` / `--focus-ticks` parser (run + install). */
-function parseRetention(t: string, next: () => string | undefined, a: { retentionBytes: number | null; retentionDays: number | null; focusTicks: boolean }): string | null | undefined {
+function parseRetention(t: string, next: () => string | undefined, a: { retentionBytes: number | null; retentionDays: number | null; focusTicks: boolean; focusModule: string | null; exitProbes: boolean }): string | null | undefined {
   if (t === '--focus-ticks') { a.focusTicks = true; return null; }
+  if (t === '--exit-probes') { a.exitProbes = true; a.focusTicks = true; return null; }
+  if (t === '--focus-module') { const v = next(); if (!v || v.startsWith('--')) return '--focus-module needs a PATH'; a.focusModule = resolve(v); a.focusTicks = true; return null; }
   if (t === '--retention-mb') { const n = Number(next()); if (!Number.isFinite(n) || n < 1) return '--retention-mb needs a number ≥ 1'; a.retentionBytes = Math.round(n * 1_000_000); return null; }
   if (t === '--retention-days') { const n = Number(next()); if (!Number.isFinite(n) || n < 1) return '--retention-days needs a number of days ≥ 1'; a.retentionDays = n; return null; }
   return undefined;
 }
 
 export function parseRun(argv: string[]): RunArgs | { error: string } {
-  const a: RunArgs = { intervalMs: DEFAULT_INTERVAL_MS, ticks: Infinity, maintainMs: DEFAULT_MAINTAIN_MS, maxDbBytes: DEFAULT_MAX_DB_MB * 1_000_000, noNewpairs: false, db: null, verbose: false, retentionBytes: null, retentionDays: null, focusTicks: false };
+  const a: RunArgs = { intervalMs: DEFAULT_INTERVAL_MS, ticks: Infinity, maintainMs: DEFAULT_MAINTAIN_MS, maxDbBytes: DEFAULT_MAX_DB_MB * 1_000_000, noNewpairs: false, db: null, verbose: false, retentionBytes: null, retentionDays: null, focusTicks: false, focusModule: null, exitProbes: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     const r = parseRetention(t, () => argv[++i], a);
@@ -341,8 +367,9 @@ export function parseRun(argv: string[]): RunArgs | { error: string } {
 export const RECORD_USAGE = `dexterm record: keep the history recorder fed with no TUI open (task-1414).
 
   dexterm record [run] [--interval S] [--ticks N | --once] [--maintain S] [--max-db-mb N] [--retention-mb N] [--retention-days D]
-                       [--focus-ticks] [--no-newpairs] [--db PATH] [--verbose]
-  dexterm record install   [--interval S] [--max-db-mb N] [--retention-mb N] [--retention-days D] [--focus-ticks] [--load] [--dry-run]
+                       [--focus-ticks] [--focus-module PATH] [--exit-probes] [--no-newpairs] [--db PATH] [--verbose]
+  dexterm record install   [--interval S] [--max-db-mb N] [--retention-mb N] [--retention-days D] [--focus-ticks]
+                           [--focus-module PATH] [--exit-probes] [--load] [--dry-run]
   dexterm record uninstall [--unload]
   dexterm record status    [--db PATH]
 
@@ -353,7 +380,10 @@ run        the collector loop: one keyless feed refresh per --interval (default 
            to stay under N MB and observation never pauses. --retention-days D drops snapshot rows (sweep rows
            too) older than D days (default 90). --focus-ticks samples watchlist / held / candidate / open coins
            every 5-10 s (DexScreener batches of 30, a daily call ceiling) with 1m candles; autotrade backtests
-           read them. --no-newpairs drops the PumpPortal stream. Ctrl-C stops cleanly
+           read them. --focus-module PATH adds the coins an ESM module's focus(now) returns
+           ([{ mint, role }], role held | open | candidate | watch) to that lane. --exit-probes asks Jupiter for
+           a keyless $50 sell quote of every held focus coin once a minute (exit_probes; quotes only).
+           Both imply --focus-ticks. --no-newpairs drops the PumpPortal stream. Ctrl-C stops cleanly
            (labels whatever is due). Requests honour the data layer's rate limits, health gate and sweep budgets.
 install    write a user-level launchd LaunchAgent (no sudo) that runs \`record run\`; prints the launchctl
            command. --load also runs launchctl (off by default). --dry-run prints the plist, writes nothing.
@@ -401,14 +431,24 @@ async function run(argv: string[], io: RecordIo, deps: { engine?: CollectorEngin
   })();
 
   const log = (s: string): void => io.stderr.write(s);
-  const engine = deps.engine ?? buildLiveEngine(io.env, { dbPath, noNewpairs: parsed.noNewpairs, verbose: parsed.verbose, onLog: log, retentionBytes: parsed.retentionBytes, retentionDays: parsed.retentionDays, focusTicks: parsed.focusTicks });
+  // task-1786: the focus module is loaded once, up front; a module that does not load is a startup error (exit 2).
+  let extraFocus: (() => Iterable<FocusEntry>) | undefined;
+  if (parsed.focusModule) {
+    try {
+      const mod = await import(pathToFileURL(parsed.focusModule).href) as { focus?: (now: number) => Iterable<FocusEntry> };
+      if (typeof mod.focus !== 'function') throw new Error('it exports no focus(now) function');
+      const fn = mod.focus;
+      extraFocus = () => fn(Date.now());
+    } catch (e) { io.stderr.write(`dexterm record: --focus-module ${parsed.focusModule}: ${redactSecrets((e as Error).message)}\n`); return 2; }
+  }
+  const engine = deps.engine ?? buildLiveEngine(io.env, { dbPath, noNewpairs: parsed.noNewpairs, verbose: parsed.verbose, onLog: log, retentionBytes: parsed.retentionBytes, retentionDays: parsed.retentionDays, focusTicks: parsed.focusTicks, extraFocus, exitProbes: parsed.exitProbes });
   const own = !deps.engine;
   const onSig = (): void => { io.stderr.write('\ndexterm record: stopping…\n'); stop.abort(); };
   if (own) { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); }
   // The sleeps are unref'd; without the PumpPortal socket (--no-newpairs) nothing else would keep the event loop
   // alive between passes and node would exit mid-run (task-1504 smoke). Hold it open until the loops finish.
   const hold = own ? setInterval(() => {}, 1 << 30) : null;
-  if (parsed.verbose || parsed.ticks !== Infinity) io.stderr.write(`dexterm record: db ${dbPath} · interval ${Math.round(parsed.intervalMs / 1000)}s · maintain ${Math.round(parsed.maintainMs / 1000)}s · cap ${parsed.maxDbBytes === null ? 'off' : `${Math.round(parsed.maxDbBytes / 1e6)} MB`} · newpairs ${parsed.noNewpairs ? 'off' : 'on'}${parsed.retentionBytes !== null ? ` · retention ${Math.round(parsed.retentionBytes / 1e6)} MB (evict, never pause)` : ''}${parsed.retentionDays !== null ? ` · rows ${parsed.retentionDays} d` : ''} · focus ticks ${parsed.focusTicks ? 'on' : 'off'}\n`);
+  if (parsed.verbose || parsed.ticks !== Infinity) io.stderr.write(`dexterm record: db ${dbPath} · interval ${Math.round(parsed.intervalMs / 1000)}s · maintain ${Math.round(parsed.maintainMs / 1000)}s · cap ${parsed.maxDbBytes === null ? 'off' : `${Math.round(parsed.maxDbBytes / 1e6)} MB`} · newpairs ${parsed.noNewpairs ? 'off' : 'on'}${parsed.retentionBytes !== null ? ` · retention ${Math.round(parsed.retentionBytes / 1e6)} MB (evict, never pause)` : ''}${parsed.retentionDays !== null ? ` · rows ${parsed.retentionDays} d` : ''} · focus ticks ${parsed.focusTicks ? 'on' : 'off'}${parsed.focusModule ? ` · focus module ${parsed.focusModule}` : ''}${parsed.exitProbes ? ' · exit probes on' : ''}\n`);
 
   let result: CollectorRunResult;
   let tickRes: TickLoopResult = { polls: 0, calls: 0, written: 0 };
@@ -434,7 +474,7 @@ async function run(argv: string[], io: RecordIo, deps: { engine?: CollectorEngin
 
 function install(argv: string[], io: RecordIo): number {
   let intervalMs = DEFAULT_INTERVAL_MS, maxDbMb = DEFAULT_MAX_DB_MB, load = false, dry = false;
-  const ret = { retentionBytes: null as number | null, retentionDays: null as number | null, focusTicks: false };
+  const ret = { retentionBytes: null as number | null, retentionDays: null as number | null, focusTicks: false, focusModule: null as string | null, exitProbes: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     const r = parseRetention(t, () => argv[++i], ret);
@@ -453,6 +493,8 @@ function install(argv: string[], io: RecordIo): number {
     ...(ret.retentionBytes !== null ? ['--retention-mb', String(Math.round(ret.retentionBytes / 1e6))] : []),
     ...(ret.retentionDays !== null ? ['--retention-days', String(ret.retentionDays)] : []),
     ...(ret.focusTicks ? ['--focus-ticks'] : []),
+    ...(ret.focusModule ? ['--focus-module', ret.focusModule] : []),
+    ...(ret.exitProbes ? ['--exit-probes'] : []),
   ];
   const plist = renderCollectorPlist({ label: COLLECTOR_LABEL, nodePath: process.execPath, binPath: bin, intervalMs, maxDbMb, extraArgs, logPath, workingDir: resolve(dirname(bin), '..', '..', '..') });
   if (dry) { io.stdout.write(plist); io.stderr.write(`\ndexterm record: dry run — would write ${path}\n`); return 0; }

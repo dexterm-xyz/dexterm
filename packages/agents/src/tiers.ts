@@ -53,6 +53,9 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = Object.freeze({
   // agents in task-1405 so a bring-your-own-agent gets the same code-stage analysis the built-in analyst does.
   analyze_token: 'observe',
   narrative_board: 'observe',
+  narratives_top: 'observe',
+  narrative_detail: 'observe',
+  narrative_of: 'observe',
   rug_backtest: 'observe',
   kb_lookup: 'observe',
   kb_search: 'observe',

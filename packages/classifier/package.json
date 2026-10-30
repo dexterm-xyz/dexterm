@@ -1,0 +1,23 @@
+{
+  "name": "@dexterm/classifier",
+  "version": "0.0.1",
+  "private": true,
+  "description": "dexterm pluggable classification models (task-1822): typed questions about a coin dossier answered with calibrated probabilities by a decision model (Kev local via llama.cpp, hosted Jev with the user's own key, JEV students via vLLM, LLM zero-shot baselines) or the always-available heuristic. Outputs are model estimates, never advice; every document goes through the prompt firewall.",
+  "author": "The dexterm authors",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 \"test/*.test.ts\"",
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@dexterm/data": "0.0.1",
+    "@dexterm/packs": "0.0.1"
+  }
+}

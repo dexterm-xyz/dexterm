@@ -17,7 +17,9 @@ const BEGINNER_GOLDEN: Array<[string, string]> = [
   ['which Node.js version do I install before dexterm', 'docs-beginners-install-node-js-first'],
   ['how does a beginner install dexterm with npm on macOS or Linux', 'docs-beginners-macos-or-linux-npm'],
   ['how do I install dexterm with Homebrew on macOS', 'docs-beginners-macos-homebrew'],
-  ['how do I install dexterm from PowerShell on Windows', 'docs-beginners-windows-powershell-experimental'],
+  // task-1821 r1: the PowerShell (experimental) install section left the guide in task-1737 (Windows is unsupported);
+  // the guide now answers Windows in its own section.
+  ['what are the Windows expectations for a beginner', 'docs-beginners-windows-expectations'],
   ['what does dexterm doctor check after installation', 'docs-beginners-check-the-installation-with-doctor'],
   ['how does the ten minute beginner walkthrough start dexterm', 'docs-beginners-1-start-dexterm'],
   ['how does the beginner walkthrough open a real coin by contract address', 'docs-beginners-2-open-a-real-coin-by-contract-address'],

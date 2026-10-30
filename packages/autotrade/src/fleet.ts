@@ -37,7 +37,7 @@ import type { ResolvedStrategy } from './strategy.ts';
 import type { AgentSession } from './session.ts';
 import { SessionGate, type GateCheck, type SessionKind, type AllowanceReading } from './sessions.ts';
 import { effectiveCaps, type EffectiveCaps, type RunnerConfig } from './runner-config.ts';
-import { runAutotrade, simExecutor, type DossierFn, type Executor, type FocusMark, type RunResult, type RunSessionFactory, type RunnerState, type VetFn } from './runner.ts';
+import { runAutotrade, simExecutor, type DossierFn, type Executor, type FocusMark, type RunResult, type RunSessionFactory, type RunnerState, type VetFn, type DrainWatch } from './runner.ts';
 import type { SafetyVerdict } from './safety.ts';
 import type { GlobalCaps, MemberConfig } from './fleet-config.ts';
 import { PaperAccount } from './paper-accounts.ts';
@@ -419,6 +419,8 @@ export interface FleetOpts {
   dossier?: (m: FleetMemberSpec) => DossierFn | undefined;
   /** A member's network gates (its entry.safety.larp) on live data, as a single run has them; absent on a tape. */
   vet?: (m: FleetMemberSpec) => VetFn | undefined;
+  /** task-1748: a member's drain guard poller (entry.safety.rugproof.drainGuard) on live data; absent on a tape. */
+  drain?: (m: FleetMemberSpec) => DrainWatch | undefined;
   executors?: ExecutorBinding;
   /** Shared paper accounts (task-1538); a member whose config names one trades from its cash. */
   accounts?: { id: string; startUsd: number; sol?: number; solUsd?: number }[];
@@ -564,7 +566,7 @@ export async function runFleet(o: FleetOpts): Promise<FleetResult> {
     l.done = runAutotrade({
       ...(adopt?.length ? { adopt } : {}),
       strategy: spec.strategy, source: { name: o.tape?.source ?? o.source!.name, ticks, startT: now }, sessions, gate, ledger, runId,
-      dossier: o.dossier?.(spec), vet: o.vet?.(spec), executor: execs.executors.get(id), verbose: o.verbose ?? true, onLine: (s) => say(`[${id}] ${s}`),
+      dossier: o.dossier?.(spec), vet: o.vet?.(spec), drain: o.drain?.(spec), executor: execs.executors.get(id), verbose: o.verbose ?? true, onLine: (s) => say(`[${id}] ${s}`),
       pacing, ...(account ? { account, member: id } : {}),
       safety: () => {
         const g = o.globalSafety();

@@ -60,6 +60,7 @@ import { recordLarpVerdict } from './larp-record.ts';
 import { newAutotradeUi, defaultDeps as autotradeDeps, autotradeCapturing, autotradeTick, reloadList as autotradeReload, refreshRunner as autotradeRefreshRunner } from './screens/autotrade-ui.ts';
 import { autotradeAction, autotradeKey } from './screens/autotrade-keys.ts';
 import { workerJobs as autotradeWorkerJobs } from './screens/autotrade-worker.ts';
+import { narrativesUiOf, kickNarratives, heatRows, drillDetail } from './narratives.ts';
 import { rulesUiOf, rulesTick, rulesMove, beginRuleInput, saveRuleInput, dryRunNow, removeSelectedRule, toggleSelectedRule, dismissSelectedProposal, actOnSelectedProposal, RULE_INPUT_MAX } from './rules.ts';
 import { buildNotifier, hasPushChannel } from './alerts/notifier.ts';
 import { copyAlertToDelivery } from './alerts/format.ts';
@@ -422,12 +423,16 @@ export const HELP = `dexterm ${VERSION} (live: screener, token, new pairs, watch
   dexterm kb list|show|new|edit|check|reset|path     your knowledge-base entries (~/.dexterm/kb/entries) over the bundled 18
   dexterm skill list|show|new|edit|check|reset|path  your analyst skills (~/.dexterm/skills) over the bundled ones (read tools only)
   dexterm narrative [--window 1h|24h] [--summary]  the narrative board over recorded history (no network, no model)
+  dexterm narratives [top|detail ID|of MINT|export]  EXPERIMENTAL memes + narratives tracker over recorded history: themes, heat, lifecycle (measured heat, not advice)
   dexterm backtest [--subject heuristic|pack_verdicts] [--horizon SEC]  honest rug-model metrics over recorded outcomes (no network, no model)
   dexterm ledger trades|positions|summary|equity|compare|export|card|sync|verify  the unified trade ledger: paper, agent desk, autotrade runs (no network; 'dexterm ledger help')
+  dexterm dash [--port N] [--home DIR] [--baseline ID] [--export DIR]  your strategies' performance in a browser on 127.0.0.1 (read-only, no network; 'dexterm dash --help')
   dexterm wallet link|unlink|status|panic|resume  link a Phantom wallet via a local bridge (pubkey only); panic halts autotrade + the paper desk, resume needs a TTY keypress
   dexterm plan propose|list|arm|cancel|journal     conditional order plans (entry/ladder/take-profit/moon bag/stop); arming needs a physical keypress
   dexterm mandate draft|list|arm|revoke            standing capped mandates (paper fills); arming needs a physical keypress — voice/agents can never arm
   dexterm follow add|remove|list|stats|trades|mirror|purge  copy trading tier 1: follow a wallet (your list, local labels), its decoded swaps + FIFO PnL + win rate/early-entry; 'mirror' previews a one-key MIRROR TICKET from the wallet's latest buy (inert; arm in the app)
+  dexterm classifier [list|pick|pull|serve|doctor|bench|try|key]  classification models (EXPERIMENTAL): Kev on your own machine
+                                              (llama.cpp), hosted Jev with your own key, or the built-in heuristic; model estimates, never advice
   dexterm ai [status|engine|model|host|restrictions|probe|ask|agent]  the AI engine: your claude / codex CLI or a free LOCAL model on
                                               your own Ollama (localhost); restriction profiles observe|propose|paper|full ('dexterm ai help')
   dexterm mcp [install <client>|doctor]            read-only MCP server for your own agent; 'install' writes the config for claude-code|claude-desktop|cursor|codex|generic (asks first, idempotent, backs up); 'doctor' verifies the connection
@@ -814,6 +819,12 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { runSpectate } = await import('./spectate-cmd.ts');
     return runSpectate(argv.slice(1), io);
   }
+  // `dexterm overlay` → the streamer overlay (task-1427): OBS browser-source scenes (agent activity, the coin card,
+  // the PAPER / LIVE PnL card) fed by the read-only spectator stream or a replay; loopback, single-use ticket → token.
+  if (argv[0] === 'overlay') {
+    const { runOverlay } = await import('./overlay-cmd.ts');
+    return runOverlay(argv.slice(1), io);
+  }
   // `dexterm recorder <cmd>` → the history recorder's tables: stats, label, prune, export (task-1329). No network.
   if (argv[0] === 'recorder') {
     const { recorderCli } = await import('@dexterm/recorder');
@@ -824,10 +835,20 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     const { narrativeCommand } = await import('./narrative-cmd.ts');
     return narrativeCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
+  // `dexterm narratives [top|detail ID|of MINT|export]` → the MEMES + NARRATIVES tracker (task-1818, EXPERIMENTAL). No network, no model.
+  if (argv[0] === 'narratives') {
+    const { narrativesCommand } = await import('./narratives-cmd.ts');
+    return narrativesCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
   // `dexterm ledger …` → the unified trade ledger (task-1530): reads fold the file + the sources; only `sync` writes. No network, no model, no keys.
   if (argv[0] === 'ledger') {
     const { ledgerCommand } = await import('./ledger-cmd.ts');
     return ledgerCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
+  // `dexterm dash` → the strategy performance dashboard (task-1749): run ledgers → a page on 127.0.0.1 only. Read-only, no network, no model, no keys.
+  if (argv[0] === 'dash') {
+    const { dashCommand } = await import('./dash-cmd.ts');
+    return dashCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm autotrade validate|list|backtest|sweep …` and `dexterm backtest --subject strategy` → the paper autotrade engine (task-1503). No network, no model, no keys.
   if (argv[0] === 'autotrade' || argv[0] === 'backtest') { const at = await import('./autotrade-cmd.ts'); if (at.handles(argv)) return at.autotradeCommand(argv, { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin }); }
@@ -960,6 +981,11 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
   if (argv[0] === 'ai' || argv[0] === 'ask') {
     const { aiCommand } = await import('./ai-cmd.ts');
     return aiCommand(argv[0] === 'ask' ? ['ask', ...argv.slice(1)] : argv.slice(1), { stdin: io.stdin, stdout: io.stdout, stderr: io.stderr, env: io.env });
+  }
+  // task-1822: `dexterm classifier …` (pick / pull / serve the classification model; hardware tiers; hosted key).
+  if (argv[0] === 'classifier') {
+    const { classifierCommand } = await import('./classifier-cmd.ts');
+    return classifierCommand(argv.slice(1), { stdin: io.stdin, stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm doctor` → a pre-flight that says whether dexterm will run here and how to fix what won't (task-1305).
   if (argv[0] === 'doctor') {
@@ -1328,6 +1354,16 @@ function rulesScreenMove(state: AppState, delta: number): boolean {
   return true;
 }
 
+// task-1818: j/k on the N screen's EXPERIMENTAL heat table move its cursor, or the member cursor while drilled in. The theme
+// board (the default mode) keeps the shared state.selected cursor.
+function narrativesMove(state: AppState, delta: number): boolean {
+  const ui = state.narrativesUi;
+  if (state.screen !== 'narrative' || ui?.mode !== 'heat') return false;
+  if (ui.drill) { const n = drillDetail(state)?.memberList.length ?? 0; ui.drill.selected = Math.max(0, Math.min(n - 1, ui.drill.selected + delta)); return true; }
+  ui.selected = Math.max(0, Math.min(heatRows(state).length - 1, ui.selected + delta));
+  return true;
+}
+
 function plansMove(state: AppState, delta: number): boolean {
   if (state.screen !== 'plans' || !state.plansUi) return false;
   if (state.plansUi.arming || state.plansUi.riskModal) return true;
@@ -1375,12 +1411,12 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     // task-1313: on the Analyst tab the arrows move the coin-list selection beside the chat (which
     // updates the context injected next turn); PgUp/PgDn scroll the chat transcript. On the token
     // screen (QA M12) the movement keys scroll the answer. Keys reach here only when input is NOT focused.
-    case 'move.down': if (plansMove(state, 1) || followsMove(state, 1) || rulesScreenMove(state, 1)) break; if (bubbleMove(state, 1)) break; if (chatScroll(state, 1)) break; state.selected = Math.min(rows().length - 1, (state.selected || 0) + 1); break;
-    case 'move.up': if (plansMove(state, -1) || followsMove(state, -1) || rulesScreenMove(state, -1)) break; if (bubbleMove(state, -1)) break; if (chatScroll(state, -1)) break; state.selected = Math.max(0, (state.selected || 0) - 1); break;
-    case 'move.pagedown': if (plansMove(state, PAGE_ROWS) || followsMove(state, PAGE_ROWS) || rulesScreenMove(state, PAGE_ROWS)) break; if (analystChatScroll(state, PAGE_ROWS)) break; if (chatScroll(state, PAGE_ROWS)) break; state.selected = Math.min(rows().length - 1, (state.selected || 0) + PAGE_ROWS); break;
-    case 'move.pageup': if (plansMove(state, -PAGE_ROWS) || followsMove(state, -PAGE_ROWS) || rulesScreenMove(state, -PAGE_ROWS)) break; if (analystChatScroll(state, -PAGE_ROWS)) break; if (chatScroll(state, -PAGE_ROWS)) break; state.selected = Math.max(0, (state.selected || 0) - PAGE_ROWS); break;
-    case 'move.top': if (plansMove(state, -1e9) || followsMove(state, -1e9)) break; if (chatScroll(state, -1e9)) break; state.selected = 0; break;
-    case 'move.bottom': if (plansMove(state, 1e9) || followsMove(state, 1e9)) break; if (chatScroll(state, 1e9)) break; state.selected = Math.max(0, rows().length - 1); break;
+    case 'move.down': if (narrativesMove(state, 1) || plansMove(state, 1) || followsMove(state, 1) || rulesScreenMove(state, 1)) break; if (bubbleMove(state, 1)) break; if (chatScroll(state, 1)) break; state.selected = Math.min(rows().length - 1, (state.selected || 0) + 1); break;
+    case 'move.up': if (narrativesMove(state, -1) || plansMove(state, -1) || followsMove(state, -1) || rulesScreenMove(state, -1)) break; if (bubbleMove(state, -1)) break; if (chatScroll(state, -1)) break; state.selected = Math.max(0, (state.selected || 0) - 1); break;
+    case 'move.pagedown': if (narrativesMove(state, PAGE_ROWS) || plansMove(state, PAGE_ROWS) || followsMove(state, PAGE_ROWS) || rulesScreenMove(state, PAGE_ROWS)) break; if (analystChatScroll(state, PAGE_ROWS)) break; if (chatScroll(state, PAGE_ROWS)) break; state.selected = Math.min(rows().length - 1, (state.selected || 0) + PAGE_ROWS); break;
+    case 'move.pageup': if (narrativesMove(state, -PAGE_ROWS) || plansMove(state, -PAGE_ROWS) || followsMove(state, -PAGE_ROWS) || rulesScreenMove(state, -PAGE_ROWS)) break; if (analystChatScroll(state, -PAGE_ROWS)) break; if (chatScroll(state, -PAGE_ROWS)) break; state.selected = Math.max(0, (state.selected || 0) - PAGE_ROWS); break;
+    case 'move.top': if (narrativesMove(state, -1e9) || plansMove(state, -1e9) || followsMove(state, -1e9)) break; if (chatScroll(state, -1e9)) break; state.selected = 0; break;
+    case 'move.bottom': if (narrativesMove(state, 1e9) || plansMove(state, 1e9) || followsMove(state, 1e9)) break; if (chatScroll(state, 1e9)) break; state.selected = Math.max(0, rows().length - 1); break;
     case 'open': {
       if (state.screen === 'token' || state.screen === 'analyst' || state.screen === 'kol') break;
       if (state.screen === 'trending') {
@@ -1466,6 +1502,7 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
     case 'back': {
       if (state.screen === 'follows' && state.copyUi?.mirror) { state.copyUi.mirror = null; state.copyUi.notice = 'mirror preview closed'; break; } // task-1360: esc closes the mirror preview first
       if (state.screen === 'follows' && state.copyUi?.detail) { state.copyUi.detail = null; break; } // task-1399: esc closes the wallet detail view before leaving the screen
+      if (state.screen === 'narrative' && state.narrativesUi?.drill) { state.narrativesUi.drill = null; break; } // task-1818: esc in a drill-down returns to the heat table
       const prev = stack.pop(); if (prev) state.screen = prev; break;
     }
     case 'trade.buy':
@@ -1645,6 +1682,32 @@ export function applyAction(state: AppState, action: AppAction, stack: ScreenKey
       stack.push(state.screen);
       state.screen = 'narrative';
       state.narrative = computeNarrativeView(state, state.narrative?.window ?? '1h');
+      if (state.narrativesUi?.mode === 'heat') kickNarratives(state); // task-1818: back on the heat table → refresh if it is older than 60 s
+      break;
+    }
+    // task-1818: n flips the theme board ⇄ the EXPERIMENTAL heat table. The first flip starts the tracker build (the recorder's
+    // last 26 h, ~30 s; never at app start); the table shows "building…" until it lands, later refreshes come from the tick.
+    case 'narrative.view': {
+      if (state.screen !== 'narrative') break;
+      const ui = narrativesUiOf(state);
+      ui.mode = ui.mode === 'heat' ? 'board' : 'heat';
+      ui.drill = null;
+      if (ui.mode === 'heat') kickNarratives(state);
+      break;
+    }
+    // task-1818: ⏎ on the heat table drills into the selected narrative; ⏎ on a member opens that coin's token screen (live
+    // mode; fixtures say so). On the theme board ⏎ keeps its old meaning (the shared `open`).
+    case 'narrative.drill': {
+      if (state.screen !== 'narrative') break;
+      const ui = state.narrativesUi;
+      if (ui?.mode !== 'heat') return applyAction(state, 'open', stack);
+      if (!ui.drill) { const r = heatRows(state)[ui.selected]; if (r) ui.drill = { id: r.id, selected: 0 }; break; }
+      const m = drillDetail(state)?.memberList[ui.drill.selected];
+      if (!m) break;
+      if (!live) { state.pendingToast = `token detail needs live mode (${m.symbol} ${m.mint.slice(0, 8)}…)`; break; }
+      live.openToken(seedForMint(state, live, m.mint, m.symbol));
+      stack.push(state.screen);
+      state.screen = 'token';
       break;
     }
     case 'narrative.window': {
@@ -3271,6 +3334,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
       // execution moment, pause / kill) draws over this terminal while it follows. Calm mode = reduced motion.
       state.agentHud = { story: followSession.story, clock: () => Date.now(), dataLabel: args.replay ? 'REPLAY DATA' : null };
       void followSession.start();
+      // task-1427: the open coin's live holder/rug signals ride the spectator stream too (the streamer overlay's coin card).
+      { const fs = followSession; state.live?.signals.listeners.add((sig) => fs.liveFlag(sig)); }
       if (size()[1] < HUD_MIN_H) say('following agents over MCP · ctrl+p pause · ctrl+k stop · any key takes over', 'ai', 6);
       if (agentPaper) say(agentPaper.start(), 'ai', 8);
     }
@@ -4493,6 +4558,8 @@ export function interactive(state: AppState, io: Io, depth: ColorDepth, args: Cl
         if (v.frame % tickEvery === 0) {
           // task-1397: the "new version available" toast, once, after the boot and never over the welcome card.
           if (state.updateNotice && state.screen !== 'boot' && !state.overlay) { say(state.updateNotice, 'info', 8); state.updateNotice = null; }
+          // task-1818: refresh the EXPERIMENTAL narratives tracker at most every 60 s while its heat table is on screen.
+          if (state.screen === 'narrative' && state.narrativesUi?.mode === 'heat' && !state.paused) kickNarratives(state);
           // task-1508: the autotrade screen re-reads the paper runner's status file every 2 s while it is open.
           if (state.screen === 'autotrade' && state.autotradeUi) autotradeTick(state.autotradeUi);
           if (feed) {

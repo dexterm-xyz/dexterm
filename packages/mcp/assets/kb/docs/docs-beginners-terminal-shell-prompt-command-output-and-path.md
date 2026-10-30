@@ -30,8 +30,8 @@ sources:
 date: 2026-10-16
 ---
 
-- A **terminal** is a text window for giving your computer instructions. macOS calls its built-in app Terminal. Windows users should use PowerShell inside Windows Terminal. Linux includes a terminal app with the desktop.
-- A **shell** is the program inside that window that reads what you type. PowerShell is a shell; `zsh` and `bash` are common macOS and Linux shells. You do not need to learn which one you have.
+- A **terminal** is a text window for giving your computer instructions. macOS calls its built-in app Terminal. Linux includes a terminal app with the desktop. dexterm runs on macOS and Linux; Windows is not supported.
+- A **shell** is the program inside that window that reads what you type. `zsh` and `bash` are common macOS and Linux shells. You do not need to learn which one you have.
 - A **prompt** is the short text, often ending in `$` or `>`, that means the shell is ready. Do not type the prompt itself.
 - A **command** is one line you type after the prompt, such as `dexterm doctor`.
 - **Output** is the text the computer prints after a command. Output is an answer, not another command to copy blindly.

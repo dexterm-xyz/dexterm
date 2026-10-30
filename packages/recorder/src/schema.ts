@@ -16,8 +16,10 @@
 // v2 (task-1504, AUTOTRADE-SPEC §3): `autotrade_ticks` (position-grade samples every 5–10 s for the few coins
 // that are watched, open, a candidate or held; written by the tick lane in ticks.ts) and `autotrade_candles_1m`
 // (1-minute OHLC built from those samples). Both are additive: a v1 file gains the two tables on open.
+// v3 (task-1786, winner-recall DATA-GAPS item 2): `exit_probes` (a keyless Jupiter sell quote for each held focus coin
+// once a minute, written by exit-probes.ts). Additive: an older file gains the table on open.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const HORIZONS_SEC = [3600, 7200, 21600, 86400, 259200] as const;
 export type HorizonSec = (typeof HORIZONS_SEC)[number];
@@ -180,4 +182,21 @@ CREATE TABLE IF NOT EXISTS autotrade_candles_1m (
   PRIMARY KEY (mint, t)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS autotrade_candles_1m_t ON autotrade_candles_1m (t);
+
+-- task-1786: can a held coin be sold, and for what. One row per probe: a fixed-USD sell quote into SOL at the coin's
+-- last tick price. sol_out NULL + error = no quote (error 'no route' style = the drain); price_impact_pct is a percent.
+CREATE TABLE IF NOT EXISTS exit_probes (
+  mint             TEXT NOT NULL,
+  t                INTEGER NOT NULL,          -- unix ms the answer came back
+  role             TEXT NOT NULL,             -- 'held'
+  usd_in           REAL NOT NULL,             -- probe size in USD at price_usd
+  price_usd        REAL, liquidity_usd REAL,  -- the last tick's DexScreener price / liquidity the probe was sized on
+  tokens_in        TEXT,                      -- base units sold (decimal string)
+  sol_out          REAL,                      -- SOL the route returns (NULL = no quote)
+  price_impact_pct REAL,
+  route_hops       INTEGER,
+  error            TEXT,
+  PRIMARY KEY (mint, t)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS exit_probes_t ON exit_probes (t);
 `;

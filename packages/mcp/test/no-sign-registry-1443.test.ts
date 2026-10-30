@@ -18,7 +18,7 @@ const DATA_SRC = join(HERE, '..', '..', 'data', 'src');
 // ── the allowlist: every served tool, classified. A new tool MUST be added to exactly one bucket here. ──
 const READ_DATA_TOOLS = [
   'screen_state', 'screener_query', 'get_token', 'get_dossier', 'analyze_token', 'get_holders', 'get_trades',
-  'get_candles', 'rugcheck', 'get_dev_history', 'dev_history', 'narrative_board', 'rug_backtest', 'kb_lookup', 'kb_search',
+  'get_candles', 'rugcheck', 'get_dev_history', 'dev_history', 'narrative_board', 'narratives_top', 'narrative_detail', 'narrative_of', 'rug_backtest', 'kb_lookup', 'kb_search',
   'case_lookup', 'get_links', 'fetch_page', 'check_domain', 'check_github', 'check_x', 'larp_check', 'app_help', 'app_state',
 ];
 const UI_NAV_TOOLS = [...ANALYST_ACTION_TYPES]; // task-1313/1413 non-financial navigation + display config
@@ -35,7 +35,9 @@ const LEDGER_TOOLS = ['ledger_trades', 'ledger_positions', 'ledger_equity', 'led
 // task-1647: the JOURNEY: two reads, paper forward-test control (the strategy's own bankroll, never real) and a promotion
 // PROPOSAL (a file; always-on is the user's key, real the user's caps + typed phrase on their terminal)
 const JOURNEY_TOOLS = ['strategy_journey', 'strategy_forward_report', 'strategy_forward_start', 'strategy_forward_stop', 'strategy_promote_propose'];
-const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS, ...JOURNEY_TOOLS]);
+// task-1822: classification models: read-only estimates (classify_coin / classify_batch / classifier_status); they never sign, trade or write config
+const CLASSIFIER_TOOLS = ['classify_coin', 'classify_batch', 'classifier_status'];
+const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS, ...JOURNEY_TOOLS, ...CLASSIFIER_TOOLS]);
 
 const servedNames = TOOLS.map((t) => String(t.name));
 

@@ -28,6 +28,8 @@ date: 2026-10-16
 
 > **0.2.0, experimental.** Real mode can lead to real trades in a wallet you fund. dexterm never holds a key, never signs and never sends a transaction: your executor does, by its own rules. Not financial advice.
 
+arming real mode, stopped at the typed phrase: nothing is armed in this frame
+
 Every strategy runs on **paper** by default. In **real** mode the same strategy runs the same way: the same entry rules, the same clamp on every size, the same exits, the same monitor and the same run file as paper. The difference: every buy and sell it fills on its own model of the market also goes out, first, as a **LIVE TRADE FIRE** signal (`dexterm-trade-fire/1`) to the executor you chose.
 
 - **Your executor** is a Telegram trading bot you trust, or any script of yours. It holds its own wallet and decides whether to act on a signal.

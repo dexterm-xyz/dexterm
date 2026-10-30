@@ -10,6 +10,7 @@ export * from './verdicts.ts';
 export * from './schedule.ts';
 export * from './dev-history.ts';
 export * from './ticks.ts';
+export * from './exit-probes.ts';
 export * from './retention.ts';
 export { recorderCli, RECORDER_HELP, type CliIo } from './cli.ts';
 
