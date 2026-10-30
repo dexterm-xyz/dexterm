@@ -14,6 +14,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { validate } from '@dexterm/custom';
 import { parseFilter } from '../../cli/src/screener/filter.ts';
+import type { RugproofRules } from './rugproof.ts';
 
 type Node = Parameters<typeof validate>[0];
 type Refs = NonNullable<Parameters<typeof validate>[4]>;
@@ -105,6 +106,10 @@ export interface Strategy {
        *  a score above maxScore is refused, and so is a check that could not run when unknown is reject. Replays and
        *  backtests have no web, so they do not evaluate it (see DATA_LIMITS). */
       larp?: { maxScore: number; unknown: 'reject' | 'allow' } | null;
+      /** task-1748: the rug-proof gates (rugproof.ts): pool age, holders, a second liquidity read, a pump.fun /
+       *  burned-LP pool, no Withdraw history, a sell route; and the post-entry drain guard. Fail closed. The chain and
+       *  route gates need live data; a replay evaluates the tick gates and the pump.fun-mint proxy (rugproofTapeVet). */
+      rugproof?: RugproofRules | null;
     };
     triggers: Trigger[];
     triggerMode: 'any' | 'all';
@@ -154,7 +159,13 @@ export interface Strategy {
     /** 1.2.0 (§5): a wake for a position whose session has ended starts a short position session (runner card). */
     respawnOnWake?: boolean;
   };
-  execution: { slippageBps: number; feeBps: number; networkFeeUsd: number; latencyMs: number; maxPriceImpactPct: number; minExitLiquidityUsd: number };
+  execution: {
+    slippageBps: number; feeBps: number; networkFeeUsd: number; latencyMs: number; maxPriceImpactPct: number; minExitLiquidityUsd: number;
+    /** task-1748 (paper only: refused in any other mode, and the runner ignores it in a real-signal run): a bag stuck
+     *  under the exit floor this many minutes is closed at its realizable value (`written_off`), freeing its slot;
+     *  null / absent = retried every tick (the old behaviour). */
+    stuckWriteOffMin?: number | null;
+  };
   notes?: string[];
 }
 
@@ -223,6 +234,13 @@ export const SCHEMAS: Refs = {
         youngVertical: nullable(obj({ maxAgeHours: num(0, 168), maxH1Pct: num(0, 100000) })),
         unknownHolders: { type: 'string', enum: ['reject', 'allow'] },
         larp: nullable(obj({ maxScore: num(0, 100), unknown: { type: 'string', enum: ['reject', 'allow'] } })),
+        rugproof: nullable(obj({
+          minPoolAgeMin: num(0, 1440), requireSafePool: { type: 'boolean' }, maxHolderLpPct: num(0, 100), maxWithdraws: num(0, 100, true), withdrawScanTx: num(1, 100, true),
+          liquidityRecheck: nullable(obj({ afterSec: num(5, 600), floorX: num(1, 100), maxDropPct: num(0, 90) })),
+          routeX: nullable(num(1, 20)),
+          youngPool: nullable(obj({ underMin: num(1, 1440), maxSizePct: num(1, 100) })),
+          drainGuard: nullable(obj({ pollSec: num(2, 10), liqDropPct: num(5, 90), exitOnNoRoute: { type: 'boolean' }, minReserveSol: num(0, 1000) })),
+        })),
       }, ['maxTop10Pct', 'maxDevPct', 'requireNoMintAuthority', 'requireNoFreezeAuthority', 'maxMcapSplitX', 'youngVertical', 'unknownHolders']),
       triggers: { type: 'array', max: 8, items: 'trigger' },
       triggerMode: { type: 'string', enum: ['any', 'all'] },
@@ -254,7 +272,7 @@ export const SCHEMAS: Refs = {
       onTimeout: { type: 'string', enum: ['skip'] },
       respawnOnWake: { type: 'boolean' },
     }, ['model', 'maxSessions', 'budgetUsdPerSession', 'budgetUsdPerDay', 'maxTurns', 'deltaEverySec', 'decideWithinSec', 'sessionMaxMin', 'onTimeout']),
-    execution: obj({ slippageBps: num(0, 5000), feeBps: num(0, 1000), networkFeeUsd: num(0, 10), latencyMs: num(0, 120000), maxPriceImpactPct: num(0.1, 50), minExitLiquidityUsd: num(0, 1e7) }),
+    execution: obj({ slippageBps: num(0, 5000), feeBps: num(0, 1000), networkFeeUsd: num(0, 10), latencyMs: num(0, 120000), maxPriceImpactPct: num(0.1, 50), minExitLiquidityUsd: num(0, 1e7), stuckWriteOffMin: nullable(num(1, 10080)) }, ['slippageBps', 'feeBps', 'networkFeeUsd', 'latencyMs', 'maxPriceImpactPct', 'minExitLiquidityUsd']),
     notes: { type: 'array', max: 8, items: str(300) },
   }, ['kind', 'schema', 'id', 'name', 'version', 'description', 'mode', 'bankroll', 'entry', 'exits', 'sizing', 'risk', 'agent', 'execution']),
 };
@@ -333,11 +351,13 @@ export function validateStrategy(doc: unknown, library: Record<string, ExitProfi
   const r = s.risk;
   if (r.drawdown.sizeDownAtPct > r.drawdown.haltAtPct) errors.push({ path: '/risk/drawdown', msg: 'sizeDownAtPct must not exceed haltAtPct' });
   if (r.drawdown.recoverBelowPct >= r.drawdown.sizeDownAtPct) errors.push({ path: '/risk/drawdown/recoverBelowPct', msg: 'recoverBelowPct must be below sizeDownAtPct' });
+  if (s.execution.stuckWriteOffMin != null && s.mode !== 'paper') errors.push({ path: '/execution/stuckWriteOffMin', msg: `the stuck write-off is paper only: in mode ${s.mode} the bag is still in your wallet and keeps its exit signals (remove it or set it to null)` });
   if (s.agent.budgetUsdPerSession > s.agent.budgetUsdPerDay) errors.push({ path: '/agent/budgetUsdPerSession', msg: 'a session budget above the daily budget' });
   if (s.entry.ageHours.max !== null && s.entry.ageHours.max < s.entry.ageHours.min) errors.push({ path: '/entry/ageHours', msg: 'max is below min' });
   if (s.entry.triggers.length === 0) errors.push({ path: '/entry/triggers', msg: 'at least one trigger (use {"kind":"screen"} for "every screen match")' });
   for (const [i, t] of s.entry.triggers.entries()) if (t.kind === 'narrative' || t.kind === 'wallet') warnings.push({ path: `/entry/triggers/${i}`, msg: `${t.kind} triggers need the live ${t.kind} feed; replays and backtests treat them as not firing` });
   if (s.bankroll.source === 'desk') warnings.push({ path: '/bankroll/source', msg: 'desk reads the paper desk book during a run; backtests use startUsd' });
+  if (s.entry.safety.rugproof) warnings.push({ path: '/entry/safety/rugproof', msg: 'the rug-proof chain and route gates (pool structure, LP, withdraw history, sell route) and the drain poller need live data; a replay evaluates only the tick gates and the pump.fun-mint proxy' });
   if (s.entry.safety.larp) warnings.push({ path: '/entry/safety/larp', msg: 'the LARP gate needs the live web (live data runs only); replays and backtests do not evaluate it' });
   if (s.mode === 'real') warnings.push({ path: '/mode', msg: 'mode real sends a LIVE TRADE FIRE signal for every trade to your own executor; it runs only after `dexterm autotrade signal arm` on your own terminal, at this exact version' });
   if (s.mode === 'live') warnings.push({ path: '/mode', msg: 'mode live does not run: dexterm runs strategies on paper only (it holds no key and places no live order); live trading happens in the Telegram trading bot of your choice' });

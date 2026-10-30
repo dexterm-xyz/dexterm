@@ -56,6 +56,8 @@ export * from './trade-ledger.ts';
 export * from './execution-port.ts';
 export * from './chat/index.ts';
 export * from './yolo.ts';
+export * from './rugproof.ts';
+export * from './rugproof-probe.ts';
 export * from './signal.ts';
 export * from './outbox.ts';
 export * from './signal-channels.ts';

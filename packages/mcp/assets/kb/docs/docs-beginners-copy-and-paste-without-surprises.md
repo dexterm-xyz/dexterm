@@ -34,6 +34,5 @@ Copy only the text inside a code box. Do not copy a leading `$`; it represents t
 |---|---|---|
 | macOS Terminal | Command-C | Command-V |
 | Linux terminal | Ctrl-Shift-C | Ctrl-Shift-V |
-| Windows Terminal | Ctrl-Shift-C | Ctrl-Shift-V |
 
 Right-click and choose **Paste** if the shortcut does not work. A multi-line paste can run several commands, so this guide uses one command per box. Never paste a command you do not understand; read the sentence above it first.

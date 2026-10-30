@@ -65,6 +65,8 @@ export interface DoctorDeps {
   analystEngine?: string | null;
   /** task-1543: the local Ollama engine (probe + the user's ai.json choices). Absent = the check is skipped. */
   ollama?: () => Promise<OllamaFacts>;
+  /** task-1822: hardware + the picked classification model's readiness. Absent = the check is skipped. */
+  classifier?: () => Promise<ClassifierFacts>;
   /** Probe one URL; must resolve (never reject) within its own timeout. */
   probe: (url: string) => Promise<ProbeResult>;
   /** Check a directory is writable by creating and deleting a temp file; returns null or an error message. */
@@ -258,6 +260,7 @@ export function defaultDeps(env: NodeJS.ProcessEnv = process.env, isTTY = proces
     claude: () => claudeProbe(),
     codex: () => codexProbe(4000, env),
     ollama: () => ollamaFacts(env),
+    classifier: () => classifierFacts(env),
     analystEngine: env.DEXTERM_ANALYST_ENGINE ?? loadConfig(dextermHome(env)).config.analyst?.engine ?? null,
     probe: (url) => livingProbe(url),
     checkWritable: writableProbe,
@@ -374,6 +377,9 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorResult> {
 
   // 3c. Local engine (task-1543): the user's own Ollama on this machine, the model, tool calling, context, profile.
   if (ol) checks.push(ollamaCheck(ol, claude !== 'missing' || codexUsable));
+
+  // 3d. Classification model (task-1822, EXPERIMENTAL): hardware tier + the picked model. Never fails the doctor.
+  if (deps.classifier) { const cf = await deps.classifier().catch(() => null); if (cf) checks.push(classifierCheck(cf)); }
 
   // 4b. Login with X (optional, task-1357): the user's own X app + login unlock X posts in the SOCIAL panel / TRENDING.
   {
@@ -512,6 +518,28 @@ export function renderDoctor(result: DoctorResult, opts: { color?: boolean } = {
   else if (result.ok) lines.push(paint(`Ready to run (${warns} warning${warns === 1 ? '' : 's'} above are optional).`, color ? ANSI.warn : ''));
   else lines.push(paint(`${fails} check${fails === 1 ? '' : 's'} failed — fix the ✗ lines above, then re-run \`dexterm doctor\`.`, color ? ANSI.fail : ''));
   return lines.join('\n');
+}
+
+export interface ClassifierFacts { hardware: string; recommended: string | null; bestQuality: string | null; why: string; provider: string; model: string; ready: boolean; detail: string }
+
+/** task-1822: what `dexterm classifier doctor` says, as one doctor line. */
+export async function classifierFacts(env: NodeJS.ProcessEnv = process.env): Promise<ClassifierFacts> {
+  const { describeHardware, detectHardware, loadClassifierConfig, providerFromConfig, recommendTier } = await import('@dexterm/classifier');
+  const hw = await detectHardware();
+  const rec = recommendTier(hw);
+  const c = loadClassifierConfig(env).config;
+  let st = { ready: false, detail: '' };
+  let model: string = c.provider;
+  try { const p = providerFromConfig(c, c.provider, { env }); model = p.model(); st = await p.status(); } catch (e) { st = { ready: false, detail: (e as Error).message }; }
+  return { hardware: describeHardware(hw), recommended: rec.model, bestQuality: rec.bestQuality, why: rec.why, provider: c.provider, model, ready: st.ready, detail: st.detail };
+}
+
+export function classifierCheck(f: ClassifierFacts): DoctorCheck {
+  const tier = f.recommended ? `recommended model here: ${f.recommended}${f.bestQuality ? ` (best quality: ${f.bestQuality})` : ''}` : 'recommended: the built-in scores';
+  const name = 'Classification model (experimental)';
+  if (f.provider === 'heuristic') return { name, status: 'pass', detail: `built-in scores (no download) · ${f.hardware} · ${tier}` };
+  if (f.ready) return { name, status: 'pass', detail: `${f.provider} ${f.model} ready · ${tier}` };
+  return { name, status: 'warn', detail: `${f.provider} ${f.model} not ready: ${f.detail}`, fix: f.provider === 'kev-local' ? `dexterm classifier pull ${f.model}, then dexterm classifier serve (answers fall back to the built-in scores meanwhile)` : 'dexterm classifier doctor' };
 }
 
 /**

@@ -55,6 +55,6 @@ date: 2026-10-16
 
 **Missing data never lowers the score.** A page that could not be read, an RDAP or X lookup that failed, goes to a `missing` list with the points it could have added, and the result shows the range: "37, could be up to 58". Nothing unread is scored as clean.
 
-Where it shows: the `larp_check` MCP result (`score`, `band`, and `larp_score` with every flag, its points, its weight and its evidence, the range and the `missing` list; the existing fields are unchanged), the analyst panel after a LARP check (a gauge with the three biggest reasons, drawn from the tool's own result, never from the model's text).
+Where it shows: the `larp_check` MCP result (`score`, `band`, and `larp_score` with every flag, its points, its weight and its evidence, the range and the `missing` list; the existing fields are unchanged), the analyst panel after a LARP check (a gauge with the three biggest reasons, drawn from the tool's own result, never from the model's text), and the web checker's result and share card.
 
 > warn: a LARP verdict is a risk flag, not a certificate. Public HTML cannot prove a working product, a team's identity or who owns an account; domain age, a clean script scan and a GitHub with commits are evidence, not proof, and a real product can still go to zero.

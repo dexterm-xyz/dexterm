@@ -28,6 +28,8 @@ date: 2026-10-16
 
 Install it once and the strategies in your `autotrade.json` (https://dexterm.xyz/docs/autotrade#the-autotradejson-file) keep running: they start when you log in, start again after a crash, never run twice, stop at once on any kill switch, and tell you when they cannot run.
 
+dexterm autotrade service status: three paper strategies on the always-on service
+
 ```
 dexterm autotrade service install --dry-run   # shows exactly what it would write; writes nothing
 dexterm autotrade service install --load      # writes it and loads it
@@ -38,7 +40,7 @@ dexterm autotrade service logs                # the end of its log
 dexterm autotrade service uninstall           # stop, unload, remove exactly what install wrote
 ```
 
-- **What install writes.** One small job that runs `dexterm autotrade service ensure` every minute and at login: a LaunchAgent in `~/Library/LaunchAgents/` on macOS (no `KeepAlive`), a systemd user timer in `~/.config/systemd/user/` on Linux, a scheduled task on Windows. Install prints every file in full and checks that it parses before writing anything; `--dry-run` stops there, and without `--load` nothing is loaded. It runs while you are logged in (on Linux, `loginctl enable-linger` is your choice for after logout). Each `DEXTERM_HOME` gets its own job, so a test home never replaces your real one.
+- **What install writes.** One small job that runs `dexterm autotrade service ensure` every minute and at login: a LaunchAgent in `~/Library/LaunchAgents/` on macOS (no `KeepAlive`), a systemd user timer in `~/.config/systemd/user/` on Linux (Windows is not supported). Install prints every file in full and checks that it parses before writing anything; `--dry-run` stops there, and without `--load` nothing is loaded. It runs while you are logged in (on Linux, `loginctl enable-linger` is your choice for after logout). Each `DEXTERM_HOME` gets its own job, so a test home never replaces your real one.
 - **What a tick does.** `ensure` does nothing while the service's heartbeat is fresh, and otherwise starts it. The service runs `dexterm autotrade run --all --paper` for every strategy you listed, with the same lock, run files, `Q` screen and switches as a run you start by hand. Flags for it go in `~/.dexterm/autotrade/service.json` (`{ "schema": "dexterm-autotrade-service-config/1", "runArgs": ["--model", "sonnet"] }`; only `--model`, `--sol-usd`, `--config`, `--replay`, `--ms-per-tick`, `--max-minutes` and `--stub`).
 - **After a crash or a restart.** A crash costs at most a minute. The new run checks the crashed run's file, takes over the paper positions it left open (their stops, take-profits, trails and maximum hold keep running from the original entry), and never buys a coin the crashed run already took. An order that had not filled never happened, and it is never sent again.
 - **A crash loop gives up.** Restarts after a crash wait 0, 0, 1, 2 and 4 minutes; the sixth crash within an hour leaves the service down with one notification. `dexterm autotrade service status --clear` lets it start again once you have read the log.

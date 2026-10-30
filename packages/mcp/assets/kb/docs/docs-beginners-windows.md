@@ -27,4 +27,4 @@ sources:
 date: 2026-10-16
 ---
 
-Open the Start menu, type **Windows Terminal**, and choose the **PowerShell** tab. Windows support is experimental and has not yet passed the project's test run; the known limits are listed under Windows expectations (https://dexterm.xyz/docs/beginners#windows-expectations).
+Windows is not supported. See Windows expectations (https://dexterm.xyz/docs/beginners#windows-expectations).

@@ -33,6 +33,8 @@ In scope:
 - any path from a model, voice command, agent, chat message or token metadata to arming a plan, switching a strategy to real, arming it or raising a limit;
 - real mode's signal path: the outbox (nonce, TTL, dedupe, restart), the webhook HMAC, the command hook (argv, no shell), the limits file and its integrity check, the kill switch, and anything that lets a paper strategy emit a signal or a signal leave its limits;
 - the loopback chart server and the native shell: ticket, token, Host/Origin checks, CSP, navigation pinning;
+- the loopback dashboard (`dexterm dash`) and streamer overlay (`dexterm overlay`) servers: binding, Host/Origin checks, single-use tickets, CSP, and anything that lets a page send data back or reach the network;
+- the classifier: the model download (consent, size, sha256, disk guard), the hosted-key file and the usage cap, and any network call made without your key or consent;
 - the prompt firewall: untrusted text (token metadata, fetched pages, feeds) escaping its wrapping or steering the analyst into actions;
 - the SSRF-safe page fetcher (private ranges, redirects, content types, size caps);
 - the release pipeline: provenance, checksums, SBOM, the scan results on the trust page;

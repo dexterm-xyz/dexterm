@@ -24,6 +24,7 @@ import { launchIntelCells, holderTags } from '../intel.ts';
 import { devBookOf, devRows } from '../dev-history.ts';
 import { EX_POOL_TAGS } from '@dexterm/data';
 import { layoutFor } from '../../custom.ts';
+import { narrativeCell } from '../../narratives.ts';
 import { chartMode, chartTitle, priceModeOf, chartAxisOf, chartMarkersOn, mcapAt, positionPriceCells, levelCell, supplyRatio, type PriceMode } from '../../display.ts';
 
 type Level = 'ok' | 'warn' | 'bad' | 'na';
@@ -202,6 +203,9 @@ export function renderTokenLive(c: Canvas, state: AppState, v: TokenView): void 
     ['RugCheck score', ...(v.rug === null || v.rug.score === null ? na(v.panels.rugcheck.state === 'error' ? `unavailable: ${v.panels.rugcheck.reason ?? ''}`.trim() : dash) : [`${Math.round(v.rug.score)}/100`, v.rug.score < 30 ? 'ok' : v.rug.score < 60 ? 'warn' : 'bad'] as [string, Level])],
     ['GoPlus', ...goplusRow(v)],
     ...devTail,
+    // task-1818 (EXPERIMENTAL): the coin's narrative from the already-built tracker (measured heat, not advice). Never builds
+    // one here (the 26 h replay runs only from N → n); warn = copy-cat saturated or fading/dead, else neutral na (never a green ok).
+    ['Narrative', ...narrativeCell(state, v.mint)],
   ];
   for (const [label, val0, lvl] of fitRows(rows, sb.y + sb.h - sy)) {
     if (sy >= sb.y + sb.h) break;

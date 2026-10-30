@@ -100,6 +100,8 @@ export class LiveSignalsLive {
   private readonly logByMint = new Map<string, LiveSignal[]>();
   /** Signals emitted this session (all mints), newest last — a cheap counter/feed for the smoke script + tests. */
   readonly emitted: LiveSignal[] = [];
+  /** task-1427: extra read-only listeners (the MCP follow session forwards each signal to the spectator hub). */
+  readonly listeners = new Set<(s: LiveSignal) => void>();
 
   constructor(opts: LiveSignalsOptions = {}) {
     this.engine = new LiveSignalsEngine({ thresholds: opts.thresholds });
@@ -118,6 +120,7 @@ export class LiveSignalsLive {
       this.logByMint.set(s.mint, arr);
       this.emitted.push(s);
       this.onSignal?.(s);
+      for (const l of this.listeners) { try { l(s); } catch { /* a listener never breaks the engine */ } }
     }
     return sigs;
   }

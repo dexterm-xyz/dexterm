@@ -81,8 +81,9 @@ export async function rulesCommand(argv: string[], io: RulesIo): Promise<number>
     case 'fields': {
       io.stdout.write(`fields:  ${FIELD_NAMES.join(' ')}\n`);
       io.stdout.write(`aliases: vol volume liquidity cap mc holder organic top locked cluster% clusterpct\n`);
+      io.stdout.write(`narrative (EXPERIMENTAL, measured heat, not advice): narrative_rank narrative_score narrative:spark|ignition|peak|fading|dead|saturated (null until N → n builds the tracker)\n`);
       io.stdout.write(`signals: <field>.velocity (current ÷ mean of earlier samples in the window) · <field>.delta (current − oldest in the window)\n`);
-      io.stdout.write(`tags:    ${TAG_NAMES.map((t) => t + ':').join(' ')}  (e.g. launchpad:pump flag:mint flag:clean verified:yes sus:no; prefix ! to negate)\n`);
+      io.stdout.write(`tags:    ${TAG_NAMES.map((t) => t + ':').join(' ')}  (e.g. launchpad:pump flag:mint flag:clean verified:yes sus:no narrative:ignition narrative:saturated; prefix ! to negate)\n`);
       io.stdout.write(`values:  $1.5M 25K 2B 20% 2h 30m 3d · ops > >= < <= = != · and or not ( )\n`);
       io.stdout.write(`actions: ${ACTIONS.join(' ')}  alert(level, "text") ticket(buy|sell, size ≤ ${TICKET_SIZE_CAP}, sol|usd|pct) ask(skill) popup(${RULE_POPUP_KINDS.join('|')}) tag("label") sound(name) watch\n`);
       io.stdout.write(`limits:  cooldown (default 10m) · max n/h (default 12, cap ${MAX_PER_HOUR_CAP}) · scope ${SCOPES.join('|')}|mint:<addr> · window (default 10m)\n`);

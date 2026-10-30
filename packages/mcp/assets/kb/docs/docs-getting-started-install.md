@@ -41,10 +41,10 @@ $ dexterm doctor
 The package is named `dexterm-cli` because npm refuses the name `dexterm` as too similar to `xterm`. The command it installs is `dexterm`. The package ships compiled JavaScript, so it needs no build step. Every GitHub release carries a build-provenance attestation and `SHA256SUMS` you can verify (see the trust page (https://dexterm.xyz/trust/)).
 
 ```sh install from the release
-$ # download dexterm-0.2.0-src.tar.gz and SHA256SUMS from the releases page, then:
+$ # download dexterm-0.2.1-src.tar.gz and SHA256SUMS from the releases page, then:
 $ shasum -a 256 -c SHA256SUMS --ignore-missing
-$ gh attestation verify dexterm-0.2.0-src.tar.gz --repo dexterm-xyz/dexterm
-$ tar -xzf dexterm-0.2.0-src.tar.gz && cd dexterm-0.2.0
+$ gh attestation verify dexterm-0.2.1-src.tar.gz --repo dexterm-xyz/dexterm
+$ tar -xzf dexterm-0.2.1-src.tar.gz && cd dexterm-0.2.1
 $ ./install.sh
 $ dexterm doctor
 ```

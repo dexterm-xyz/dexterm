@@ -26,6 +26,7 @@ import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dextermHome } from '@dexterm/custom';
 import { KillSwitch, createDataLayer, defaultDbPath, resolveRpcUrl } from '@dexterm/data';
+import { DrainPoller, RugProbe, chainVets, defaultFetchJson, rugproofVet, type DrainWatch } from '@dexterm/autotrade';
 import {
   FleetGuard, HEARTBEAT_MS, accountTable, LiveSource, RUNNER_RENDEZVOUS_SCHEMA, RUN_SUMMARY_SCHEMA, RunnerSafety, acquireRunLock, bankrollUsd, claudeSessionFactory, clearControl,
   clearMemberControls, clearStaleControl, compareRows, compareTable, controlPath, fileLedger, fleetStatusPath, fleetTotals, loadFleetConfig, loadRunnerConfig, loadTape,
@@ -188,6 +189,7 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
   let source: { name: string; ticks: AsyncIterable<MarketTick>; startT?: number; setFocus?: (f: { mint: string; role: 'held' | 'candidate' }[]) => void } | undefined;
   let dossier: ((m: FleetMemberSpec) => import('@dexterm/autotrade').DossierFn | undefined) | undefined;
   let vet: ((m: FleetMemberSpec) => VetFn | undefined) | undefined;
+  let drain: ((m: FleetMemberSpec) => DrainWatch | undefined) | undefined;
   if (data) {
     live = new LiveSource({ store: data.store, dexscreener: data.dexscreener }, { onLog: (l) => fleetLedger.add(Date.now(), 'source_error', { error: l.slice(0, 300) }) });
     const ls = live;
@@ -200,7 +202,12 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
     });
     dossier = () => async (k, h, matched, b) => renderDossierRecord(await shared.get(k.mint), { mint: k.mint, symbol: k.symbol, matched }, k, h, b);
     // A member's LARP gate (entry.safety.larp, the yolo preset's) on live data, as `autotrade run` has it.
-    vet = fleetLarpVet((mint) => mcp.call('larp_check', { mint }));
+    const larpVets = fleetLarpVet((mint) => mcp.call('larp_check', { mint }));
+    // task-1748: a member's rug-proof gates (entry.safety.rugproof) run first, then its LARP gate; one probe (and its
+    // caches) for the whole fleet. Read-only: DexScreener, the user's RPC (or the public one), Jupiter quotes.
+    const probe = new RugProbe({ fetchJson: defaultFetchJson(), rpcUrl: resolveRpcUrl({ env: io.env }).url });
+    vet = (mm) => chainVets(mm.strategy.entry.safety.rugproof ? rugproofVet(mm.strategy.entry.safety.rugproof, { probe }) : undefined, larpVets(mm));
+    drain = (mm) => { const g = mm.strategy.entry.safety.rugproof?.drainGuard; return g ? new DrainPoller(g, probe, (rec) => fleetLedger.add(Date.now(), 'drain_probe', { member: mm.strategy.id, ...rec })) : undefined; };
   }
 
   // Heartbeat: the aggregate rendezvous, the fleet status, every summary.
@@ -257,7 +264,7 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
     const res = await runFleet({
       fleetId, home, members, tape, source, runner: runnerCfg, guard, fleetLedger, fleetLedgerPath: fleetFiles.ledger, ...(accounts.length ? { accounts } : {}),
       pacing: replay ? { mode: 'paced', msPerTick: num(opts['ms-per-tick'], 2000) } : { mode: 'live' },
-      sessions, dossier, vet: over.vetWrap ? (m) => over.vetWrap!(m, vet?.(m)) : vet, newRunId: (id) => newRunId(id), verbose: true, onLine: say,
+      sessions, dossier, vet: over.vetWrap ? (m) => over.vetWrap!(m, vet?.(m)) : vet, drain, newRunId: (id) => newRunId(id), verbose: true, onLine: say,
       globalSafety: () => {
         if (Date.now() >= stopAt) stop('max-minutes');
         const s0 = safety.step();

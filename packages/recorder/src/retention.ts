@@ -53,6 +53,7 @@ export const DEFAULT_CAP_BYTES = 3_000_000_000;
 const EVICTABLE: readonly { table: string; col: string }[] = [
   { table: 'autotrade_ticks', col: 't' },
   { table: 'autotrade_candles_1m', col: 't' },
+  { table: 'exit_probes', col: 't' },
   { table: 'token_snapshots', col: 't' },
   { table: 'feed_members', col: 't' },
 ];
@@ -134,6 +135,8 @@ export function pruneTicksByAge(db: DatabaseSync, policy: Partial<AgePolicy>, no
   const p = { ...DEFAULT_AGE, ...policy };
   const day = 86_400_000;
   const ticks = Number(db.prepare('DELETE FROM autotrade_ticks WHERE t < ?').run(now - p.ticksDays * day).changes);
+  // task-1786: exit probes age out with the ticks they were sized on.
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exit_probes'").get()) db.prepare('DELETE FROM exit_probes WHERE t < ?').run(now - p.ticksDays * day);
   const candles = Number(db.prepare('DELETE FROM autotrade_candles_1m WHERE t < ?').run(now - p.candlesDays * day).changes);
   return { ticks, candles };
 }

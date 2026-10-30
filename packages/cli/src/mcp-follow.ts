@@ -155,7 +155,9 @@ export class McpFollowSession {
     };
     this.follow = new FollowController({ controls, activityCap: Math.max(1, opts.activityCap ?? 200) });
     this.story = new AgentStory(this.agentLabel);
-    this.hub.on((ev) => { this.follow.apply(ev); this.story.apply(ev); });
+    // task-1427: a live signal the TERMINAL fired (liveFlag) rides the hub for the stream only; it is not an agent call
+    // or an agent thought, so the follow view and the story never fold it (the story would show a note as a thought).
+    this.hub.on((ev) => { if (ev.phase === 'note' && ev.tool === 'live_signal') return; this.follow.apply(ev); this.story.apply(ev); });
   }
 
   /** Arm the rendezvous (so a `dexterm mcp` server starts emitting) and begin tailing. Idempotent. */
@@ -286,6 +288,19 @@ export class McpFollowSession {
       const what = ev.ok === false ? `PAPER ${ev.tool.slice(6).replace('_', ' ')} refused · ${String(ev.summary ?? '').replace(/^error: /, '').slice(0, 70)}` : String(ev.summary ?? ev.tool);
       try { this.opts.onStatus?.(`agent ${this.currentAgent}: ${what}`); } catch { /* ignore */ }
     }
+    try { this.opts.onEvent?.(); } catch { /* ignore */ }
+  }
+
+  /**
+   * task-1427: a live holder / rug signal the owner's terminal fired for a coin (the task-1404 engine) → one `note`
+   * event in the hub, so the streamer overlay's coin card can show it with its age. Only while armed (an agent is
+   * being followed); it describes data the terminal already read, and carries nothing anyone can act on.
+   */
+  liveFlag(s: { kind: string; mint: string; level: 'up' | 'down' | 'info' | 'warn'; title: string; text: string; source: string; dataAgeMs: number; stale: boolean; at: number }): void {
+    if (!this.armed) return;
+    const detail = sanitizeDetail({ coin: { mint: s.mint }, liveFlags: [{ kind: s.kind, level: s.level, title: s.title, text: s.text, source: s.source, at: s.at, ageSec: Math.max(0, s.dataAgeMs / 1000), stale: s.stale }] });
+    if (!detail?.liveFlags) return;
+    this.hub.emit({ phase: 'note', agent: this.currentAgent, transport: 'mcp', tool: 'live_signal', summary: `${s.title}: ${s.text}`.slice(0, 140), detail, ok: true, t: s.at });
     try { this.opts.onEvent?.(); } catch { /* ignore */ }
   }
 

@@ -29,4 +29,5 @@ date: 2026-10-16
 - **Keep secrets off screen.** Don't show `~/.dexterm/spectator.json`, the `DEXTERM_AGENT_TOKEN` line or `dexterm agent add` output (it prints the agent's token once). `agent serve` prints the token's file path, never the token.
 - **Use fixtures for a show.** `agent serve` without `--live` uses canned data, so no real coin names or market numbers appear. With `--live`, a capture shows whatever real coins the agent looks at.
 - **Record and replay.** Add `--record FILE` so you can share the session afterwards. The file is redacted, so you can attach it to a bug report.
+- **Example.** The launch demo clip was made this way: Claude Code, connected with `dexterm mcp install claude-code` against the recorded fixture feed, screened, opened a coin and ran `larp_check`; the watch window showed each call and the user pressed **pause**. Its caption lines are scripted and tagged `✦ claude lines: demo text`, as all marketing footage of Claude lines is.
 - The window and the stream show model and agent activity, not advice. Whatever an agent concludes is its own reading of tool results.

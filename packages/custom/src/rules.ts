@@ -43,6 +43,20 @@ export interface RuleRow {
    * e.g. `when devrugs >= 2 then alert(warn, "new coin from a wallet that rugged before") scope newpairs`.
    */
   devRugs?: number | null;
+  /**
+   * task-1818 (EXPERIMENTAL) MEMES + NARRATIVES tracker: the coin's narrative rank (1 = hottest of the ranked narratives) and
+   * memetic traction score 0-100, its lifecycle (spark | ignition | peak | fading | dead) and the copy-cat saturation flag.
+   * Measured heat, not advice. null = the tracker is not built or does not know the coin → clauses / tags are false.
+   * e.g. `when narrative:ignition and narrative_rank <= 5 then alert(info, "narrative ignited (measured heat, not advice)")`.
+   */
+  narrativeRank?: number | null; narrativeScore?: number | null;
+  narrativeLifecycle?: string | null; narrativeSaturated?: boolean | null;
+  /**
+   * task-1822: the classification model's estimate p(drain within 6 h), 0..1, for a coin the picked classifier has
+   * scored (a model estimate, never advice). null = not scored -> clauses are false. e.g.
+   * `when rugp > 0.8 then alert(warn, "classifier: high drain estimate") scope watchlist`.
+   */
+  rugP?: number | null;
   ageMin?: number | null;
   chg?: { m5?: number | null; h1?: number | null; h6?: number | null; h24?: number | null } | null;
   buys?: number | null; sells?: number | null; bonding?: number | null;
@@ -58,7 +72,8 @@ export const FIELDS: Record<string, FieldFn> = {
   vol5m: (r) => r.vol5m, vol1h: (r) => r.vol1h, vol24: (r) => r.vol24,
   holders: (r) => r.holders, org: (r) => r.org, top10: (r) => r.top10, dev: (r) => r.dev,
   lplocked: (r) => r.lpLocked, bundled: (r) => r.bundled, snipers: (r) => r.snipers,
-  cluster: (r) => r.cluster, larp: (r) => r.larp, devrugs: (r) => r.devRugs,
+  cluster: (r) => r.cluster, larp: (r) => r.larp, devrugs: (r) => r.devRugs, rugp: (r) => r.rugP,
+  narrative_rank: (r) => r.narrativeRank, narrative_score: (r) => r.narrativeScore,
   fresh: (r) => r.fresh, mintable: (r) => r.mintable, freezable: (r) => r.freezable,
   age: (r) => r.ageMin, m5: (r) => r.chg?.m5, h1: (r) => r.chg?.h1, h6: (r) => r.chg?.h6, h24: (r) => r.chg?.h24,
   buys: (r) => r.buys, sells: (r) => r.sells, bonding: (r) => r.bonding,
@@ -72,6 +87,9 @@ const TAGS: Record<string, (r: RuleRow, v: string) => boolean> = {
   flag: (r, v) => (v === 'clean' ? (r.flags ?? []).length === 0 : (r.flags ?? []).map((f) => f.toLowerCase()).includes(v.toLowerCase())),
   verified: (r, v) => (v === 'yes') === !!r.verified,
   sus: (r, v) => (v === 'yes') === !!r.sus,
+  // task-1818: `narrative:ignition` (or spark / peak / fading / dead) = the coin's narrative is in that lifecycle state;
+  // `narrative:saturated` = copy-cat saturated. An untracked coin matches nothing (so `!narrative:dead` is true for it).
+  narrative: (r, v) => { const k = v.toLowerCase(); return k === 'saturated' ? r.narrativeSaturated === true : !!r.narrativeLifecycle && r.narrativeLifecycle === k; },
 };
 export const TAG_NAMES = Object.keys(TAGS);
 export const ACTIONS = ['alert', 'ticket', 'ask', 'popup', 'tag', 'sound', 'watch'] as const;

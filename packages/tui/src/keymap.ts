@@ -203,6 +203,8 @@ export type AppAction =
   | 'kol.toggle' | 'kol.mute' | 'kol.remove' | 'kol.add' | 'kol.importx' | 'kol.focus'
   // task-1356 AI suite: the NARRATIVE BOARD screen (N, global) + its popup (p on that screen).
   | 'screen.narrative' | 'narrative.window' | 'narrative.popup'
+  // task-1818: on that screen, n flips the theme board ⇄ the EXPERIMENTAL narratives heat table; ⏎ drills into a narrative.
+  | 'narrative.view' | 'narrative.drill'
   // task-1340 wallet intel: the BUBBLE MAP screen (M on the token screen), its popup (M there), treemap, zoom, deep scan.
   | 'intel.bubbles' | 'popup.bubbles' | 'bubbles.view' | 'bubbles.zoom' | 'bubbles.deep'
   // task-1282 JARVIS voice: push-to-talk. Handled in the interactive loop (the controller lives there),
@@ -372,6 +374,11 @@ export const DEFAULT_KEYMAP = new Keymap<AppAction>([
   { keys: ['N'], action: 'screen.narrative', label: 'narrative board' },
   { keys: ['w'], action: 'narrative.window', label: '1h/24h', screen: 'narrative' },
   { keys: ['M'], action: 'narrative.popup', label: 'popup', screen: 'narrative' },
+  // task-1818: `v` (voice push-to-talk everywhere else; the loop lets it through on this screen only) flips the board ⇄ the
+  // EXPERIMENTAL narratives heat table; ⏎ drills into the selected narrative's member coins (⏎ on a member opens the coin,
+  // esc returns to the table). On the theme board ⏎ keeps its old meaning.
+  { keys: ['n'], action: 'narrative.view', label: 'narratives (exp)', screen: 'narrative' },
+  { keys: ['enter'], action: 'narrative.drill', label: 'drill', screen: 'narrative' },
   { keys: ['s'], action: 'social.toggle', label: 'social', screen: 'token' },
   { keys: ['f'], action: 'social.filter', label: 'filter', screen: 'trending' },
   { keys: ['x'], action: 'social.spam', label: 'hidden spam', screen: 'trending' },

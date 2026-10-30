@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import { dextermHome, loadConfig } from '@dexterm/custom';
 import { pickBasis } from '@dexterm/data/basis';
 import { KillSwitch, createDataLayer, defaultDbPath, resolveRpcUrl } from '@dexterm/data';
+import { DrainPoller, RugProbe, chainVets, defaultFetchJson, rugproofVet, type DrainWatch } from '@dexterm/autotrade';
 import {
   HEARTBEAT_MS, LiveSource, badgeOf, RUNNER_RENDEZVOUS_SCHEMA, RunnerSafety, SessionGate, acquireRunLock, clearControl, clearStaleControl, controlPath, claudeSessionFactory, effectiveCaps, fileLedger, loadRunnerConfig,
   loadTape, newRunId, prepareAccount, releaseRunLock, renderDossierRecord, runAutotrade, runnerRendezvousPath, runnerSystemPrompt, simExecutor, stubSession, writeJsonAtomic,
@@ -236,6 +237,7 @@ export async function runCmd(argv: string[], io: AutotradeIo, over: RunCmdOverri
   let live: LiveSource | null = null;
   let dossier: DossierFn | undefined;
   let vet: VetFn | undefined;
+  let drain: DrainWatch | undefined;
   let closeData = () => {};
   if (replay) {
     try { tape = loadTape(builtinTapePath(replay)); } catch (e) { io.stderr.write(`dexterm autotrade run: ${(e as Error).message}\n`); releaseRunLock(home, runId); return 1; }
@@ -257,6 +259,13 @@ export async function runCmd(argv: string[], io: AutotradeIo, over: RunCmdOverri
     // task-1532: the strategy's LARP gate (entry.safety.larp) on live data, once per coin, before it becomes a candidate.
     const larp = strategy.entry.safety.larp;
     if (larp) vet = larpVet(larp, (mint) => mcp.call('larp_check', { mint }));
+    // task-1748: the rug-proof gates first (read-only probes), then the LARP gate; the drain guard polls held pools.
+    const rp = strategy.entry.safety.rugproof;
+    if (rp) {
+      const probe = new RugProbe({ fetchJson: defaultFetchJson(), rpcUrl: rpc.url });
+      vet = chainVets(rugproofVet(rp, { probe }), vet);
+      if (rp.drainGuard) drain = new DrainPoller(rp.drainGuard, probe, (rec) => log('drain_probe', rec));
+    }
   }
 
   // Heartbeat + rendezvous: on every state change (throttled to 1 s) and every 10 s regardless.
@@ -308,7 +317,7 @@ export async function runCmd(argv: string[], io: AutotradeIo, over: RunCmdOverri
   let code = 0;
   try {
     const res = await runAutotrade({
-      strategy, basis, tape, source, sessions, gate, dossier, vet, verbose: true, onLine: say, ledger, runId,
+      strategy, basis, tape, source, sessions, gate, dossier, vet, drain, verbose: true, onLine: say, ledger, runId,
       ...(realExec ? { executor: realExec, real: realExec, ...(host ? { approvals: host.service.broker } : {}) } : paperExec ? { executor: paperExec, maxHoldMinutes: () => paperExec!.maxHoldMinutes(), ...(host ? { approvals: host.service.broker } : {}) } : host ? { executor: host.port, approvals: host.service.broker } : { executor: baseExec }),
       pacing: replay ? { mode: 'paced', msPerTick: num(opts['ms-per-tick'], 2000) } : { mode: 'live' },
       // The panic file (`dexterm wallet panic`), a stop / flatten request and a local stop (signal, --max-minutes) all

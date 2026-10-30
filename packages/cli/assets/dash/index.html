@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="dash-data" content="api/dash.json">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>dexterm dash · strategy performance (PAPER)</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="dash.css">
+</head>
+<body data-mode="live">
+<a class="skip" href="#view">Skip to content</a>
+<header class="top">
+  <div class="bar">
+    <span class="brand" aria-label="dexterm dash">dexterm<b>/</b>dash</span>
+    <span class="paper" title="Every number here is a simulation">PAPER</span>
+    <div class="updated" id="updated" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="updated-text">loading…</span></div>
+    <button class="theme" id="theme" type="button" aria-label="Theme: automatic. Switch theme">auto</button>
+  </div>
+  <nav class="tabs" aria-label="Views">
+    <a href="#/overview" data-view="overview">Overview</a>
+    <a href="#/strategy" data-view="strategy">Strategy</a>
+    <a href="#/rugs" data-view="rugs">Rugs &amp; stuck</a>
+    <a href="#/compare" data-view="compare">Compare</a>
+    <a href="#/live" data-view="live">Live<span class="wide">&nbsp;status</span></a>
+  </nav>
+</header>
+<main id="view" tabindex="-1"><p class="empty">Loading the run ledgers…</p></main>
+<footer id="foot">
+  <p><strong>Paper trading, not financial advice.</strong> Simulated trades on a paper book; no real funds, no wallet, no keys. Past simulated results say nothing about future results.</p>
+</footer>
+<script src="dash.js"></script>
+</body>
+</html>

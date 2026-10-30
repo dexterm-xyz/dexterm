@@ -22,3 +22,5 @@ date: 2026-10-16
 ---
 
 Ask the analyst for a strategy, then back-test it on your recorded history, forward-test it on live data on paper, and promote it one step at a time to the always-on service and, only if you choose, to real mode. Every step needs evidence; nothing is promoted by the model. Paper by default, not financial advice.
+
+a strategy the analyst proposed in chat, as a diff you apply with a key (PAPER)

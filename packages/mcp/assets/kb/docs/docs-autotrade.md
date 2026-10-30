@@ -19,4 +19,6 @@ sources:
 date: 2026-10-16
 ---
 
-Strategies you write or copy from presets, validated in one file, and backtests on your own recorded history with a held-out check. Paper only, self-directed, not financial advice.
+Strategies you write or copy from presets, validated in one file, and backtests on your own recorded history with a held-out check. Paper by default, self-directed, not financial advice.
+
+a backtest and its held-out sweep on the Q screen (PAPER, a small recorded fixture tape)

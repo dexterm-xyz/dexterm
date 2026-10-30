@@ -31,6 +31,6 @@ sources:
 date: 2026-10-16
 ---
 
-Close and reopen the terminal first. Then run `npm prefix -g` to see npm's global install folder. On macOS/Linux, npm's executable folder must be on your PATH; the installer output normally tells you the exact line for your setup. Do not paste a PATH fix from a stranger. On Windows, rerun the Node.js installer and keep its “Add to PATH” option enabled, then reopen Windows Terminal.
+Close and reopen the terminal first. Then run `npm prefix -g` to see npm's global install folder. On macOS/Linux, npm's executable folder must be on your PATH; the installer output normally tells you the exact line for your setup. Do not paste a PATH fix from a stranger.
 
-You can confirm whether the shell can find dexterm with `command -v dexterm` on macOS/Linux or `Get-Command dexterm` in PowerShell.
+You can confirm whether the shell can find dexterm with `command -v dexterm`.

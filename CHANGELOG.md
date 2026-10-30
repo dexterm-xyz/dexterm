@@ -2,6 +2,24 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.2.1] - 2026-10-30
+
+Opt-in classification models, a memes and narratives tracker, rug-proof entries for your strategies, a strategy dashboard and a streamer overlay. Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.
+
+### Added
+
+- **Classification models (experimental, opt-in).** `dexterm classifier list|pick|pull|serve|doctor|bench|try|key` picks the model that scores coins with calibrated probabilities: the built-in scores (the default; nothing is downloaded), an open Kev decision model on your own machine through llama.cpp (downloaded only after a typed yes, size shown, sha256-verified, offline afterwards), TypeSafe's hosted Jev with your own key (per-call cost and a daily cap), or Claude / Ollama as baselines. `classifier doctor` recommends a tier for your hardware. New MCP tools `classify_coin`, `classify_batch`, `classifier_status` and a `rugp` watch-rule field. Every answer is a model estimate with the model id, never advice; on dexterm's own held-out history Kev 4B and Kev 9B tied the built-in scores (a null result: no better, no worse), so they stay the default.
+- **Memes and narratives tracker (experimental).** Coins grouped by the theme their name and ticker carry (ticker puns, animals, celebrities, AI agents, seasonal events, copy-cats of a runner), with per-window heat, a lifecycle state and a copy-cat saturation flag: `N` then `n` on the board, `dexterm narratives`, three read-only MCP tools and `narrative_rank` / `narrative_score` rule fields. Keyless and local; measured heat, not advice, and on held-out history it added no predictive information.
+- **Rug-proof entries (experimental, per strategy).** `entry.safety.rugproof` refuses pools younger than 10 minutes, hand-made pools, LP held by the creator, pools with liquidity withdrawals, coins with no sell route and a falling second liquidity read, and fails closed when a gate cannot be read; a drain guard sells the whole position when the pool empties; `execution.stuckWriteOffMin` (paper only) closes an unsellable paper bag at its realizable value. On paper it cut the losses and was still negative per entry.
+- **`dexterm dash`.** Your strategies' paper results in a browser on 127.0.0.1: overview, one strategy in detail, rugs and stuck bags, a comparison against a baseline with a 95% interval, live status. Read-only, no network, nothing loaded from the internet; `--export` writes a static snapshot.
+- **Streamer overlay for OBS.** `dexterm overlay` serves three transparent scenes on 127.0.0.1 for an OBS Browser source (the agent's recent calls, the coin it is on, its PnL card stamped PAPER or LIVE by wallet mode), fed by the read-only spectator stream or a replay marked SAMPLE DATA. Single-use URLs, shortened addresses, and the page cannot send anything back.
+- **Recorder exit probes.** `dexterm record run --exit-probes` records a keyless $50 Jupiter sell quote a minute for every held coin (a drained pool shows as "no route"); `--focus-module PATH` adds your own coins to the 5-10 s tick lane. Quotes only.
+
+### Fixed
+
+- **Windows**: two path bugs; the test suite runs on Windows in CI.
+- **Account guard**: a session that fails its first check closes the session gate at once.
+
 ## [0.2.0] - 2026-10-25
 
 The automated trading suite: build a strategy by chat, back-test it, forward-test it, run it always on, on paper or for real. Real mode is experimental; signals to your own executor; dexterm never holds a key; not financial advice. Paper stays the default for every strategy, and everything that trades inside dexterm is still paper.

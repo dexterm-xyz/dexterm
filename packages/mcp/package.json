@@ -15,7 +15,9 @@
   },
   "engines": { "node": ">=22.18" },
   "dependencies": {
+    "@dexterm/classifier": "0.0.1",
     "@dexterm/data": "0.0.1",
+    "@dexterm/narratives": "0.0.1",
     "@dexterm/packs": "0.0.1",
     "@dexterm/recorder": "0.0.1"
   }

@@ -53,6 +53,7 @@ import type { ScanConfig } from './scan/engine.ts';
 import { renderVoiceHud, type VoiceHud } from './voice-hud.ts';
 import { composeHud, DOCK_ROWS, HUD_MIN_H, type AgentHudState } from './screens/agent-hud.ts';
 import { workspaceBadge, type CustomUi } from './custom.ts';
+import type { NarrativesUi } from './narratives.ts';
 import { chartAxisOf, supplyRatio, priceModeOf, supplyForMint, type PriceMode, type ChartAxis, type ChartMarkers } from './display.ts';
 
 /** The analyst's streaming state: a Claude-Code-style spinner, then the answer decrypts in. */
@@ -115,6 +116,8 @@ export interface AppState {
    * The screener column and token-screen badge are drawn ONLY for a mint present here — never a guess.
    */
   larpByMint?: Map<string, { verdict: string; confidence: number | null; at: number }>;
+  /** task-1822: classifier estimates p(drain within 6 h) per mint (model id + time), read by the `rugp` rule field. */
+  classifierByMint?: Map<string, { p: number; model: string; at: number }>;
   /** A contract address the loop should copy to the OS clipboard and confirm (task-1311, QA B5). */
   pendingCopy?: string | null;
   /** task-1401: `E` asked for an export of the current view; the loop renders + writes it (local files only). */
@@ -253,6 +256,8 @@ export interface AppState {
   // ---- task-1356 AI suite: narrative board screen
   /** The narrative board (recomputed on entry / tick from the recorder or the visible rows); set when the screen opens. */
   narrative?: NarrativeView | null;
+  /** task-1818: the N screen's EXPERIMENTAL narratives mode (`n` board ⇄ heat table, ⏎ drill) and its build status. */
+  narrativesUi?: NarrativesUi | null;
   // ---- task-1355 order plans + standing mandates screen (key O)
   /**
    * The plan engine + hash-chained journal (recovered from ~/.dexterm/plans.journal on first open). It is the
@@ -661,6 +666,7 @@ export function makeFixtureState(opts: FixtureStateOpts = {}): AppState {
     ai: null,
     analystByMint: new Map(),
     larpByMint: new Map(),
+    classifierByMint: new Map(),
     colorDepth: opts.colorDepth ?? 'truecolor',
   };
   if (opts.priceMode) state.priceMode = opts.priceMode;

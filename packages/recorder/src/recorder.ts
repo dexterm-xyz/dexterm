@@ -26,6 +26,7 @@ import { COLUMN_NAMES, fromDsView, fromEnrichedRow, isMaterialChange, type Chang
 import { LABELER_VERSION, labelAtHorizon, type Label, type Observation, type OutcomeRow } from './labels.ts';
 import { dueBounds, selectDue, type DueMint, type MintSummary } from './sweep.ts';
 import { TickLane, type FocusEntry, type TickPolicy, type TickPollResult } from './ticks.ts';
+import { ExitProbeLane, type ExitProbeDeps, type ExitProbePolicy, type ExitProbeResult } from './exit-probes.ts';
 import { DEFAULT_AGE, enforceCap, pruneTicksByAge, type CapPolicy, type CapResult } from './retention.ts';
 
 export interface RecorderOptions {
@@ -48,6 +49,8 @@ export interface RecorderOptions {
   retention?: Partial<RetentionPolicy>;
   /** task-1504: the autotrade tick lane (off unless given). `focus` lists the coins to sample, with their role. */
   ticks?: { focus: () => Iterable<FocusEntry>; policy?: Partial<TickPolicy> };
+  /** task-1786: exit probes (exit-probes.ts) for the tick lane's HELD coins; needs `ticks`. Off unless given. */
+  exitProbes?: { policy?: Partial<ExitProbePolicy> };
   /** task-1504: keep the DB under a cap by evicting the oldest history (off unless `maxBytes` is set). */
   cap?: Partial<CapPolicy>;
   /** Diagnostic sink (--verbose). */
@@ -143,6 +146,8 @@ export class Recorder implements StoreListener {
   readonly retention: RetentionPolicy;
   /** task-1504: the tick lane (null when not configured) and the cap policy (null = no cap). */
   readonly tickLane: TickLane | null;
+  /** task-1786: the exit-probe lane (null when not configured). */
+  readonly exitProbeLane: ExitProbeLane | null;
   readonly cap: Partial<CapPolicy> | null;
   private readonly onLog?: (line: string) => void;
   /**
@@ -198,6 +203,7 @@ export class Recorder implements StoreListener {
       insertCreator: this.db.prepare('INSERT OR IGNORE INTO creators (mint, creator, source, first_t, created_at) VALUES (?, ?, ?, ?, ?)'),
     };
     this.tickLane = opts.ticks ? new TickLane(this.db, { focus: opts.ticks.focus, policy: opts.ticks.policy, clock: this.clock, onLog: this.onLog }) : null;
+    this.exitProbeLane = opts.ticks && opts.exitProbes ? new ExitProbeLane(this.db, { focus: opts.ticks.focus, policy: opts.exitProbes.policy, clock: this.clock, onLog: this.onLog }) : null;
     this.cap = opts.cap && opts.cap.maxBytes ? opts.cap : null;
   }
 
@@ -373,6 +379,12 @@ export class Recorder implements StoreListener {
   async pollTicks(deps: { dexscreener: DexScreener; limiter: RateLimiter }, now = this.clock.now()): Promise<TickPollResult> {
     if (!this.enabled || this.closed || !this.tickLane) return { coins: 0, calls: 0, answered: 0, written: 0, overCap: 0, skipped: 'disabled' };
     return this.tickLane.poll(deps, now);
+  }
+
+  /** task-1786: one exit-probe poll (exit-probes.ts); the host calls it after each tick poll. */
+  async probeExits(deps: ExitProbeDeps, now = this.clock.now()): Promise<ExitProbeResult | null> {
+    if (!this.enabled || this.closed || !this.exitProbeLane) return null;
+    return this.exitProbeLane.poll(deps, now);
   }
 
   /**
@@ -573,7 +585,7 @@ export class Recorder implements StoreListener {
     try {
       const d = one<{ b: number | null }>("SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN ('token_snapshots', 'token_snapshots_mint_t', 'token_snapshots_t', 'token_snapshots_t0_pending')");
       if (d.b !== null && Number(s.n) > 0) bytesPerSnapshot = Number(d.b) / Number(s.n);
-      const all = one<{ b: number | null }>("SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN ('recorder_meta', 'feed_members', 'feed_members_mint_t', 'token_snapshots', 'token_snapshots_mint_t', 'token_snapshots_t', 'token_snapshots_t0_pending', 'mints', 'mints_last_live', 'sweeps', 'chain_events', 'chain_events_mint_t', 'outcomes', 'outcomes_label', 'verdicts', 'verdicts_mint_t', 'creators', 'creators_creator', 'autotrade_ticks', 'autotrade_ticks_t', 'autotrade_candles_1m', 'autotrade_candles_1m_t')");
+      const all = one<{ b: number | null }>("SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN ('recorder_meta', 'feed_members', 'feed_members_mint_t', 'token_snapshots', 'token_snapshots_mint_t', 'token_snapshots_t', 'token_snapshots_t0_pending', 'mints', 'mints_last_live', 'sweeps', 'chain_events', 'chain_events_mint_t', 'outcomes', 'outcomes_label', 'verdicts', 'verdicts_mint_t', 'creators', 'creators_creator', 'autotrade_ticks', 'autotrade_ticks_t', 'autotrade_candles_1m', 'autotrade_candles_1m_t', 'exit_probes', 'exit_probes_t')");
       recorderBytes = all.b === null ? null : Number(all.b);
     } catch {
       // dbstat not compiled in: estimate from the stored widths (rows + the three indexes).
