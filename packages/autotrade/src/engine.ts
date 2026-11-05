@@ -15,6 +15,7 @@ import { parseFilter } from '../../cli/src/screener/filter.ts';
 import { tickRow, type MarketTick } from './replay.ts';
 import type { ExitProfile, ResolvedStrategy } from './strategy.ts';
 import type { PaperAccount } from './paper-accounts.ts';
+import { TIERS_HARD_CAP_PCT, selectConfidenceTier, tierTable, type TierPick } from './tiers.ts';
 
 export const DAY_MS = 86_400_000;
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -338,16 +339,18 @@ export const dayOf = (t: number) => Math.floor(t / DAY_MS);
 export interface EntryRequest { profile?: string; sizeUsd?: number; sizePct?: number; confidence?: number }
 
 export interface Clamp { rule: string; fromUsd: number; toUsd: number }
+/** Entries decided but not filled yet (pending open orders, open approvals): the runner's, not the book's. */
+export interface InFlight { opens: number; usd: number }
 export type ClampResult =
-  | { ok: true; usd: number; firstTrancheUsd: number; profile: ExitProfile; clamps: Clamp[]; basis: string }
-  | { ok: false; refused: string; clamps: Clamp[] };
+  | { ok: true; usd: number; firstTrancheUsd: number; profile: ExitProfile; clamps: Clamp[]; basis: string; tier?: TierPick }
+  | { ok: false; refused: string; clamps: Clamp[]; tier?: TierPick };
 
 /**
  * The strategy's answer to "may I enter, and with how much?". Order: refusals (kill switch, halts,
  * cooldowns, counts), then the size the strategy itself picks, then every ceiling, each reduction recorded.
  * An agent request can only LOWER the size below the strategy's own pick, never raise it above a ceiling.
  */
-export function clampEntry(book: SimBook, k: MarketTick, req: EntryRequest, killSwitch = false): ClampResult {
+export function clampEntry(book: SimBook, k: MarketTick, req: EntryRequest, killSwitch = false, nowMs: number = k.t, inFlight?: InFlight): ClampResult {
   const s = book.strategy;
   const st = book.state;
   const clamps: Clamp[] = [];
@@ -355,6 +358,10 @@ export function clampEntry(book: SimBook, k: MarketTick, req: EntryRequest, kill
   // task-1571: paper only (dexterm holds no key and places no live order). task-1645: real is the same paper book; its
   // fills become trade-fire signals for the user's own executor (the runner admits it only through the real-mode hook).
   if (s.mode !== 'paper' && s.mode !== 'real') return no('mode-not-paper');
+  // 0.2.2: EXPERIMENTAL confidence tiers are PAPER ONLY. validateStrategy and the runner refuse them too; this is the
+  // engine's own fence for any document that reached it another way.
+  const tiersOn = s.sizing.tiers ?? null;
+  if (tiersOn && s.mode !== 'paper') return no('tiers-paper-only');
   if (killSwitch) return no('kill-switch');
   if (st.halted) return no(`halted:${st.halted}`);
   if (k.t < st.cooldownUntil) return no('loss-streak-cooldown');
@@ -377,11 +384,29 @@ export function clampEntry(book: SimBook, k: MarketTick, req: EntryRequest, kill
   }
   if ((k.liq ?? 0) < profile.fit.minLiquidityUsd) return no('profile-min-liquidity');
 
+  // 0.2.2 confidence tiers: score the tick (fresh at nowMs), pick the tier; T0 is a skip; one open position unless the
+  // block says not. With tiers, an entry decided but not filled yet (the latency window, an open approval) counts as
+  // open for one-open and maxConcurrent, and its dollars come off the exposure and cash room (task-2156).
+  let tier: TierPick | undefined;
+  const fly = tiersOn ? inFlightOf(inFlight) : { opens: 0, usd: 0 };
+  if (tiersOn) {
+    if (tiersOn.oneOpen !== false && book.open.size + fly.opens >= 1) return no('tier-one-open');
+    if (book.open.size - bags + fly.opens >= s.risk.maxConcurrent) return no('max-concurrent');
+    tier = selectConfidenceTier(k, tierTable(tiersOn.table), nowMs);
+    if (tier.tier === 'T0') return { ok: false, refused: 'tier-T0', clamps, tier };
+  }
+
   const bank = book.bookEquity();
   const z = s.sizing;
   let usd: number;
   let basis: string;
-  switch (z.mode) {
+  // With tiers on, the tier's runs-at % is the strategy's pick (an unproven tier above the cap is recorded as clamped
+  // from its configured size); every ceiling below still applies.
+  if (tier) {
+    usd = (bank * tier.effectivePct) / 100;
+    basis = `tier ${tier.tier} (score ${tier.score}/${tier.of}) ${tier.effectivePct}% of $${r2(bank)}`;
+    if (tier.capped) clamps.push({ rule: 'tier-unproven-cap', fromUsd: r2((bank * tier.configuredPct) / 100), toUsd: r2(usd) });
+  } else switch (z.mode) {
     case 'fixed': usd = z.fixedUsd ?? 0; basis = `fixed $${z.fixedUsd}`; break;
     case 'pct': usd = (bank * (z.pct ?? 0)) / 100; basis = `${z.pct}% of $${r2(bank)}`; break;
     case 'risk': {
@@ -402,20 +427,33 @@ export function clampEntry(book: SimBook, k: MarketTick, req: EntryRequest, kill
     else if (asked > usd) clamps.push({ rule: 'strategy-size', fromUsd: r2(asked), toUsd: r2(usd) });
   }
   const cap = (rule: string, limit: number) => { if (usd > limit + 1e-9) { clamps.push({ rule, fromUsd: r2(usd), toUsd: r2(Math.max(0, limit)) }); usd = Math.max(0, limit); } };
+  // The engine's own ceiling for a tiered entry, whatever the tier pick said: code, not the table or the strategy file.
+  if (tier) { if (!Number.isFinite(usd)) usd = 0; cap('tier-hard-cap', tierHardCapUsd(bank)); }
   if (st.sizeDown) cap('drawdown-size-down', usd * s.risk.drawdown.sizeDownMult);
   cap('strategy-max-pct', (bank * s.sizing.maxPctOfBankroll) / 100);
   cap('profile-max-pct', (bank * profile.sizing.maxSizePctOfBankroll) / 100);
   cap('strategy-max-usd', s.sizing.maxUsd);
   const lossPct = profile.hardStop.enabled && profile.hardStop.atPct !== null ? Math.abs(profile.hardStop.atPct) : s.risk.perTrade.assumedLossPctNoStop;
   cap('per-trade-max-loss', (bank * s.risk.perTrade.maxLossPctOfBankroll) / lossPct);
-  cap('max-exposure', (bank * s.risk.maxExposurePct) / 100 - book.exposureUsd());
-  cap('cash', st.cashUsd);
+  cap('max-exposure', (bank * s.risk.maxExposurePct) / 100 - book.exposureUsd() - fly.usd);
+  cap('cash', st.cashUsd - fly.usd);
   const R = (k.liq ?? 0) / 2;
   const imp = s.execution.maxPriceImpactPct / 100;
   cap('price-impact', (R * imp) / (1 - s.execution.feeBps / 1e4) + s.execution.networkFeeUsd);
-  if (usd < s.sizing.minUsd) return no(clamps.length ? `below-min-after-${clamps[clamps.length - 1].rule}` : 'below-min-size');
+  if (usd < s.sizing.minUsd) { const r = no(clamps.length ? `below-min-after-${clamps[clamps.length - 1].rule}` : 'below-min-size'); return tier ? { ...r, tier } : r; }
   const first = z.ladder ? usd * z.ladder[0].frac : usd;
-  return { ok: true, usd: r2(usd), firstTrancheUsd: r2(first), profile, clamps, basis };
+  return { ok: true, usd: r2(usd), firstTrancheUsd: r2(first), profile, clamps, basis, ...(tier ? { tier } : {}) };
+}
+
+/** In-flight entries, failing closed: a negative or non-finite count is one open entry, such dollars are the whole room. */
+const inFlightOf = (f: InFlight | undefined): InFlight => ({
+  opens: f === undefined ? 0 : Number.isFinite(f.opens) && f.opens >= 0 ? f.opens : 1,
+  usd: f === undefined ? 0 : Number.isFinite(f.usd) && f.usd >= 0 ? f.usd : Infinity,
+});
+
+/** The most a tiered position may cost in total (every tranche and add): TIERS_HARD_CAP_PCT of the book. */
+export function tierHardCapUsd(bookUsd: number): number {
+  return Number.isFinite(bookUsd) && bookUsd > 0 ? (bookUsd * TIERS_HARD_CAP_PCT) / 100 : 0;
 }
 
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0.5);

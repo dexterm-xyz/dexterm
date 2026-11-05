@@ -30,7 +30,7 @@ import { join } from 'node:path';
 import { dextermHome, loadConfig } from '@dexterm/custom';
 import { pickBasis } from '@dexterm/data/basis';
 import { KillSwitch, createDataLayer, defaultDbPath, resolveRpcUrl } from '@dexterm/data';
-import { DrainPoller, RugProbe, chainVets, defaultFetchJson, rugproofVet, type DrainWatch } from '@dexterm/autotrade';
+import { DrainPoller, RugProbe, chainVets, defaultFetchJson, readOnlyCall, rugproofVet, type DrainWatch } from '@dexterm/autotrade';
 import {
   HEARTBEAT_MS, LiveSource, badgeOf, RUNNER_RENDEZVOUS_SCHEMA, RunnerSafety, SessionGate, acquireRunLock, clearControl, clearStaleControl, controlPath, claudeSessionFactory, effectiveCaps, fileLedger, loadRunnerConfig,
   loadTape, newRunId, prepareAccount, releaseRunLock, renderDossierRecord, runAutotrade, runnerRendezvousPath, runnerSystemPrompt, simExecutor, stubSession, writeJsonAtomic,
@@ -244,13 +244,15 @@ export async function runCmd(argv: string[], io: AutotradeIo, over: RunCmdOverri
   } else {
     const rpc = resolveRpcUrl({ env: io.env });
     const data = createDataLayer({ dbPath: io.env.DEXTERM_DB_PATH || defaultDbPath(io.env), rpcUrl: rpc.url, rpcFallbackUrl: rpc.fallbackUrl });
-    closeData = () => data.close();
+    closeData = () => { host?.setReadTools(null); data.close(); };
     liveData = data.dexscreener as unknown as typeof liveData;
     live = new LiveSource({ store: data.store, dexscreener: data.dexscreener }, { onLog: (l) => log('source_error', { error: l.slice(0, 300) }) });
     source = { name: 'live keyless data layer (Store + DexScreener tokens/v1 fast lane)', ticks: live.ticks(), startT: startedAt };
     // v1 dossier: the MCP get_dossier assembly (market, holders, security, candles, tape, creator) for the mint.
     const { McpTools } = await import('@dexterm/mcp');
     const mcp = new McpTools(data, () => ({ screen: 'autotrade-runner', actions: { mints: [], feeds: [], sortKeys: [] } }));
+    // task-1426: the bot's /check and /top read the same tools (read tools only), while this run's data layer is open.
+    host?.setReadTools(readOnlyCall(mcp));
     dossier = async (k, h, matched, b) => {
       let rec: Record<string, unknown>;
       try { rec = await mcp.call('get_dossier', { mint: k.mint, interval: '5m' }); } catch (e) { rec = { availability: { present: [], missing: [`dossier: ${(e as Error).message}`], knownUnavailable: [] } }; }

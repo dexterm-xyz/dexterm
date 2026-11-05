@@ -13,7 +13,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { linkFeatures } from '@dexterm/data';
 import { LABELER_VERSION } from '@dexterm/recorder';
-import { SKILL_EVAL_SCHEMA, type SkillEvalRow, type SkillEvalSet } from '@dexterm/packs';
+import { SKILL_EVAL_SCHEMA, cutoffIso, type SkillEvalRow, type SkillEvalSet } from '@dexterm/packs';
 
 export interface BuildEvalOptions {
   horizonSec?: number;
@@ -55,6 +55,8 @@ export function buildSkillEvalSet(db: DatabaseSync, opts: BuildEvalOptions = {})
     let picked: { t0: number; label: SkillEvalRow['outcome']; label_tier: string; srcs: Array<[string, CacheRec]> } | null = null;
     for (const o of outs) {
       const t0 = Number(o.t0);
+      // A t0 that is not a valid time can never anchor point-in-time evidence (and would poison the split). task-1982
+      if (Number.isNaN(new Date(t0).getTime())) { excluded.bad_t0 = (excluded.bad_t0 ?? 0) + 1; continue; }
       const srcs = ([['jupiter', jup], ['dexscreener', ds]] as Array<[string, CacheRec | null]>)
         .filter((x): x is [string, CacheRec] => !!x[1] && x[1].fetched_at >= t0 && x[1].fetched_at <= t0 + lagMs);
       if (srcs.length) { picked = { t0, label: o.label, label_tier: o.label_tier, srcs }; break; }
@@ -96,7 +98,7 @@ export function buildSkillEvalSet(db: DatabaseSync, opts: BuildEvalOptions = {})
     horizon_sec: horizon,
     label_rule: `recorder outcome at ${horizon}s (keyless proxy, labeler ${LABELER_VERSION}); bad = rug ∪ dead, ok = flat ∪ fade ∪ runner; unobserved dropped`,
     evidence_rule: `link features from the cached DexScreener/Jupiter token record only when it was fetched within ${lagMs / 1000}s after the row's t0 (latest such t0 per coin); rug-check features from that t0 snapshot`,
-    split_rule: `by time: the latest ${Math.round(testFrac * 100)}% of rows by t0 (t0 ≥ ${new Date(cutoff).toISOString()}) are the held-out TEST split, fixed before tuning`,
+    split_rule: `by time: the latest ${Math.round(testFrac * 100)}% of rows by t0 (t0 ≥ ${cutoffIso(cutoff)}) are the held-out TEST split, fixed before tuning`,
     cutoff_t0: cutoff,
     counts: { rows: rows.length, train: train.length, test: test.length, bad_train: train.filter((r) => r.bad).length, bad_test: test.filter((r) => r.bad).length, excluded },
     rows,

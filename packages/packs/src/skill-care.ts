@@ -46,6 +46,15 @@ export interface RollingSplitOptions {
 }
 
 /**
+ * A split cutoff as ISO time for the split_rule text (task-1982). An empty split leaves the MAX_SAFE_INTEGER
+ * sentinel, which is outside the Date range: `toISOString()` would throw RangeError, so it reads as "none" instead.
+ */
+export function cutoffIso(cutoff: number): string {
+  const d = new Date(cutoff);
+  return Number.isNaN(d.getTime()) ? 'none (empty test split)' : d.toISOString();
+}
+
+/**
  * Re-split an eval set so the NEWEST coins are a held-out TEST window the tuning never sees. By default (and
  * whenever `windowDays` is not given) the newest `testFrac` of coins by t0 are TEST (count-based, so TRAIN stays
  * the majority even when t0 is clustered); with `windowDays` it is a time window instead. Returns a new set
@@ -57,13 +66,13 @@ export function rollingSplit(set: SkillEvalSet, opts: RollingSplitOptions = {}):
   if (opts.windowDays !== undefined) {
     const anchor = opts.anchor ?? set.rows.reduce((m, r) => Math.max(m, r.t0), 0);
     cutoff = anchor - opts.windowDays * 86_400_000;
-    rule = `rolling window: coins with t0 in the newest ${opts.windowDays} day(s) (t0 ≥ ${new Date(cutoff).toISOString()}) are the held-out TEST window; never tuned on`;
+    rule = `rolling window: coins with t0 in the newest ${opts.windowDays} day(s) (t0 ≥ ${cutoffIso(cutoff)}) are the held-out TEST window; never tuned on`;
   } else {
     const frac = opts.testFrac ?? 0.3;
     const sorted = [...set.rows].sort((a, b) => a.t0 - b.t0);
     const idx = Math.min(sorted.length, Math.floor(sorted.length * (1 - frac)));
     cutoff = sorted[idx]?.t0 ?? Number.MAX_SAFE_INTEGER;
-    rule = `rolling window: the newest ${Math.round(frac * 100)}% of coins by t0 (t0 ≥ ${new Date(cutoff).toISOString()}) are the held-out TEST window; never tuned on`;
+    rule = `rolling window: the newest ${Math.round(frac * 100)}% of coins by t0 (t0 ≥ ${cutoffIso(cutoff)}) are the held-out TEST window; never tuned on`;
   }
   const rows: SkillEvalRow[] = set.rows.map((r) => ({ ...r, split: r.t0 >= cutoff ? 'test' : 'train' }));
   const train = rows.filter((r) => r.split === 'train');

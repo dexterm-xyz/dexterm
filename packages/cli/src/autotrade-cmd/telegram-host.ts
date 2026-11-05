@@ -12,7 +12,7 @@
 
 import {
   PaperPort, TelegramConnector, TelegramService, loadConnectors, secretStore, type ChatConnector, type ClosedTradeView, type ExecutionPort, type Executor,
-  type LedgerEvent, type ResolvedStrategy, type RunnerState, type SecretStore,
+  type LedgerEvent, type ReadCall, type ResolvedStrategy, type RunnerState, type SecretStore,
 } from '@dexterm/autotrade';
 
 /** Why a Telegram approval is refused for a strategy that is not paper (dexterm places no live order). */
@@ -63,6 +63,9 @@ export class TelegramHost {
     this.runId = runId; this.strategy = s; this.state = null; this.next = null; this.execRef.exec = exec;
     if (solUsdFor) this.solUsdFor = solUsdFor;
   }
+
+  /** task-1426: the run's read tools for /check and /top (null when its data layer closes, or on a replay). */
+  setReadTools(call: ReadCall | null): void { this.service.setReadTools(call); }
 
   onLedger = (e: LedgerEvent): void => this.service.onLedger(e);
   onState = (st: RunnerState): void => { this.state = st; this.service.onState(st); };

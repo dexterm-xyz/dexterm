@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { linkFeatures, LINK_RUBRIC_V0, LINK_RUBRIC_V1, type LinkFeatures } from '@dexterm/data';
 import {
   rollingSplit, newCoinsSince, intervalImproves, proposalGate, trendLine, canaryMcc, proposalCard,
-  splitMetrics, RUG_RULES_V0, RUG_RULES_V1,
+  splitMetrics, cutoffIso, RUG_RULES_V0, RUG_RULES_V1,
   type SkillEvalRow, type SkillEvalSet, type SplitMetrics, type GateInput, type RugRuleFeatures,
 } from '../src/index.ts';
 
@@ -196,4 +196,14 @@ test('trendLine: one line with test/train n, new coins, both subjects and the de
   assert.match(line, /rug MCC/);
   assert.match(line, /larp MCC/);
   assert.match(line, /decision=none/);
+});
+
+test('rollingSplit + cutoffIso: an empty set does not throw RangeError (task-1982)', () => {
+  const r = rollingSplit(set([]), { testFrac: 0.3 });
+  assert.equal(r.counts.rows, 0);
+  assert.equal(r.counts.test, 0);
+  assert.match(r.split_rule, /none \(empty test split\)/);
+  assert.equal(cutoffIso(Number.MAX_SAFE_INTEGER), 'none (empty test split)');
+  assert.equal(cutoffIso(Number.NaN), 'none (empty test split)');
+  assert.equal(cutoffIso(DAY), '1970-01-02T00:00:00.000Z');
 });

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { collectDash, BOOKS_SCHEMA, PAPER_LABEL } from '../src/dash/data.ts';
 import { ASSET_DIR, exportSnapshot, hostAllowed, startDashServer } from '../src/dash/server.ts';
@@ -44,7 +44,7 @@ test('collectDash: strategies, baseline, comparisons, open with realizable from 
   assert.equal(d.paper, PAPER_LABEL);
   assert.deepEqual(d.strategies.map((s) => s.id), ['base', 'variant']); // the baseline first
   const base = d.strategies[0];
-  assert.equal(base.baseline, true); assert.equal(base.group, root.split('/').pop());
+  assert.equal(base.baseline, true); assert.equal(base.group, basename(root)); // task-2147: split('/') kept the whole path on Windows
   assert.equal(base.row.closed, 2); assert.equal(base.row.rugs, 1); assert.equal(base.row.sample, 'exploratory');
   assert.equal(base.rugs.length, 1); assert.equal(base.rugs[0].symbol, 'BBB');
   assert.equal(base.open.length, 1);
@@ -53,7 +53,8 @@ test('collectDash: strategies, baseline, comparisons, open with realizable from 
   assert.equal(d.comparisons.length, 1); assert.match(d.comparisons[0].verdict, /^not yet/);
   assert.match(d.decisionRule!, /beats base/);
   assert.equal(d.status[0].state, 'ok'); assert.ok(d.status[0].items.some(([k, v]) => k === 'Model spend today' && v === '$0.50'));
-  assert.ok(!JSON.stringify(d).includes(root), 'no absolute path in the data');
+  // task-2147: JSON doubles Windows backslashes, so look for the escaped form too
+  assert.ok(!JSON.stringify(d).includes(root) && !JSON.stringify(d).includes(JSON.stringify(root).slice(1, -1)), 'no absolute path in the data');
   assert.deepEqual(snapshotOf(dh), before, 'read-only: the home is untouched');
 });
 

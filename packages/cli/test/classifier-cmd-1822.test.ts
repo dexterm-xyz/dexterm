@@ -81,19 +81,49 @@ describe('dexterm classifier', () => {
     assert.equal(j.ready, true);
     assert.equal(j.typesafeKey, false);
   });
-  it('key set reads stdin, stores it 0600, never prints it; status and clear work', async () => {
+  it('key set reads stdin, stores it owner-only, never prints it; status and clear work', async (tc) => {
     const home = tmp();
     const t = io(home, 'ts_cli_test_key_987654321\n');
     assert.equal(await classifierCommand(['key', 'set'], t.io), 0);
     const p = path.join(home, 'keys', 'typesafe');
-    assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+    assert.match(t.out(), process.platform === 'win32' ? /owner-only Windows access list/ : /\(0600\)/);
+    await tc.test('mode 0600', { skip: process.platform === 'win32' ? 'POSIX-only: NTFS has no owner/group/other mode bits (stat reports 0666)' : false }, () => assert.equal(fs.statSync(p).mode & 0o777, 0o600));
     assert.ok(!t.out().includes('ts_cli_test_key') && !t.err().includes('ts_cli_test_key'));
     const s = io(home);
-    await classifierCommand(['key', 'status'], s.io);
-    assert.match(s.out(), /configured \(not shown\)/);
+    assert.equal(await classifierCommand(['key', 'status'], s.io), 0);
+    assert.match(s.out(), /configured \(not shown\)/); // task-2147: Windows answered "none" for its own key file
     const c = io(home);
     await classifierCommand(['key', 'clear'], c.io);
     assert.equal(fs.existsSync(p), false);
+  });
+  it('task-2147 key on Windows (simulated): set via icacls, status checks the access list, a shared file is refused and names TYPESAFE_API_KEY', async () => {
+    const SID = 'S-1-5-21-10-20-30-1001';
+    let sddl = '';
+    const run = (exe: string, args: string[]) => {
+      const b = path.win32.basename(exe);
+      if (b === 'whoami.exe') return `"h\\u","${SID}"`;
+      if (b === 'icacls.exe') { sddl = `O:${SID}D:P(A;;FA;;;${SID})`; return ''; }
+      return sddl;
+    };
+    const home = tmp();
+    const t = io(home, 'ts_cli_win_key_987654321\n', { platform: 'win32', acl: { run } });
+    assert.equal(await classifierCommand(['key', 'set'], t.io), 0);
+    assert.match(t.out(), /owner-only Windows access list/);
+    const s = io(home, '', { platform: 'win32', acl: { run } });
+    assert.equal(await classifierCommand(['key', 'status'], s.io), 0);
+    assert.match(s.out(), /configured \(not shown\)/);
+    sddl = `O:${SID}D:AI(A;ID;FA;;;${SID})(A;ID;FR;;;BU)`;
+    const r = io(home, '', { platform: 'win32', acl: { run } });
+    assert.equal(await classifierCommand(['key', 'status'], r.io), 1);
+    assert.match(r.out(), /TypeSafe key: refused/);
+    assert.match(r.err(), /other accounts can access it \(BU\).*TYPESAFE_API_KEY/);
+    const d = io(home, '', { platform: 'win32', acl: { run } });
+    assert.equal(await classifierCommand(['doctor'], d.io), 0);
+    assert.match(d.out(), /TypeSafe key: refused .*TYPESAFE_API_KEY works instead/);
+    for (const x of [t, s, r, d]) assert.ok(!(x.out() + x.err()).includes('ts_cli_win_key'));
+    const e = io(home, '', { platform: 'win32', acl: { run }, env: { DEXTERM_HOME: home, PATH: '', TYPESAFE_API_KEY: 'ts_env_cli_123456789' } });
+    assert.equal(await classifierCommand(['key', 'status'], e.io), 0);
+    assert.match(e.out(), /configured from TYPESAFE_API_KEY \(not shown\)/);
   });
   it('bench and try run on the heuristic offline and label the estimate', async () => {
     const t = io(tmp());

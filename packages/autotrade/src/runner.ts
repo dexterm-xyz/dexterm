@@ -23,7 +23,7 @@ import { uptime } from 'node:os';
 import { join } from 'node:path';
 import { Ledger, writeJsonAtomic } from './ledger.ts';
 import type { ResolvedStrategy } from './strategy.ts';
-import { EntryRules, SimBook, clampEntry, simBuy, simSell, type ClampResult, type ClosedTrade, type Exec, type Fill, type Position } from './engine.ts';
+import { EntryRules, SimBook, clampEntry, simBuy, tierHardCapUsd, simSell, type ClampResult, type InFlight, type ClosedTrade, type Exec, type Fill, type Position } from './engine.ts';
 import { monitorTick, type WakeEvent } from './monitor.ts';
 import type { MarketTick, Tape } from './replay.ts';
 import { buildDelta, renderDelta, renderEvent, urgent, view, type AgentSession, type Bounds, type Decision, type Reply, type TickView } from './session.ts';
@@ -34,6 +34,7 @@ import type { SafetyVerdict } from './safety.ts';
 import type { PaperAccount } from './paper-accounts.ts';
 import type { RealStatus } from './real-mode.ts';
 import type { Receipt } from './receipts.ts';
+import { confidenceTierLine, tierRecord } from './tiers.ts';
 
 export { Ledger, type LedgerEvent } from './ledger.ts';
 
@@ -292,6 +293,9 @@ async function* fromArray(ticks: MarketTick[]): AsyncIterable<MarketTick> { for 
 
 export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   const s = o.strategy;
+  // 0.2.2: EXPERIMENTAL confidence tiers run on paper only: never in a real-signal run, never in any mode but paper
+  // (validateStrategy refuses the block outside paper and the engine refuses it too; this is the runner's own gate).
+  if (s.sizing.tiers && !(!o.real && s.mode === 'paper')) throw new Error(`strategy ${s.id}: confidence tiers (sizing.tiers) are EXPERIMENTAL and PAPER ONLY: refused ${o.real ? 'in a real-signal run' : `in mode "${s.mode}"`} (remove sizing.tiers to run it there)`);
   // task-1571: autotrade runs on paper only. dexterm holds no key and places no live order; live trading happens in the
   // Telegram trading bot of the user's choice.
   // task-1645: mode "real" = the same paper engine, plus a LIVE TRADE FIRE signal per fill for the user's own executor;
@@ -324,6 +328,8 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   const skippedUntil = new Map<string, number>();
   /** Coins the vet passed this run (a refused one goes to skippedUntil for good). */
   const vetted = new Set<string>();
+  /** 0.2.2 confidence tiers: coins whose T0 (skip) line was already written at the pre-check. */
+  const tierSkipSaid = new Set<string>();
   const orders: PendingOrder[] = [];
   const refusals: Record<string, number> = {};
   const clampCount: Record<string, number> = {};
@@ -343,6 +349,15 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
   const pumps = new Set<Promise<void>>();
   /** Proposals waiting for an answer, by mint (task-1527). */
   const approvalsOpen = new Map<string, Promise<void>>();
+  /** task-2156: the first-tranche dollars of each open approval (an in-flight entry for the tier clamp). */
+  const approvalUsd = new Map<string, number>();
+  /** task-2156: entries decided but not filled (pending open orders + open approvals), other than `except`'s own. */
+  const inFlight = (except?: string): InFlight => {
+    let opens = 0; let usd = 0;
+    for (const q of orders) if (q.kind === 'open' && q.mint !== except) { opens++; usd += q.usd; }
+    for (const m of approvalsOpen.keys()) if (m !== except) { opens++; usd += approvalUsd.get(m) ?? Infinity; }
+    return { opens, usd };
+  };
 
   ledger.add(t0, 'run_start', { strategy: s.id, version: s.version, strategyHash: s.hash, mode: s.mode, ...(o.real ? { tag: 'real-signal', accountId: o.real.accountId } : {}), ...(s.highRisk ? { highRisk: true } : {}), tape: o.tape?.source ?? o.source!.name, ticks: tapeTicks?.length ?? null, decide: decideAuto ? 'auto' : s.entry.decide, ...(o.approvals ? { approvals: o.approvals.required(s) ? 'required' : 'when-asked' } : {}), pacing: pacing.mode, executor: exec.name, caps: capsView(gate), ...(o.account ? { account: o.account.id } : {}) });
   // task-1645 r2: a real run takes over the real positions an earlier run of this strategy left open (held.json),
@@ -516,8 +531,9 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       if (orders.some((q) => q.mint === c.mint)) return;
       if (entriesPaused && !killed) { refuse('entries-paused', { mint: c.mint, why: entriesPaused }); await closeCandidate(c, 'refused:entries-paused'); return; }
       const req = { profile: d.profile, sizePct: d.sizePct, sizeUsd: d.sizeUsd, confidence: d.confidence };
-      const r = capYoungPool(clampEntry(book, k, req, killed), c);
-      ledger.add(now, 'clamp', { mint: c.mint, sessionId: c.session?.id ?? null, request: req, result: r.ok ? { ok: true, usd: r.usd, firstTrancheUsd: r.firstTrancheUsd, profile: r.profile.id, basis: r.basis, clamps: r.clamps } : r });
+      const r = capYoungPool(clampEntry(book, k, req, killed, now, inFlight(c.mint)), c);
+      ledger.add(now, 'clamp', { mint: c.mint, sessionId: c.session?.id ?? null, request: req, result: r.ok ? { ok: true, usd: r.usd, firstTrancheUsd: r.firstTrancheUsd, profile: r.profile.id, basis: r.basis, clamps: r.clamps } : r.tier ? { ok: false, refused: r.refused, clamps: r.clamps } : r, ...(r.tier ? { tier: tierRecord(r.tier) } : {}) });
+      if (r.tier) say(confidenceTierLine(r.tier, k, r.ok ? r.usd : undefined));
       for (const cl of r.clamps) clampCount[cl.rule] = (clampCount[cl.rule] ?? 0) + 1;
       if (!r.ok) { refuse(r.refused, { mint: c.mint, stage: 'entry' }); await closeCandidate(c, `refused:${r.refused}`); return; }
       say(`clamp ${k.symbol}: asked ${d.sizePct !== undefined ? `${d.sizePct}%` : d.sizeUsd !== undefined ? `$${d.sizeUsd}` : 'default'} → $${r.usd} (${r.basis}${r.clamps.length ? `; clamped by ${r.clamps.map((q) => q.rule).join(', ')}` : ''})`);
@@ -577,7 +593,7 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       reclamp: (usd) => {
         const t = latest.get(c.mint);
         if (!t) return { ok: false, refused: 'no-tick' };
-        const rc = clampEntry(book, t, { profile: prof.id, sizeUsd: usd }, killed);
+        const rc = clampEntry(book, t, { profile: prof.id, sizeUsd: usd }, killed, now, inFlight(c.mint));
         return rc.ok ? { ok: true, usd: rc.usd, clamps: rc.clamps.map((q) => q.rule) } : { ok: false, refused: rc.refused };
       },
       blocked: entryBlocked,
@@ -597,19 +613,31 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
         if (!c.closing) await closeCandidate(c, 'refused:approval-dropped');
         return;
       }
-      const usd = Math.min(out.usd, r.usd);
-      const scale = r.usd > 0 ? usd / r.usd : 0;
       const t = latest.get(c.mint) ?? k;
+      let usd = Math.min(out.usd, r.usd);
+      // task-2156: a tiered entry re-clamps at the approval (one open, concurrency, room, a fresh tick), since other
+      // entries may have been decided or filled while it waited.
+      if (s.sizing.tiers) {
+        const rc = clampEntry(book, t, { profile: prof.id, sizeUsd: usd }, killed, now, inFlight(c.mint));
+        if (!rc.ok) {
+          refuse('approval-dropped', { mint: c.mint, proposalId: out.proposalId, why: rc.refused });
+          if (!c.closing) await closeCandidate(c, 'refused:approval-dropped');
+          return;
+        }
+        usd = Math.min(usd, rc.usd);
+      }
+      const scale = r.usd > 0 ? usd / r.usd : 0;
       ledger.add(now, 'approval_granted', { mint: c.mint, proposalId: out.proposalId, via: out.via, usd, proofId: out.proofId ? `${out.proofId.slice(0, 6)}…` : null });
       say(`APPROVED ${k.symbol}: $${round2(usd)} via ${out.via}`);
       const ladder = (s.sizing.ladder ?? []).slice(1).map((tr) => ({ frac: tr.frac, atPct: tr.atPct, deadline: now + tr.withinMin * 60e3, usd: usd * tr.frac }));
       const first = round2(r.firstTrancheUsd * scale);
       orders.push({ mint: c.mint, fillAt: now + x.latencyMs, decidedPrice: t.price ?? 0, usd: first, firstUsd: first, profile: prof.id, sessionId: c.session?.id ?? null, trigger: c.matched, ladder, kind: 'open', ctx: { proofId: out.proofId, proposalId: out.proposalId, orderHash: out.orderHash } });
     };
+    approvalUsd.set(c.mint, r.firstTrancheUsd);
     const pending = o.approvals.request(prop, live)
       .catch((e: unknown): ApprovalOutcome => ({ approved: false, state: 'ERROR', why: e instanceof Error ? e.message.slice(0, 120) : String(e) }))
       .then(settle)
-      .finally(() => { approvalsOpen.delete(c.mint); });
+      .finally(() => { approvalsOpen.delete(c.mint); approvalUsd.delete(c.mint); });
     approvalsOpen.set(c.mint, pending);
     // Lockstep (backtests, tests) waits for the answer; every other pacing lets it land when it lands.
     if (pacing.mode === 'lockstep') await pending;
@@ -688,7 +716,12 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
       // Re-check at the fill, like a swap's slippage tolerance: a pool that drained or a price that ran
       // away between the decision and the fill refuses the order instead of buying into it.
       const prof0 = s.exits.profiles[q.profile];
-      const why = (k.liq ?? 0) < prof0.fit.minLiquidityUsd ? 'fill-liquidity-gone'
+      // task-2156: a tiered open re-checks one-open and concurrency at the fill (another entry may have filled first).
+      const tierBusy = s.sizing.tiers && q.kind === 'open'
+        ? (s.sizing.tiers.oneOpen !== false && book.open.size >= 1 ? 'fill-tier-one-open' : book.open.size >= s.risk.maxConcurrent ? 'fill-max-concurrent' : null)
+        : null;
+      const why = tierBusy ? tierBusy
+        : (k.liq ?? 0) < prof0.fit.minLiquidityUsd ? 'fill-liquidity-gone'
         : k.price && q.decidedPrice && k.price > q.decidedPrice * (1 + x.slippageBps / 1e4) ? 'fill-slippage'
         // task-1538: on a shared paper account another strategy may have spent the cash since this order was decided;
         // the cash is held before the (async) fill so two strategies can never spend the same dollars.
@@ -882,7 +915,13 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
           await sellPosition(pos, k, a.tokens, a.reason, a.detail);
         } else if (a.kind === 'add') {
           if (killed || book.state.halted) continue;
-          const room = Math.min(a.usd, book.state.cashUsd, (book.bookEquity() * s.risk.maxExposurePct) / 100 - book.exposureUsd());
+          let room = Math.min(a.usd, book.state.cashUsd, (book.bookEquity() * s.risk.maxExposurePct) / 100 - book.exposureUsd());
+          // 0.2.2 confidence tiers: the whole position (every tranche) stays within the engine's tier ceiling (fails closed).
+          if (s.sizing.tiers) {
+            const left = tierHardCapUsd(book.bookEquity()) - pos.costUsd;
+            if (!(left >= s.sizing.minUsd)) { refuse('ladder-add-tier-hard-cap', { positionId: pos.id }); continue; }
+            room = Number.isFinite(room) ? Math.min(room, left) : 0;
+          }
           if (room < s.sizing.minUsd) { refuse('ladder-add-no-room', { positionId: pos.id }); continue; }
           ledger.add(now, 'ladder_trigger', { positionId: pos.id, detail: a.detail, usd: room });
           orders.push({ mint: k.mint, fillAt: now + x.latencyMs, decidedPrice: k.price ?? 0, usd: room, firstUsd: room, profile: pos.profileId, sessionId: pos.sessionId, trigger: [], ladder: [], kind: 'add', positionId: pos.id });
@@ -908,9 +947,12 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
         const sr = rules.screen(k);
         if (sr.pass) {
           // Cheap pre-check so a full book does not spawn sessions it could never act on.
-          const pre = clampEntry(book, k, {}, killed);
+          const pre = clampEntry(book, k, {}, killed, now, inFlight(k.mint));
           const v = pre.ok && o.vet && !vetted.has(k.mint) ? await vetCoin(k, vetCtx(k, pre.usd, h)) : null;
-          if (!pre.ok) { if (!['already-open'].includes(pre.refused)) count(`precheck:${pre.refused}`); }
+          if (!pre.ok) {
+            if (!['already-open'].includes(pre.refused)) count(`precheck:${pre.refused}`);
+            if (pre.tier?.tier === 'T0' && !tierSkipSaid.has(k.mint)) { tierSkipSaid.add(k.mint); say(confidenceTierLine(pre.tier, k)); }
+          }
           else if (v && !v.ok) {
             // task-1748: a time gate (pool age, the second liquidity read) looks again later; any other refusal is for good.
             const retry = v.retryAfterMs !== undefined;

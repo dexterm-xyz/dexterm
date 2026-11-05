@@ -408,6 +408,8 @@ async function runServiceCmd(argv: string[], io: AutotradeIo, deps: ServiceDeps)
   const over: FleetRunOverrides = {
     ...deps.fleetOver,
     extraSafety: () => ({ pauseEntries: lastGuard?.pauseEntries ?? null }),
+    // task-1426: the fleet's read tools for the bot's /check and /top (the service opens no data layer of its own).
+    onReadTools: (call) => { tg?.setReadTools(call); deps.fleetOver?.onReadTools?.(call); },
     vetWrap: takenVet,
     adopt: (id) => adopt.get(id),
     onStarted: (id, fl) => {
@@ -490,7 +492,7 @@ async function startTelegram(home: string, runId: () => string | null, say: (s: 
   const state = (): RunnerState | null => { try { return JSON.parse(readFileSync(runnerRendezvousPath(home), 'utf8')) as RunnerState; } catch { return null; } };
   const svc = new TelegramService({ home, connector, port, knownToken: () => token, runId, state, strategy: () => null, alert: (l) => say(`! ${l}`) });
   await svc.start();
-  say('telegram: your bot is on (notifications, /status, /pause, /stop)');
+  say('telegram: your bot is on (notifications, /status, /pause, /stop, /check, /top, /signals)');
   return svc;
 }
 

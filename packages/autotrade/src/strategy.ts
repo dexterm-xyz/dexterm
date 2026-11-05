@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { validate } from '@dexterm/custom';
 import { parseFilter } from '../../cli/src/screener/filter.ts';
 import type { RugproofRules } from './rugproof.ts';
+import { TIER_TABLE_IDS, TIERS_VERDICT, tierTable, tierTableLines, type TierTableId } from './tiers.ts';
 
 type Node = Parameters<typeof validate>[0];
 type Refs = NonNullable<Parameters<typeof validate>[4]>;
@@ -132,6 +133,11 @@ export interface Strategy {
     maxPctOfBankroll: number;
     maxUsd: number;
     minUsd: number;
+    /** 0.2.2 (tiers.ts): EXPERIMENTAL, UNPROVEN confidence tiers, PAPER ONLY, default off. The engine scores each candidate tick,
+     *  the tier's size (an unproven tier above 25% runs at 25%; T0 = skip) replaces the mode's pick, and every limit
+     *  below still applies (the stricter wins). `experimental: "paper-only"` is the explicit opt-in; oneOpen (default
+     *  true) allows one open position at a time. Refused in mode real / live, and by the runner outside paper. */
+    tiers?: { table: TierTableId; experimental: 'paper-only'; oneOpen?: boolean } | null;
   };
   risk: {
     perTrade: { maxLossPctOfBankroll: number; assumedLossPctNoStop: number };
@@ -254,6 +260,7 @@ export const SCHEMAS: Refs = {
       confidence: obj({ minPct: num(0.1, 25), maxPct: num(0.1, 25), default: num(0, 1) }),
       ladder: { type: 'array', max: 4, items: obj({ frac: num(0.05, 1), atPct: num(-90, 1000), withinMin: num(1, 1440) }) },
       maxPctOfBankroll: num(0.1, 25), maxUsd: num(1, 1e6), minUsd: num(0.01, 1e6),
+      tiers: nullable(obj({ table: { type: 'string', enum: TIER_TABLE_IDS }, experimental: { type: 'string', enum: ['paper-only'] }, oneOpen: { type: 'boolean' } }, ['table', 'experimental'])),
     }, ['mode', 'maxPctOfBankroll', 'maxUsd', 'minUsd']),
     risk: obj({
       perTrade: obj({ maxLossPctOfBankroll: num(0.1, 25), assumedLossPctNoStop: num(10, 100) }),
@@ -352,6 +359,17 @@ export function validateStrategy(doc: unknown, library: Record<string, ExitProfi
   if (r.drawdown.sizeDownAtPct > r.drawdown.haltAtPct) errors.push({ path: '/risk/drawdown', msg: 'sizeDownAtPct must not exceed haltAtPct' });
   if (r.drawdown.recoverBelowPct >= r.drawdown.sizeDownAtPct) errors.push({ path: '/risk/drawdown/recoverBelowPct', msg: 'recoverBelowPct must be below sizeDownAtPct' });
   if (s.execution.stuckWriteOffMin != null && s.mode !== 'paper') errors.push({ path: '/execution/stuckWriteOffMin', msg: `the stuck write-off is paper only: in mode ${s.mode} the bag is still in your wallet and keeps its exit signals (remove it or set it to null)` });
+  if (z.tiers) {
+    // 0.2.2: EXPERIMENTAL confidence tiers are PAPER ONLY (the runner and the engine refuse them outside paper too).
+    if (s.mode !== 'paper') errors.push({ path: '/sizing/tiers', msg: `confidence tiers are EXPERIMENTAL and PAPER ONLY: refused in mode ${s.mode} (remove sizing.tiers or set it to null)` });
+    const tt = tierTable(z.tiers.table);
+    const rp = s.entry.safety.rugproof;
+    if (!rp || rp.minPoolAgeMin < tt.gates.minPoolAgeMin) errors.push({ path: '/entry/safety/rugproof', msg: `confidence tiers need the rug-proof block with minPoolAgeMin ${tt.gates.minPoolAgeMin} or more (the pool age gate of table ${tt.id}; the tick alone cannot tell a pool's age)` });
+    warnings.push({ path: '/sizing/tiers', msg: TIERS_VERDICT });
+    for (const line of tierTableLines(tt).slice(1)) warnings.push({ path: '/sizing/tiers', msg: line });
+    warnings.push({ path: '/sizing/tiers', msg: `the tier's size replaces the size of sizing mode ${z.mode}; every limit still applies and the stricter wins (sizing.maxPctOfBankroll ${z.maxPctOfBankroll}%, maxUsd $${z.maxUsd}, the profile's max %, per-trade loss, exposure, cash, price impact, drawdown size-down)${z.tiers.oneOpen === false ? '' : '; one open position at a time'}; tier gates: liquidity >= $${tt.gates.minLiqUsd}, pool age >= ${tt.gates.minPoolAgeMin} min, not young and vertical` });
+    if (z.ladder) warnings.push({ path: '/sizing/ladder', msg: 'with confidence tiers the ladder splits the tier size into tranches (the first fills at entry)' });
+  }
   if (s.agent.budgetUsdPerSession > s.agent.budgetUsdPerDay) errors.push({ path: '/agent/budgetUsdPerSession', msg: 'a session budget above the daily budget' });
   if (s.entry.ageHours.max !== null && s.entry.ageHours.max < s.entry.ageHours.min) errors.push({ path: '/entry/ageHours', msg: 'max is below min' });
   if (s.entry.triggers.length === 0) errors.push({ path: '/entry/triggers', msg: 'at least one trigger (use {"kind":"screen"} for "every screen match")' });

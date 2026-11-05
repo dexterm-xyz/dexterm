@@ -53,6 +53,8 @@ export interface ListEntry {
   mode?: 'paper' | 'real' | 'live';
   /** task-1532: the strategy's HIGH RISK label (the yolo preset and its copies). */
   highRisk?: boolean;
+  /** 0.2.2: the strategy opts in to the EXPERIMENTAL, UNPROVEN confidence tiers (sizing.tiers), paper only. */
+  experimentalTiers?: boolean;
   profiles?: string[];
   errors?: Issue[];
   warnings: Issue[];
@@ -122,7 +124,7 @@ export class StrategyStore {
       if (!r.ok) return { id, source, ok: false, errors: r.errors, warnings: r.warnings };
       const s = r.strategy;
       return {
-        id, source, ok: true, name: s.name, version: s.version, hash: s.hash, mode: s.mode, ...(s.highRisk ? { highRisk: true } : {}), profiles: Object.keys(s.exits.profiles), warnings: r.warnings,
+        id, source, ok: true, name: s.name, version: s.version, hash: s.hash, mode: s.mode, ...(s.highRisk ? { highRisk: true } : {}), ...(s.sizing.tiers ? { experimentalTiers: true } : {}), profiles: Object.keys(s.exits.profiles), warnings: r.warnings,
         ...(last[s.hash] ? { lastBacktest: last[s.hash] } : {}),
       };
     };

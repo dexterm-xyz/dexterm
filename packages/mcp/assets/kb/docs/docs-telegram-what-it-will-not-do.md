@@ -26,6 +26,6 @@ date: 2026-10-16
 - Run anywhere but your computer, or on a shared or hosted bot.
 - Post proposals to a group or a channel: approvals work only in your private chat, and relaying AI trade calls to an audience is something we tell you not to do.
 - Read a typed message as a trade, by a parser or by a model.
-- Make anything less safe from chat.
+- Make anything less safe from chat, or change anything with `/check`, `/top` or `/signals`.
 - Hold or ask for your keys, seed phrase or wallet.
 - Place an order in a trading bot, or sign or send a transaction.

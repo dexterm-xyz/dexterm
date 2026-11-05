@@ -1,5 +1,6 @@
 // task-1822: hostile token text, config, model manager (consent / disk guard / checksum), hardware tiers, calibration.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,11 +9,14 @@ import { describe, it } from 'node:test';
 import {
   CATALOG, ClassifierError, COIN_RISK, REMOVED_TEXT, applyPlatt, auroc, brier, calibrateAnswer, classify, coinDossier, defaultClassifierConfig,
   detectHardware, ece, finishAnswer, fitPlatt, heuristicProvider, isInstalled, loadClassifierConfig, parseClassifierConfig, precisionAtRecall,
-  prepareState, providerFromConfig, pullModel, serveArgv, readTypesafeKey, recommendTier, saveClassifierConfig, validateQuestionSet, writeTypesafeKey,
+  prepareState, providerFromConfig, pullModel, serveArgv, readTypesafeKey, recommendTier, saveClassifierConfig, typesafeKeyRefusal, typesafeKeyState,
+  validateQuestionSet, writeTypesafeKey,
   type CatalogEntry, type Hardware,
 } from '../src/index.ts';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dexterm-classifier-'));
+const WIN = process.platform === 'win32';
+const POSIX_ONLY = 'POSIX-only: NTFS has no owner/group/other mode bits (stat reports 0666)';
 
 describe('prompt firewall on hostile token text', () => {
   const HOSTILE = [
@@ -82,25 +86,37 @@ describe('config', () => {
     assert.equal(config.kev.endpoint, defaultClassifierConfig().kev.endpoint);
     assert.equal(errors.length, 5);
   });
-  it('saves atomically with 0600 and round-trips', () => {
+  it('saves atomically with 0600 and round-trips', async (t) => {
     const env = { DEXTERM_HOME: tmp() };
     const c = defaultClassifierConfig();
     c.provider = 'kev-local';
     c.calibration['kev-0.8b-q8|drain_6h'] = { a: 1.2, b: -0.3, n: 600, fitted_on: 'test' };
     const p = saveClassifierConfig(c, env);
-    assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+    await t.test('mode 0600', { skip: WIN ? POSIX_ONLY : false }, () => assert.equal(fs.statSync(p).mode & 0o777, 0o600));
     const l = loadClassifierConfig(env);
     assert.deepEqual(l.errors, []);
     assert.equal(l.config.provider, 'kev-local');
     assert.equal(l.config.calibration['kev-0.8b-q8|drain_6h'].a, 1.2);
   });
-  it('API key: env first, then a 0600 file; a group-readable file is refused; never in classifier.json', () => {
+  it('API key: env first, then an owner-only file; a file other users can read is refused; never in classifier.json', () => {
     const env: NodeJS.ProcessEnv = { DEXTERM_HOME: tmp() };
     assert.equal(readTypesafeKey(env), null);
     const p = writeTypesafeKey('ts_file_key_12345678', env);
-    assert.equal(readTypesafeKey(env), 'ts_file_key_12345678');
-    fs.chmodSync(p, 0o644);
-    assert.equal(readTypesafeKey(env), null);
+    assert.equal(readTypesafeKey(env, { fresh: true }), 'ts_file_key_12345678'); // task-2147: Windows refused its own file here
+    if (WIN) {
+      // the Windows equivalent of chmod 644: let Everyone (S-1-1-0) read it
+      execFileSync('icacls', [p, '/grant', '*S-1-1-0:(R)'], { stdio: 'ignore' });
+      const s = typesafeKeyState(env, { fresh: true });
+      assert.equal(s.source, 'refused');
+      assert.match(typesafeKeyRefusal(s as { path: string; reason: string }), /other accounts can access it \((WD|S-1-1-0)\).*TYPESAFE_API_KEY/);
+    } else {
+      assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+      fs.chmodSync(p, 0o644);
+      const s = typesafeKeyState(env);
+      assert.equal(s.source, 'refused');
+      assert.match(typesafeKeyRefusal(s as { path: string; reason: string }), /mode 644.*TYPESAFE_API_KEY/);
+    }
+    assert.equal(readTypesafeKey(env, { fresh: true }), null);
     assert.equal(readTypesafeKey({ ...env, TYPESAFE_API_KEY: 'ts_env_key_12345678' }), 'ts_env_key_12345678');
     saveClassifierConfig(defaultClassifierConfig(), env);
     assert.ok(!fs.readFileSync(path.join(env.DEXTERM_HOME!, 'classifier.json'), 'utf8').includes('ts_'));
@@ -140,7 +156,7 @@ describe('model manager', () => {
   it('refuses when the disk would drop under the margin', async () => {
     await assert.rejects(pullModel('test-model', { home: tmp(), consent: true, entry, free: () => 1024, fetch: async () => ({ status: 200, body: stream(payload) }) }), /not enough disk/);
   });
-  it('verifies the checksum, then renames into place; a second pull is skipped', async () => {
+  it('verifies the checksum, then renames into place; a second pull is skipped', async (t) => {
     const home = tmp();
     const seen: number[] = [];
     const r = await pullModel('test-model', { home, consent: true, entry, free: () => 1e12, fetch: async () => ({ status: 200, body: stream(payload) }), onProgress: (d) => seen.push(d) });
@@ -148,7 +164,7 @@ describe('model manager', () => {
     assert.equal(r.sha256, entry.sha256);
     assert.deepEqual(seen, [10, payload.length]);
     assert.ok(isInstalled(home, entry));
-    assert.equal(fs.statSync(r.path).mode & 0o777, 0o600);
+    await t.test('mode 0600', { skip: WIN ? POSIX_ONLY : false }, () => assert.equal(fs.statSync(r.path).mode & 0o777, 0o600));
     const again = await pullModel('test-model', { home, consent: false, entry, fetch: async () => { throw new Error('no network expected'); } });
     assert.equal(again.skipped, true);
   });

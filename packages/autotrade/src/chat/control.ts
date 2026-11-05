@@ -10,6 +10,8 @@
 //   /use <id>                               an equal-or-tighter validated strategy only, after a [Yes, switch] button;
 //                                           never changes paper/live; a looser one says "change it locally"
 //   /approvals on                           every entry waits for a tap (safer). `off` is local only
+//   /check <CA> · /top [N] · /signals [N]   read-only data (task-1426): not routed here at all; the hub sends them
+//                                           to the ReadOnlyRouter (readonly.ts), which never sees this port
 // Not from chat, ever: live mode, looser caps or strategies, approvals off, resuming after a kill or a panic.
 // The router only calls the ControlPort the host gives it; the port writes the same control file the CLI and the
 // Q screen write, so chat is a remote control for the same local engine and adds no path around its fences.
@@ -66,6 +68,7 @@ export const HELP_LINES = [
   '/flatten (sell everything, asks first)',
   '/use <strategy> (equal or tighter only, asks first)',
   '/approvals on (every entry waits for your tap)',
+  '/check <CA> · /top [N] · /signals [N] (read-only: data, not advice)',
   'Trades are approved only with buttons. I never ask for keys or seed phrases.',
 ];
 

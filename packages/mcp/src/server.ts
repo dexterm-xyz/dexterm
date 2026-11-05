@@ -1330,10 +1330,11 @@ export class McpTools {
     }
   }
 
-  /** Close the read-only history handle (narrative_board). Safe to call when none was opened. */
+  /** Close the read-only history handle (narrative_board, narratives). Safe to call when none was opened. */
   closeHistory(): void {
     try { this.narrativeDb?.close(); } catch { /* ignore */ }
     this.narrativeDb = null;
+    this.narratives = null; // task-2147: it held the closed handle; the next call reopens and rebuilds
   }
 }
 

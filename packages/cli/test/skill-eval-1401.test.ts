@@ -78,3 +78,34 @@ test('dexterm backtest --build-eval then --subject skills [--tune] [--json]', ()
     assert.equal(backtestCommand(['--subject', 'skills', '--eval', join(dir, 'missing.json')], io), 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// task-1982: the skill-care cron crashed with "RangeError: Invalid time value" when no coin had point-in-time link
+// evidence (the recorder's DB-cap reclaim pruned the link cache): the empty split's MAX_SAFE_INTEGER cutoff went
+// through toISOString(). An empty set and a t0 outside the Date range must build, not throw.
+test('buildSkillEvalSet: no usable rows (pruned link cache) builds an empty set instead of throwing RangeError', () => {
+  const d = db();
+  coin(d, 'PRUNED1', T, 'dead', T + 50 * HOUR, { web: 'https://a.example' }); // only a late record survives the prune
+  coin(d, 'PRUNED2', T + HOUR, 'flat', T + 60 * HOUR, { web: 'https://b.example' });
+  const set = buildSkillEvalSet(d, { horizonSec: H, now: T });
+  assert.equal(set.counts.rows, 0);
+  assert.equal(set.counts.test, 0);
+  assert.equal(set.counts.excluded.no_point_in_time_link_record, 2);
+  assert.match(set.split_rule, /none \(empty test split\)/);
+  assert.doesNotThrow(() => JSON.stringify(set));
+  const none = buildSkillEvalSet(db(), { horizonSec: H, now: T }); // no outcomes at all
+  assert.equal(none.counts.rows, 0);
+  assert.match(none.split_rule, /none \(empty test split\)/);
+});
+
+test('buildSkillEvalSet: testFrac 0 (empty test split) and a t0 outside the Date range do not throw', () => {
+  const d = db();
+  for (let i = 0; i < 4; i++) coin(d, `OK${i}`, T + i * HOUR, 'flat', T + i * HOUR + 1000, { web: 'https://sym.example' });
+  const BAD = 9e15; // > 8.64e15 ms: new Date(BAD).toISOString() throws
+  coin(d, 'BADT0', BAD, 'rug', BAD + 1000, { web: 'https://sym.example' });
+  const set = buildSkillEvalSet(d, { horizonSec: H, testFrac: 0, now: T });
+  assert.equal(set.counts.rows, 4);
+  assert.equal(set.counts.test, 0);
+  assert.equal(set.counts.excluded.bad_t0, 1);
+  assert.ok(!set.rows.some((r) => r.mint === 'BADT0'));
+  assert.match(set.split_rule, /none \(empty test split\)/);
+});
