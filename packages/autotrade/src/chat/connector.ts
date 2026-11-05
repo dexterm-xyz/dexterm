@@ -13,8 +13,8 @@ import type { Badge } from '../execution-port.ts';
 
 export type { Badge } from '../execution-port.ts';
 
-/** The closed command list (§8.4 tier 2). Anything else is `help`. */
-export const COMMANDS = ['status', 'positions', 'pause', 'resume', 'kill', 'stop', 'flatten', 'strategies', 'use', 'approvals', 'help', 'pair', 'start'] as const;
+/** The closed command list (§8.4 tier 2; task-1426 adds the read-only check, top and signals). Anything else is `help`. */
+export const COMMANDS = ['status', 'positions', 'pause', 'resume', 'kill', 'stop', 'flatten', 'strategies', 'use', 'approvals', 'help', 'pair', 'start', 'check', 'top', 'signals'] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export type ChatKind = 'private' | 'group';
@@ -103,7 +103,8 @@ export function parseCommand(text: string): { command: Command; args: string[] }
   const [head, ...rest] = t.split(/\s+/);
   const name = head.slice(1).split('@')[0].toLowerCase();
   const command = (COMMANDS as readonly string[]).includes(name) ? (name as Command) : 'help';
-  // Args are short tokens only (a preset id, a pairing code, on/off): never prose.
-  const args = rest.slice(0, 3).map((a) => a.slice(0, 40));
+  // Args are short tokens only (a preset id, a pairing code, on/off, a count, a mint): never prose. 48 characters
+  // keeps a whole mint (44 at most) and leaves an over-long one too long to pass as one (task-1426).
+  const args = rest.slice(0, 3).map((a) => a.slice(0, 48));
   return { command, args };
 }

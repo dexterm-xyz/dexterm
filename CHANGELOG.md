@@ -2,6 +2,20 @@
 
 All notable changes to dexterm are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with the pre-1.0 caveat that minor versions may break things.
 
+## [0.2.2] - 2026-11-05
+
+Read-only data from your own Telegram bot, opt-in confidence tiers for paper strategies, and Windows fixes. Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.
+
+### Added
+
+- **Telegram read-only data (experimental).** Your own paired bot answers `/check <CA>` (one coin's LARP score and risk facts, each with its data age), `/top [N]` (the screener's trending coins) and `/signals [N]` (what your runner flagged lately), in your paired private chat only, as plain text, at most five data requests a minute. They read only; nothing can be changed or traded from them.
+- **Confidence tiers (experimental, unproven, paper only, off by default).** A strategy can opt in with `sizing.tiers`: the engine scores each candidate on two figures from its own tick (1 h turnover, 5 min buys/sells), skips a score of 0 and never sizes a tier above 25% of the book; an entry waiting for its fill or approval counts as open, and every other limit still applies. Refused outside paper. On held-out history the tiers lose money more slowly than the earlier rules; they are not shown to win, and every tier above 25% is unproven. A paper test of a sizing rule, not a signal.
+
+### Fixed
+
+- **Classifier key file on Windows.** A TypeSafe key saved with `dexterm classifier key set` was refused on Windows (only `TYPESAFE_API_KEY` worked). The file is now locked to your Windows account and its access list is checked on every read; a file other accounts can read is refused with the reason. macOS and Linux keep the 0600 check.
+- **Windows tests.** The other six Windows test failures in 0.2.1's new code (POSIX file modes, a path separator, a database handle left open) are fixed.
+
 ## [0.2.1] - 2026-10-30
 
 Opt-in classification models, a memes and narratives tracker, rug-proof entries for your strategies, a strategy dashboard and a streamer overlay. Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.

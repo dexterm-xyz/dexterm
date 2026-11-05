@@ -26,7 +26,7 @@ import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dextermHome } from '@dexterm/custom';
 import { KillSwitch, createDataLayer, defaultDbPath, resolveRpcUrl } from '@dexterm/data';
-import { DrainPoller, RugProbe, chainVets, defaultFetchJson, rugproofVet, type DrainWatch } from '@dexterm/autotrade';
+import { DrainPoller, RugProbe, chainVets, defaultFetchJson, readOnlyCall, rugproofVet, type DrainWatch, type ReadCall } from '@dexterm/autotrade';
 import {
   FleetGuard, HEARTBEAT_MS, accountTable, LiveSource, RUNNER_RENDEZVOUS_SCHEMA, RUN_SUMMARY_SCHEMA, RunnerSafety, acquireRunLock, bankrollUsd, claudeSessionFactory, clearControl,
   clearMemberControls, clearStaleControl, compareRows, compareTable, controlPath, fileLedger, fleetStatusPath, fleetTotals, loadFleetConfig, loadRunnerConfig, loadTape,
@@ -60,6 +60,8 @@ export interface FleetRunOverrides {
   vetWrap?: (m: FleetMemberSpec, inner: VetFn | undefined) => VetFn | undefined;
   /** 0.2.0 card B: positions a crashed run of this strategy left open, adopted by its first run. */
   adopt?: (member: string) => FleetMemberSpec['adopt'];
+  /** task-1426: the fleet's read tools (live data only) for the bot's /check and /top; null once the data layer closes. */
+  onReadTools?: (call: ReadCall | null) => void;
   /** 0.2.0 card B: the fleet holds the runner lock and has its ledger (before any strategy starts). */
   onStarted?: (fleetId: string, fleetLedger: { add(t: number, kind: string, data?: Record<string, unknown>): unknown }) => void;
 }
@@ -128,7 +130,7 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
     const rpc = resolveRpcUrl({ env: io.env });
     data = createDataLayer({ dbPath: io.env.DEXTERM_DB_PATH || defaultDbPath(io.env), rpcUrl: rpc.url, rpcFallbackUrl: rpc.fallbackUrl });
   }
-  const closeData = () => { try { data?.close(); } catch { /* closing */ } };
+  const closeData = () => { if (data) over.onReadTools?.(null); try { data?.close(); } catch { /* closing */ } };
   let solUsd: number | null = typeof opts['sol-usd'] === 'string' ? num(opts['sol-usd'], NaN) : fleetCfg.solUsd ?? null;
   if (Number.isNaN(solUsd)) { io.stderr.write('dexterm autotrade run --all: --sol-usd needs a positive number\n'); closeData(); return 2; }
   if (solUsd === null && data && (fleetCfg.strategies.some((m) => m.bankroll && 'sol' in m.bankroll) || (fleetCfg.accounts ?? []).some((a) => 'sol' in a.bankroll))) {
@@ -197,6 +199,7 @@ export async function fleetRunCmd(argv: string[], io: AutotradeIo, over: FleetRu
     // One dossier record per coin per 30 s, whichever strategy asks; each strategy renders its own text.
     const { McpTools } = await import('@dexterm/mcp');
     const mcp = new McpTools(data, () => ({ screen: 'autotrade-runner', actions: { mints: [], feeds: [], sortKeys: [] } }));
+    over.onReadTools?.(readOnlyCall(mcp));
     const shared = sharedDossier(async (mint) => {
       try { return await mcp.call('get_dossier', { mint, interval: '5m' }); } catch (e) { return { availability: { present: [], missing: [`dossier: ${(e as Error).message}`], knownUnavailable: [] } } as Record<string, unknown>; }
     });

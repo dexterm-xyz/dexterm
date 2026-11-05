@@ -7,6 +7,8 @@
 //   NotifyBus       the run ledger as it is written → messages
 //   HostControlPort the router's actions, through the SAME control file the CLI and the Q screen write
 //                   (autotrade/control.json, by: "chat"), the runner's live state, and the strategy store
+//   HostReadPort    task-1426: /check /top /signals from the run's read tools (setReadTools) and the signals the
+//                   runner raised (SignalLog, fed by the ledger tap); read-only, separate from HostControlPort
 // The runner never waits on chat: the bus queues, the broker answers when a tap lands, and a dead connection means
 // no entries that need an approval (UNDELIVERED = skip), never a blocked exit.
 
@@ -26,6 +28,7 @@ import type { ChatConnector } from './connector.ts';
 import type { ControlPort, PositionView, Result, StatusView, StrategyChoice } from './control.ts';
 import { ChatHub } from './hub.ts';
 import { NotifyBus, type ClosedTradeView } from './notify.ts';
+import { HostReadPort, SignalLog, type ReadCall } from './readonly.ts';
 
 /** connectors.json re-read when it changes (a local `dexterm telegram approvals off` lands without a restart). */
 export class ConfigView {
@@ -210,6 +213,10 @@ export class TelegramService {
   readonly audit: ChatAudit;
   readonly config: ConfigView;
   readonly port: HostControlPort;
+  /** task-1426: the read-only data commands' port and the runner's signals. */
+  readonly reads: HostReadPort;
+  readonly signals = new SignalLog();
+  private readTools: ReadCall | null = null;
   private readonly o: TelegramServiceOpts;
   private readonly now: () => number;
   private readonly ac = new AbortController();
@@ -226,7 +233,8 @@ export class TelegramService {
     const cfg = this.config.get;
     this.broker = new ApprovalBroker({ connector: o.connector, store: this.store, audit: this.audit, port: o.port, config: cfg, now: this.now, maxOpen: o.maxOpen, timers: o.timers, alert: o.alert });
     this.port = new HostControlPort({ home: o.home, runId: o.runId, state: o.state, strategy: o.strategy, config: this.config, broker: () => this.broker, onSwitch: o.onSwitch ?? (() => {}) });
-    this.hub = new ChatHub({ connector: o.connector, config: cfg, audit: this.audit, badge: badgeOf(o.port.network), broker: this.broker, port: this.port, now: this.now, alert: o.alert });
+    this.reads = new HostReadPort({ call: () => this.readTools, state: o.state, signals: this.signals, now: this.now });
+    this.hub = new ChatHub({ connector: o.connector, config: cfg, audit: this.audit, badge: badgeOf(o.port.network), broker: this.broker, port: this.port, reads: this.reads, now: this.now, alert: o.alert });
     const delays = o.retryDelaysMs ?? [1000, 4000];
     this.bus = new NotifyBus({
       badge: badgeOf(o.port.network), config: cfg, now: this.now, card: o.card, approvalCounts: (since) => this.store.countsSince(since),
@@ -268,9 +276,13 @@ export class TelegramService {
     await this.bus.tick();
   }
 
+  /** task-1426: the read tools of the run on live data (null when it ends, or on a replay): /check and /top read them. */
+  setReadTools(call: ReadCall | null): void { this.readTools = call; }
+
   /** The run ledger tap: every event, as it is written. */
   onLedger = (e: LedgerEvent): void => {
     this.bus.onEvent(e);
+    this.signals.onLedger(e);
     if (e.kind === 'fill' && typeof e.proposalId === 'string') this.broker.filled(e.proposalId);
   };
 

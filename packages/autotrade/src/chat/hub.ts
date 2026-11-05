@@ -6,8 +6,12 @@
 //   pairing (only while a local pairing window is open: `/pair <code>` from a private chat);
 //   the allowlist: an unknown sender gets NO reply and nothing happens (five in an hour raise a local alert:
 //     "possible token leak"); a paired sender needs the tier the command needs, in the chat it was paired in;
-//   rate limit: 10 commands a minute per sender, except /kill, /stop, /pause and /flatten (never limited);
+//   rate limit: 10 commands a minute per sender, except /kill, /stop, /pause and /flatten (never limited); a
+//     read-only data command that reaches the data sources also counts against READS_PER_MIN per chat (task-2146,
+//     readonly.ts): over it, the chat is told once a minute, then gets silence;
 //   commands → the ControlRouter; button callbacks → the ApprovalBroker (the only trade authority);
+//   the read-only data commands (/check /top /signals, task-1426) → the ReadOnlyRouter, built from the ReadOnlyPort
+//     alone: it never sees the ControlPort or the broker and answers with lines only (no confirm, no button);
 //   free text → the help text, never parsed.
 // Outbound: notify messages go to every chat paired with the notify tier; replies go to the asking chat only.
 
@@ -17,12 +21,14 @@ import { allowed, type AllowEntry, type TelegramConfig, type Tier } from './conf
 import type { ChatConnector, InboundAction, InboundCommand, InboundText, OutMessage } from './connector.ts';
 import { ControlRouter, HELP_LINES, NEVER_RATE_LIMITED, type ControlPort } from './control.ts';
 import type { PairingWindow, PairResult } from './pairing.ts';
+import { READ_COMMANDS, ReadOnlyRouter, type ReadOnlyPort } from './readonly.ts';
 import type { Badge } from '../execution-port.ts';
 
 export const COMMANDS_PER_MIN = 10;
 export const UNKNOWN_ALERT_PER_HOUR = 5;
 
-const READ_ONLY = ['status', 'positions', 'strategies', 'help', 'start'];
+const READ_ONLY: readonly string[] = ['status', 'positions', 'strategies', 'help', 'start', ...READ_COMMANDS];
+const isReadCommand = (c: string): boolean => (READ_COMMANDS as readonly string[]).includes(c);
 
 export interface HubOpts {
   connector: ChatConnector;
@@ -31,6 +37,8 @@ export interface HubOpts {
   badge: Badge;
   broker?: ApprovalBroker | null;
   port?: ControlPort | null;
+  /** task-1426: the read-only data the /check /top /signals commands answer from (null = not available here). */
+  reads?: ReadOnlyPort | null;
   now?: () => number;
   /** A local alert (the terminal / runner log), never sent to chat. */
   alert?: (line: string) => void;
@@ -44,6 +52,7 @@ export class ChatHub {
   private unknownTimes: number[] = [];
   private lastUnknownAlert = 0;
   private router: ControlRouter | null;
+  private reads: ReadOnlyRouter | null;
   private pairing: { window: PairingWindow; onResult: (r: PairResult, c: InboundCommand) => void } | null = null;
   private inflight = new Set<Promise<unknown>>();
 
@@ -51,6 +60,7 @@ export class ChatHub {
     this.o = o;
     this.now = o.now ?? Date.now;
     this.router = o.port ? new ControlRouter(o.port) : null;
+    this.reads = o.reads ? new ReadOnlyRouter(o.reads, this.now) : null;
     o.connector.onCommand((c) => this.track(this.onCommand(c)));
     o.connector.onAction((a) => this.track(this.onAction(a)));
     o.connector.onText((t) => this.track(this.onText(t)));
@@ -65,6 +75,7 @@ export class ChatHub {
   async idle(): Promise<void> { while (this.inflight.size) await Promise.allSettled([...this.inflight]); }
 
   setPort(port: ControlPort | null): void { this.router = port ? new ControlRouter(port) : null; }
+  setReads(reads: ReadOnlyPort | null): void { this.reads = reads ? new ReadOnlyRouter(reads, this.now) : null; }
 
   /** Open a local pairing window: `/pair <code>` from a private chat is checked against it. */
   openPairing(window: PairingWindow, onResult: (r: PairResult, c: InboundCommand) => void): void { this.pairing = { window, onResult }; }
@@ -131,6 +142,7 @@ export class ChatHub {
     const e = this.entry(c.senderId, c.chatId, tier) ?? (tier === 'notify' ? this.entry(c.senderId, c.chatId, 'control') : null);
     if (!e) { this.unknown(c.senderId, `command:${c.command}`); return; }
     if (this.limited(c.senderId, c.command)) { this.o.audit.add(this.now(), 'rate_limited', { senderId: c.senderId, command: c.command }); await this.reply(c.chatId, ['Too many commands: wait a minute. /kill and /pause always work.'], 'rate_limited'); return; }
+    if (isReadCommand(c.command)) { await this.onRead(c); return; }
     if (!this.router) { await this.reply(c.chatId, ['No runner is connected right now.'], 'no_runner'); return; }
     const r = this.router.handle(c);
     this.o.audit.add(this.now(), 'command_result', { updateId: c.updateId, command: c.command, lines: r.lines.length, confirms: r.confirm?.length ?? 0 });
@@ -139,6 +151,23 @@ export class ChatHub {
       if (!this.o.broker) { await this.reply(c.chatId, ['Confirm buttons are not available here: use dexterm on your computer.'], 'no_broker'); break; }
       await this.o.broker.confirm(cf.kind, { senderId: c.senderId, chatId: c.chatId }, cf.lines, cf.yes, cf.payload);
     }
+  }
+
+  /** A read-only data command: lines from the ReadOnlyRouter, never a confirm or a ControlPort call. */
+  private async onRead(c: InboundCommand): Promise<void> {
+    if (!this.reads) { await this.reply(c.chatId, ['Read-only data is not available here: use dexterm on your computer.'], 'no_reads'); return; }
+    let lines: string[];
+    try {
+      const r = await this.reads.handle(c);
+      lines = r.lines;
+      if (r.failed) this.o.audit.add(this.now(), 'read_failed', { command: c.command, error: r.failed.slice(0, 160) });
+      if (r.limited) this.o.audit.add(this.now(), 'rate_limited', { senderId: c.senderId, chatId: c.chatId, command: c.command, scope: 'reads', told: lines.length > 0 });
+    } catch (e) {
+      this.o.audit.add(this.now(), 'hub_error', { command: c.command, error: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160) });
+      lines = ['Could not read that right now (the data sources did not answer). Try again in a minute.'];
+    }
+    this.o.audit.add(this.now(), 'command_result', { updateId: c.updateId, command: c.command, lines: lines.length, confirms: 0 });
+    await this.reply(c.chatId, lines, `cmd_${c.command}`);
   }
 
   private async onAction(a: InboundAction): Promise<void> {

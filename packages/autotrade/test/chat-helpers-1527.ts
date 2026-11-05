@@ -11,6 +11,7 @@ import { defaultTelegram, type TelegramConfig, type Tier } from '../src/chat/con
 import { FakeConnector } from '../src/chat/fake.ts';
 import { ChatHub } from '../src/chat/hub.ts';
 import type { ControlPort } from '../src/chat/control.ts';
+import type { ReadOnlyPort } from '../src/chat/readonly.ts';
 
 export const T0 = 1_792_000_000_000;
 export const MINT = 'Mint1111111111111111111111111111111111111111';
@@ -61,7 +62,7 @@ export const okExec: Executor & { buys: { usd: number; proofId?: string }[] } = 
   },
 );
 
-export function rig(o: { config?: TelegramConfig; port?: ExecutionPort; controlPort?: ControlPort; maxOpen?: number; home?: string | null } = {}) {
+export function rig(o: { config?: TelegramConfig; port?: ExecutionPort; controlPort?: ControlPort; reads?: ReadOnlyPort; maxOpen?: number; home?: string | null } = {}) {
   const clock = { now: T0 };
   const now = () => clock.now;
   const fake = new FakeConnector({ now });
@@ -71,7 +72,7 @@ export function rig(o: { config?: TelegramConfig; port?: ExecutionPort; controlP
   const audit = new ChatAudit(o.home === undefined ? null : o.home);
   const port = o.port ?? new PaperPort(okExec, { now });
   const broker = new ApprovalBroker({ connector: fake, store, audit, port, config, now, maxOpen: o.maxOpen ?? 2, timers: false });
-  const hub = new ChatHub({ connector: fake, config, audit, badge: badgeOf(port.network), broker, port: o.controlPort ?? null, now });
+  const hub = new ChatHub({ connector: fake, config, audit, badge: badgeOf(port.network), broker, port: o.controlPort ?? null, reads: o.reads ?? null, now });
   const me = fake.user(ME);
   return { clock, now, fake, store, audit, port, broker, hub, me, setConfig: (c: TelegramConfig) => { cfg = c; } };
 }

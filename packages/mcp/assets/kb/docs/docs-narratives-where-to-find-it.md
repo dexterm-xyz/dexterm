@@ -30,7 +30,7 @@ date: 2026-10-16
   `ZORP · lifecycle: ignition · rank 3 · #2 of 9`.
 - `dexterm narratives` prints the heat table. `dexterm narratives detail ID` shows one narrative, `dexterm narratives of
   MINT` shows the narrative of one coin, and `dexterm narratives export --out FILE` writes the JSON
-  (`dexterm-narratives/1`) that a strategy tracker page reads. `--at ISO` replays up to a past time.
+  (`dexterm-narratives/1`) for your own tools. `--at ISO` replays up to a past time.
 - MCP tools for your analyst or your own agent: `narratives_top`, `narrative_detail`, `narrative_of` (observe tier,
   read-only). Coin names come back wrapped as untrusted data.
 - Watch rules: the field `narrative_rank` and the tags `narrative:ignition` / `narrative:saturated`, so a rule can fire

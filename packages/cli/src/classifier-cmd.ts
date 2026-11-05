@@ -9,8 +9,8 @@ import readline from 'node:readline';
 import {
   CATALOG, COIN_RISK, EXTERNAL_MODELS, PROVIDERS, PROVIDER_IDS, catalogEntry, classify, classifyBatch, coinDossier, describeHardware,
   describeResult, detectHardware, dextermHome, fits, freeBytes, fromReasonRunner, gb, isInstalled, loadClassifierConfig, modelPath, modelsDir,
-  providerFromConfig, pullModel, readTypesafeKey, recommendTier, removeTypesafeKey, saveClassifierConfig, serveArgv, writeTypesafeKey,
-  type ClassifierConfig, type FetchLike, type ProviderId, type RegistryDeps,
+  providerFromConfig, pullModel, readTypesafeKey, recommendTier, removeTypesafeKey, saveClassifierConfig, serveArgv, typesafeKeyRefusal, typesafeKeyState,
+  writeTypesafeKey, type ClassifierConfig, type KeyFileOpts, type FetchLike, type ProviderId, type RegistryDeps,
 } from '@dexterm/classifier';
 import { spawnClaudeRunner } from '@dexterm/packs';
 
@@ -24,6 +24,9 @@ export interface ClassifierIo {
   exec?: (cmd: string, args: string[]) => Promise<string>;
   pullFetch?: Parameters<typeof pullModel>[1]['fetch'];
   free?: (dir: string) => number;
+  /** Key-file seams: drive the Windows ACL path on any OS. */
+  platform?: NodeJS.Platform;
+  acl?: KeyFileOpts['acl'];
 }
 
 export const CLASSIFIER_USAGE = `dexterm classifier [<command>]
@@ -34,7 +37,7 @@ export const CLASSIFIER_USAGE = `dexterm classifier [<command>]
   doctor [--json]           hardware (RAM, CPU, GPU/VRAM), the recommended tier, provider readiness
   bench [--n 20]            time the current provider on N synthetic coins (latency per coin, per 1,000)
   try                       classify one example coin with the current provider (shows the labelled estimate)
-  key set|clear|status      your own TypeSafe API key for hosted Jev (stored 0600 under ~/.dexterm/keys, never printed)
+  key set|clear|status      your own TypeSafe API key for hosted Jev (stored owner-only under ~/.dexterm/keys, never printed)
 Every answer is a model estimate with the model id and a calibration note; never advice. Docs: /docs/classifier/`;
 
 function flags(argv: string[], bools: string[]): { pos: string[]; opts: Record<string, string | true> } {
@@ -46,6 +49,9 @@ function flags(argv: string[], bools: string[]): { pos: string[]; opts: Record<s
   }
   return { pos, opts };
 }
+
+const keyLine = (s: ReturnType<typeof typesafeKeyState>): string =>
+  s.source === 'refused' ? 'refused (dexterm classifier key status says why; TYPESAFE_API_KEY works instead)' : s.source === 'none' ? 'none (hosted Jev is optional)' : 'configured';
 
 async function ask(io: ClassifierIo, question: string): Promise<string> {
   if (!io.stdin.isTTY) return '';
@@ -146,7 +152,7 @@ export async function classifierCommand(argv: string[], io: ClassifierIo): Promi
       next.kev = { ...c.kev, model };
       if (!isInstalled(home, catalogEntry(model))) out(`note: ${model} is not downloaded yet: dexterm classifier pull ${model}. Until it is served, answers fall back to the heuristic.`);
     }
-    if (id === 'jev-hosted' && !readTypesafeKey(io.env)) out('note: no TypeSafe key yet: dexterm classifier key set. Until then answers fall back to the heuristic.');
+    if (id === 'jev-hosted' && !readTypesafeKey(io.env, { platform: io.platform, acl: io.acl })) out('note: no TypeSafe key yet: dexterm classifier key set. Until then answers fall back to the heuristic.');
     const p = saveClassifierConfig(next, io.env);
     out(`classifier.provider = ${id}${id === 'kev-local' ? ` (${next.kev.model})` : ''}  (${p})`);
     return 0;
@@ -204,13 +210,13 @@ export async function classifierCommand(argv: string[], io: ClassifierIo): Promi
     const llama = llamaServerBin(io.env);
     const llamaOk = llama ? await llamaSupportsDecisions(llama, io.exec) : false;
     if (opts.json === true) {
-      out(JSON.stringify({ hardware: hw, recommendation: rec, provider: c.provider, model: c.provider === 'kev-local' ? c.kev.model : null, ready: provStatus.ready, detail: provStatus.detail, llamaServer: Boolean(llama), llamaServerDecisions: llamaOk, typesafeKey: Boolean(readTypesafeKey(io.env)) }, null, 2));
+      out(JSON.stringify({ hardware: hw, recommendation: rec, provider: c.provider, model: c.provider === 'kev-local' ? c.kev.model : null, ready: provStatus.ready, detail: provStatus.detail, llamaServer: Boolean(llama), llamaServerDecisions: llamaOk, typesafeKey: Boolean(readTypesafeKey(io.env, { platform: io.platform, acl: io.acl })) }, null, 2));
       return 0;
     }
     out(`hardware: ${describeHardware(hw)}`);
     out(`recommended: ${rec.model ?? 'the built-in heuristic'}${rec.bestQuality ? ` (best quality here: ${rec.bestQuality})` : ''}: ${rec.why}`);
     out(`provider: ${c.provider}${c.provider === 'kev-local' ? ` (${c.kev.model})` : ''}: ${provStatus.ready ? 'ready' : 'not ready'}: ${provStatus.detail}`);
-    out(`llama-server: ${!llama ? 'not found (needed for kev-local)' : llamaOk ? 'found, serves decision models' : `found but too old: ${LLAMA_TOO_OLD}`} · TypeSafe key: ${readTypesafeKey(io.env) ? 'configured' : 'none (hosted Jev is optional)'}`);
+    out(`llama-server: ${!llama ? 'not found (needed for kev-local)' : llamaOk ? 'found, serves decision models' : `found but too old: ${LLAMA_TOO_OLD}`} · TypeSafe key: ${keyLine(typesafeKeyState(io.env, { platform: io.platform, acl: io.acl, fresh: true }))}`);
     if (c.fallback) out('fallback: the heuristic answers when the provider is unreachable (labelled as a fallback)');
     return 0;
   }
@@ -231,12 +237,22 @@ export async function classifierCommand(argv: string[], io: ClassifierIo): Promi
 
   if (sub === 'key') {
     const action = pos[0] ?? 'status';
-    if (action === 'status') { out(readTypesafeKey(io.env) ? 'TypeSafe key: configured (not shown)' : 'TypeSafe key: none'); return 0; }
+    const keyOpts: KeyFileOpts = { platform: io.platform, acl: io.acl };
+    if (action === 'status') {
+      const s = typesafeKeyState(io.env, { ...keyOpts, fresh: true });
+      if (s.source === 'refused') { out('TypeSafe key: refused'); err(typesafeKeyRefusal(s)); return 1; }
+      out(s.source === 'env' ? 'TypeSafe key: configured from TYPESAFE_API_KEY (not shown)' : s.source === 'file' ? 'TypeSafe key: configured (not shown)' : 'TypeSafe key: none');
+      return 0;
+    }
     if (action === 'clear') { out(removeTypesafeKey(io.env) ? 'TypeSafe key removed' : 'no key file to remove'); return 0; }
     if (action === 'set') {
       const k = await readSecret(io, 'Paste your TypeSafe API key (input hidden): ');
       if (!k.trim()) { err('no key entered'); return 1; }
-      try { const p = writeTypesafeKey(k, io.env); out(`saved to ${p} (0600). It is only sent to ${c.jev.endpoint}.`); return 0; } catch (x) { err((x as Error).message); return 1; }
+      try {
+        const p = writeTypesafeKey(k, io.env, keyOpts);
+        out(`saved to ${p} (${(io.platform ?? process.platform) === 'win32' ? 'owner-only Windows access list' : '0600'}). It is only sent to ${c.jev.endpoint}.`);
+        return 0;
+      } catch (x) { err((x as Error).message); return 1; }
     }
     err('key set|clear|status'); return 2;
   }

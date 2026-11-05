@@ -1,7 +1,8 @@
 // ~/.dexterm/classifier.json (schema dexterm.classifier/1). `provider` is the one switch (`classifier.provider`);
 // `default` is the shipped recommendation (`classifier.default`), chosen by the task-1822 benchmark. Loading never
 // throws: each bad field falls back to its default and is reported. Writing is atomic, 0600 in a 0700 dir.
-// The hosted API key is NOT stored here: it lives in its own 0600 file (or the TYPESAFE_API_KEY env var).
+// The hosted API key is NOT stored here: it lives in its own 0600 file (on Windows an owner-only ACL, see
+// win-acl.ts) or the TYPESAFE_API_KEY env var.
 
 import fs from 'node:fs';
 import { homedir } from 'node:os';
@@ -9,6 +10,7 @@ import path from 'node:path';
 import type { Platt } from './calibrate.ts';
 import { CATALOG } from './models.ts';
 import { PROVIDER_IDS, type ProviderId } from './types.ts';
+import { checkOwnerOnly, currentUserSid, lockOwnerOnly, type WinAclDeps } from './win-acl.ts';
 
 export const CLASSIFIER_SCHEMA = 'dexterm.classifier/1';
 
@@ -125,26 +127,86 @@ export function saveClassifierConfig(c: ClassifierConfig, env: NodeJS.ProcessEnv
   return p;
 }
 
-/** The user's TypeSafe key: env TYPESAFE_API_KEY first, then the 0600 key file. Never logged. */
-export function readTypesafeKey(env: NodeJS.ProcessEnv = process.env): string | null {
+/** Platform seams for the key file (tests drive the Windows path on any OS); `fresh` skips the remembered ACL check. */
+export interface KeyFileOpts { platform?: NodeJS.Platform; acl?: WinAclDeps; fresh?: boolean }
+
+export type TypesafeKeyState =
+  | { source: 'env'; key: string }
+  | { source: 'file'; key: string; path: string }
+  | { source: 'none'; path: string }
+  | { source: 'refused'; path: string; reason: string };
+
+// A Windows ACL probe spawns PowerShell (~0.5 s) and hosted calls read the key per request, so a passing check is
+// remembered for one minute per (path, size, mtime, ctime).
+const aclOk = new Map<string, number>();
+const ACL_OK_MS = 60_000;
+
+/** Where the TypeSafe key comes from, or why the key file is refused. The key itself is never logged. */
+export function typesafeKeyState(env: NodeJS.ProcessEnv = process.env, opts: KeyFileOpts = {}): TypesafeKeyState {
   const e = env.TYPESAFE_API_KEY?.trim();
-  if (e) return e;
+  if (e) return { source: 'env', key: e };
+  const p = typesafeKeyPath(env);
+  let st: fs.Stats;
+  try { st = fs.statSync(p); } catch { return { source: 'none', path: p }; }
+  if ((opts.platform ?? process.platform) === 'win32') {
+    // NTFS has no mode bits (stat says 0666 for every file): the access list decides
+    const memo = `${p}|${st.size}|${st.mtimeMs}|${st.ctimeMs}`;
+    if (opts.fresh || opts.acl || !((aclOk.get(memo) ?? 0) > Date.now())) {
+      aclOk.delete(memo);
+      const c = checkOwnerOnly(p, opts.acl);
+      if (!c.ok) return { source: 'refused', path: p, reason: c.reason };
+      if (!opts.acl) aclOk.set(memo, Date.now() + ACL_OK_MS); // injected (test) probes are never remembered
+    }
+  } else if ((st.mode & 0o077) !== 0) {
+    // refuse a key file other users can read
+    return { source: 'refused', path: p, reason: `other users can access it (mode ${(st.mode & 0o777).toString(8)}; chmod 600 it)` };
+  }
   try {
-    const p = typesafeKeyPath(env);
-    const st = fs.statSync(p);
-    if ((st.mode & 0o077) !== 0) return null; // refuse a key file other users can read
     const k = fs.readFileSync(p, 'utf8').trim();
-    return k || null;
-  } catch { return null; }
+    return k ? { source: 'file', key: k, path: p } : { source: 'none', path: p };
+  } catch (x) { return { source: 'refused', path: p, reason: `it cannot be read (${(x as NodeJS.ErrnoException).code ?? 'error'})` }; }
 }
 
-export function writeTypesafeKey(key: string, env: NodeJS.ProcessEnv = process.env): string {
+/** One line on why a key file is refused, naming the env var as the way out. Never contains the key. */
+export const typesafeKeyRefusal = (s: { path: string; reason: string }): string =>
+  `the TypeSafe key file ${s.path} is refused: ${s.reason}. Run \`dexterm classifier key set\` again, or set TYPESAFE_API_KEY in your environment instead.`;
+
+/** The user's TypeSafe key: env TYPESAFE_API_KEY first, then the owner-only key file (0600; on Windows an owner-only ACL). Never logged. */
+export function readTypesafeKey(env: NodeJS.ProcessEnv = process.env, opts: KeyFileOpts = {}): string | null {
+  const s = typesafeKeyState(env, opts);
+  return s.source === 'env' || s.source === 'file' ? s.key : null;
+}
+
+export function writeTypesafeKey(key: string, env: NodeJS.ProcessEnv = process.env, opts: KeyFileOpts = {}): string {
   const k = key.trim();
   if (!/^[\x21-\x7e]{8,512}$/.test(k)) throw new Error('that does not look like an API key (8-512 printable characters, no spaces)');
   const p = typesafeKeyPath(env);
+  if ((opts.platform ?? process.platform) === 'win32') { writeKeyWindows(p, k + '\n', opts.acl); return p; }
   writeAtomic(p, k + '\n');
   fs.chmodSync(p, 0o600);
   return p;
+}
+
+/**
+ * Windows: the temp file is created EMPTY, locked to the current user and checked before the key goes into it, then
+ * renamed into place (a same-volume rename keeps its access list) and checked again. Any failure removes what was
+ * written and throws a message naming TYPESAFE_API_KEY.
+ */
+function writeKeyWindows(p: string, text: string, acl?: WinAclDeps): void {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  const fail = (what: string): never => {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+    throw new Error(`could not restrict the key file to your Windows account (${what}). Nothing was saved. Set TYPESAFE_API_KEY in your environment instead.`);
+  };
+  try { fs.writeFileSync(tmp, ''); } catch (e) { fail(`create: ${(e as NodeJS.ErrnoException).code ?? 'error'}`); }
+  try { lockOwnerOnly(tmp, currentUserSid(acl), acl); } catch (e) { fail(`icacls: ${e instanceof Error ? e.message.split(/\r?\n/)[0] : String(e)}`); }
+  const pre = checkOwnerOnly(tmp, acl);
+  if (!pre.ok) fail(pre.reason);
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, p);
+  const post = checkOwnerOnly(p, acl);
+  if (!post.ok) { try { fs.rmSync(p, { force: true }); } catch { /* ignore */ } fail(post.reason); }
 }
 
 export function removeTypesafeKey(env: NodeJS.ProcessEnv = process.env): boolean {

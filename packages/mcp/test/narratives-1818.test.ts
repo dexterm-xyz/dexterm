@@ -47,8 +47,9 @@ test('narratives tools: honest note without a recorder DB', async () => {
 
 test('narratives tools: top / detail / of over recorded history, untrusted names wrapped', async () => {
   const { dir, path } = fixtureDb();
+  let tools: McpTools | null = null;
   try {
-    const tools = new McpTools({} as never, () => ({}), null, path);
+    tools = new McpTools({} as never, () => ({}), null, path);
     const top = await tools.call('narratives_top', { limit: 5 });
     assert.match(String(top.note), /Not advice/);
     assert.equal(top.model_output, false);
@@ -76,20 +77,21 @@ test('narratives tools: top / detail / of over recorded history, untrusted names
     assert.equal(((await tools.call('narrative_detail', { id: pnut.id, limit: 0 })).members as unknown[]).length, 1);
     assert.equal(((await tools.call('narrative_detail', { id: pnut.id, limit: 'x' })).members as unknown[]).length, 3);
     assert.equal(((await tools.call('narratives_top', { limit: 0 })).narratives as unknown[]).length, 1);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { tools?.closeHistory(); rmSync(dir, { recursive: true, force: true }); } // task-2147: Windows cannot delete an open DB (EPERM)
 });
 
 test('narratives tools: a cold first call that outlasts the wait answers "building" instead of blocking', async () => {
   const { dir, path } = fixtureDb();
   const prev = process.env.DEXTERM_NARRATIVES_WAIT_MS;
   process.env.DEXTERM_NARRATIVES_WAIT_MS = '0';
+  let tools: McpTools | null = null;
   try {
-    const tools = new McpTools({} as never, () => ({}), null, path);
+    tools = new McpTools({} as never, () => ({}), null, path);
     const first = await tools.call('narratives_top', {});
     assert.ok(first.building === true || Array.isArray(first.narratives), 'either still building or already done');
     if (first.building) assert.match(String(first.note), /still building/);
     let next = await tools.call('narratives_top', {});
     for (let i = 0; i < 50 && next.building; i++) next = await tools.call('narratives_top', {});
     assert.ok((next.narratives as unknown[]).length >= 1, 'the build finished in the background');
-  } finally { if (prev === undefined) delete process.env.DEXTERM_NARRATIVES_WAIT_MS; else process.env.DEXTERM_NARRATIVES_WAIT_MS = prev; rmSync(dir, { recursive: true, force: true }); }
+  } finally { if (prev === undefined) delete process.env.DEXTERM_NARRATIVES_WAIT_MS; else process.env.DEXTERM_NARRATIVES_WAIT_MS = prev; tools?.closeHistory(); rmSync(dir, { recursive: true, force: true }); }
 });

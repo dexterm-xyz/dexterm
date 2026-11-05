@@ -1,6 +1,6 @@
 # Homebrew smoke on Apple Silicon (task-1423). Manual only: installs the PUBLISHED formula from the public tap
 # exactly the way the docs tell users to (tap, trust, install), then runs `brew test` and the installed command.
-# macos-14 is an arm64 runner with Homebrew's Tier 1 bottles, so `node` pours instead of compiling. Nothing
+# macos-15 is an arm64 runner with Homebrew's Tier 1 bottles, so `node` pours instead of compiling. Nothing
 # is built from this checkout, nothing is uploaded, no secret is used.
 name: brew-smoke
 
@@ -17,8 +17,8 @@ permissions: {}
 
 jobs:
   brew:
-    name: brew install + brew test (macos-14 arm64)
-    runs-on: macos-14
+    name: brew install + brew test (macos-15 arm64)
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       HOMEBREW_NO_AUTO_UPDATE: '1'

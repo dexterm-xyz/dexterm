@@ -55,7 +55,7 @@ export function listCmd(argv: string[], io: AutotradeIo): number {
     const bt = r.lastBacktest ? `last backtest ${r.lastBacktest.trades} trades ${r.lastBacktest.netUsd >= 0 ? '+' : '-'}$${Math.abs(r.lastBacktest.netUsd).toFixed(2)} (${r.lastBacktest.netPct}%), dd ${r.lastBacktest.maxDrawdownPct}%` : 'no backtest yet';
     const head = `  ${r.id.padEnd(w)}  ${(r.source + (r.shadowsPreset ? '*' : '')).padEnd(7)}`;
     if (!r.ok) { io.stdout.write(`${head}  INVALID: ${(r.errors ?? []).slice(0, 2).map(fmtIssue).join('; ')}\n`); continue; }
-    io.stdout.write(`${head}  v${r.version!.padEnd(7)} ${r.hash}  ${r.mode!.padEnd(5)}  profiles ${r.profiles!.join(',')}  · ${bt}${r.highRisk ? '  · ⚠ HIGH RISK' : ''}\n`);
+    io.stdout.write(`${head}  v${r.version!.padEnd(7)} ${r.hash}  ${r.mode!.padEnd(5)}  profiles ${r.profiles!.join(',')}  · ${bt}${r.highRisk ? '  · ⚠ HIGH RISK' : ''}${r.experimentalTiers ? '  · EXPERIMENTAL tiers (unproven, paper only)' : ''}\n`);
   }
   if (rows.some((r) => r.shadowsPreset)) io.stdout.write('  * your file shadows the shipped preset of the same id\n');
   return 0;

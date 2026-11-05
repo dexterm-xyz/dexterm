@@ -23,6 +23,9 @@
 - **Rug-proof entries and a memes + narratives tracker (0.2.1, experimental)**: per-strategy pool-safety gates with a drain guard, and coins grouped by the theme they carry with measured heat (not advice).
 - **Your results, on your screen (0.2.1)**: `dexterm dash` (strategy results in a browser on 127.0.0.1) and `dexterm overlay` (OBS scenes for streaming your agent, PAPER / LIVE stamped).
 - **About 0.2.1**: Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.
+- **Ask your own bot (0.2.2, experimental)**: `/check <CA>`, `/top` and `/signals` in your paired Telegram chat, read-only (`/check` shows the age of each fact).
+- **Confidence tiers (0.2.2, experimental, paper only, off by default)**: opt-in sizing by two measured entry figures, capped at 25% of the book; loses money more slowly than the earlier rules on held-out history, not shown to win.
+- **About 0.2.2**: Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.
 - **A docked chart window** (TradingView Lightweight Charts, vendored, served from a loopback-only server) when you opt into building the small native shell.
 - **An MCP server** (`dexterm mcp`) so your own agents can use the same read-only tools. From 0.1.5, and only if you start `--agent-paper` on a mandate you armed, an agent you connected can also paper trade (simulated only) inside that mandate.
 

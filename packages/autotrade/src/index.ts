@@ -22,6 +22,7 @@
 // execution-port  where an approved entry goes: the paper port (local single-use proofs) and the live stub (task-1527)
 // chat       Telegram notify, control and approve-to-trade through the user's own bot; chat/ (task-1527)
 // yolo       task-1532: the full-port replay (rugs, loss spread, how often it zeroed the wallet); paper only
+// tiers      0.2.2: EXPERIMENTAL, UNPROVEN confidence-tiered sizing (sizing.tiers), PAPER ONLY, default off
 // signal / outbox / signal-channels / receipts / real-mode  task-1645: mode real = the paper engine + a LIVE TRADE FIRE
 //            signal per fill to the user's own executor (webhook, command hook, JSONL, MCP feed, Telegram copy); no key
 // limits / executor-health / report  task-1654: every real-mode limit user-set per scope (stricter wins), executor
@@ -58,6 +59,7 @@ export * from './chat/index.ts';
 export * from './yolo.ts';
 export * from './rugproof.ts';
 export * from './rugproof-probe.ts';
+export * from './tiers.ts';
 export * from './signal.ts';
 export * from './outbox.ts';
 export * from './signal-channels.ts';

@@ -1,6 +1,6 @@
 # Development notes
 
-This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 43a0ddf and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
+This page is the maintainers' working reference for running, testing and extending dexterm from a checkout. It was carried over from the internal app README at 7ee7d1a and still mentions internal task ids (`task-NNNN`); those are tracking numbers, nothing more. The user-facing guide is the [README](../README.md).
 
 ## Layout
 
@@ -400,6 +400,33 @@ column and the reason (`holders, org: degraded`). Safety checks the keyless sour
 render `○ … needs key`, never a pass or a fail.
 Demo event keys on `--fixtures`: `n` new pair (datamosh + stutter + shake), `u` pump (gold rain,
 PUMPING band), `d` dump (red-shifted rain), `x` rug flag (full glitch).
+
+### Telegram read-only data: /check, /top, /signals (task-1426, task-2146; experimental)
+
+With a paired bot (`dexterm telegram setup`) and a runner on live data (`dexterm autotrade run <id> --paper` or the
+always-on service), your private chat with the bot can ask for data. Read-only; dexterm never holds a key; not
+financial advice.
+
+- `/check <CA>`: one coin's LARP score with its top flags, the risk facts (authorities, top-10 holders, dev share, LP
+  locked, rug score), market cap, liquidity, holders and coin age, each with the age of its data.
+- `/top [N]`: the first N (default 5, at most 10) of the screener's trending list, the runner's own coins marked.
+- `/signals [N]`: the last N (default 5, at most 20) signals the runner raised (screen matches, safety refusals, the
+  drain guard, stuck bags, guards, halts, paper fills).
+
+How it stays read-only (`packages/autotrade/src/chat/readonly.ts`, `hub.ts`):
+
+- The `ReadOnlyRouter` is built from a `ReadOnlyPort` alone, never the control port or the approval broker, and
+  answers with lines only (no button, no confirm). `readOnlyCall` narrows the run's tool layer to `get_token`,
+  `larp_check` and `screener_query`; any other tool name is refused.
+- The hub's allowlist and chat binding apply as for `/status` (notify or control tier, private chat only). Any other
+  account, chat or group gets no reply and nothing is read.
+- Token text is untrusted: the prompt firewall, then quoted plain text with links, addresses, commands, mentions, bare
+  domains, hashtags, cashtags and invisible characters made inert. No model reads these answers.
+- Every answer goes through `finalizeReply`: keys and paths hidden (also inside a source's error), the computer's host
+  and login names replaced, at most 26 lines / 1800 characters, no cut surrogate pairs.
+- Five data reads a minute per chat (on top of 10 commands a minute per sender), one `/check` per chat at a time, a
+  45 s limit on a whole answer; a failed or late source is named ("could not be read"), never guessed.
+- Tests: `packages/autotrade/test/tg-readonly-1426.test.ts`, `tg-readonly-2146.test.ts` (fake transport only).
 
 ## Coin images (task-1326)
 

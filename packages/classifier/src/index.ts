@@ -9,6 +9,7 @@ export * from './calibrate.ts';
 export * from './classify.ts';
 export * from './models.ts';
 export * from './config.ts';
+export { checkOwnerOnly, currentUserSid, lockOwnerOnly, readSddl, sddlOwnerOnly, type WinAclDeps, type WinRun } from './win-acl.ts';
 export * from './hardware.ts';
 export * from './registry.ts';
 export { heuristicProvider, LARP_POINTS_PLATT, WIN_BASE_RATE } from './providers/heuristic.ts';
