@@ -53,3 +53,11 @@ regexes = [
   '''^const SECRET = 'kit-test-secret-0123456789abcdef';''',
   '''^  const secret = 'listener-secret-0123456789abcdef';''',
 ]
+
+[[allowlists]]
+description = "packages/autotrade/test/tg-readonly-2146.test.ts (task-2146, release 0.2.2): the Telegram read-only redaction test builds a self-made error string (`api_key=abcdef0123456789abcdef`, `token=sk-live-0123456789abcdef`, a fake home path) and asserts none of it reaches a bot reply; they are not credentials."
+regexTarget = "line"
+regexes = [
+  '''const LEAKY = `ENOENT: open '\$\{SECRET_PATH\}' on \$\{FAKE_HOST\}\.local api_key=abcdef0123456789abcdef https://api\.example\.com/v1\?token=sk-live-0123456789abcdef`;''',
+  '''for \(const bad of \[FAKE_HOST, FAKE_USER, '/Users', '\.dexterm', 'telegram\.key', 'abcdef0123456789abcdef', 'sk-live', 'token=', 'https://', '0,1,2,3'\]\) \{''',
+]

@@ -156,15 +156,70 @@ function cut(s: string, max: number): string {
 }
 
 /**
+ * task-2180: dexterm's own fixed wording in the read-only answers. A computer name can be a plain word the bot itself
+ * uses (GitHub's runners log in as `runner`; a login `data` or `check` is possible too). Only for such a name, an
+ * exact fragment below that stands between prose boundaries is left as written, so "the runner holds this coin now"
+ * stays readable. Everywhere else (token text, engine and source text, errors, paths, host names) the name is hidden
+ * as before, in every case variant; a name that is not part of this wording is hidden everywhere, unchanged.
+ * A fragment missing here only means the bot's own word shows as [host]: it never shows a name.
+ */
+export const OWN_WORDING: readonly string[] = [
+  NOT_ADVICE, 'Data, not advice', USAGE_CHECK, USAGE_TOP, USAGE_SIGNALS,
+  'The LARP score is evidence, not a verdict, and not a safety check',
+  'Too many data requests: up to', 'a minute in this chat', '/kill and /pause always work',
+  'A /check is still running: wait for its answer',
+  'Could not read this coin right now', 'Could not read the ranking right now', 'Could not read the signals right now',
+  'Nothing was guessed; try again in a minute',
+  'CHECK', 'LARP score', 'LARP score: could not be read', 'checks unread', 'check unread', 'checked',
+  'risk:', 'risk: could not be read', 'risk: the sources reported no holder/authority data for this coin',
+  'mint authority ON', 'mint authority revoked', 'mint authority unknown', 'freeze authority ON', 'freeze authority revoked', 'freeze authority unknown',
+  'top-10 holders', 'LP locked', 'rug score', 'age unknown',
+  'market: mcap', 'market: could not be read', 'liquidity', 'holders', 'coin age',
+  'the runner holds this coin now (/positions)', 'a candidate of the runner now',
+  'TOP', 'Nothing ranked right now', '/check <CA> for one coin', '1h vol', 'HELD', 'candidate',
+  'SIGNALS', 'newest first', 'No signals yet: nothing matched the screen or tripped a check since the bot came on',
+  "the screener's trending list", 'the screener returned nothing: offline, or the sources did not answer',
+  'the screener did not answer', 'no live screener here', "the runner's own coins instead", 'No ranking right now',
+  'No signals: no run has started since the bot came on',
+  'SCREEN', 'SAFETY', 'DRAIN', 'STUCK', 'WRITTEN OFF', 'GUARD', 'HALT', 'SELL', 'BUY',
+  'matched the screen', 'refused by', 'cannot sell', 'closed at realizable value', 'halted', '(paper book)',
+];
+
+// NO_LIVE_DATA is declared with the host side below, so the wording list is completed on first use.
+let ownWording: readonly string[] | null = null;
+let ownRe: RegExp | null = null;
+const allOwnWording = (): readonly string[] => (ownWording ??= [...OWN_WORDING, NO_LIVE_DATA]);
+function ownWordingRe(): RegExp {
+  // Prose boundaries only: a fragment glued to a host or path character ("runner.local", "runner-box", "∕runner∕")
+  // is not the bot's wording.
+  ownRe ??= new RegExp(`(?<=^|[\\s(\\["'·])(?:${[...allOwnWording()].sort((a, b) => b.length - a.length).map(escapeRe).join('|')})(?=$|[\\s)\\],;!?"'·…]|[.:](?:\\s|$))`, 'gu');
+  return ownRe;
+}
+
+/** `re` replaced with [host] everywhere in `s` except inside the bot's own wording (OWN_WORDING). */
+function hideOutsideOwnWording(s: string, re: RegExp): string {
+  let out = '';
+  let at = 0;
+  for (const m of s.matchAll(ownWordingRe())) {
+    out += s.slice(at, m.index).replace(re, '[host]') + m[0];
+    at = m.index + m[0].length;
+  }
+  return out + s.slice(at).replace(re, '[host]');
+}
+
+/**
  * The last fence on every read-only answer: secrets and paths hidden again (an error text from a source can carry
  * either), this computer's names replaced, invisible characters and cut surrogates dropped, and the answer capped
  * in lines and characters (a "(cut)" line says so).
  */
 export function finalizeReply(lines: string[], names: readonly string[]): string[] {
-  const nameRes = names.map((n) => new RegExp(escapeRe(n), 'gi'));
+  const nameRes = names.filter((n) => typeof n === 'string' && n.length > 0).map((n) => ({
+    re: new RegExp(escapeRe(n), 'gi'),
+    own: allOwnWording().some((w) => w.toLowerCase().includes(n.toLowerCase())),
+  }));
   const clean = lines.map((l) => {
     let s = hideSecrets(String(l)).replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '[url]');
-    for (const re of nameRes) s = s.replace(re, '[host]');
+    for (const { re, own } of nameRes) s = own ? hideOutsideOwnWording(s, re) : s.replace(re, '[host]');
     return cut(defuse(s), 400);
   });
   const out: string[] = [];
