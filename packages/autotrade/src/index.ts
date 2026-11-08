@@ -27,6 +27,8 @@
 //            signal per fill to the user's own executor (webhook, command hook, JSONL, MCP feed, Telegram copy); no key
 // limits / executor-health / report  task-1654: every real-mode limit user-set per scope (stricter wins), executor
 //            heartbeats + the silence pause, the paper-vs-real divergence report and the digest
+// factory/   task-2159: the strategy factory: an analyst call on the evidence makes ONE paper candidate per run, held-out
+//            tested, queued for a paper forward test, auto-retired on failure; caps, FACTORY-STOP, schedule, chat control
 //
 // The screener filter grammar is imported by path from the CLI's screener (one parser for the screen and
 // for strategies); nothing in this package touches a key or a wallet, and nothing places a live order (task-1571). The desk executor
@@ -75,3 +77,4 @@ export * from './limits.ts';
 export * from './paper-limits.ts';
 export * from './executor-health.ts';
 export * from './report.ts';
+export * from './factory/index.ts';

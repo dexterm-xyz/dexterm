@@ -77,9 +77,10 @@ type Ev = Record<string, any>;
 
 /**
  * Every strategy (fleet member) in one runs directory, its positions tracked across run files (control/report.mjs
- * readMembers, rules in the header). `now` decides which stuck positions are already written off.
+ * readMembers, rules in the header). `now` decides which stuck positions are already written off. `until` (ms) reads the
+ * ledgers as they stood then: later events are ignored (the factory keeps its held-out days unseen this way).
  */
-export function readStrategyLedgers(runsDir: string, { now = Date.now(), writeOffMin = STUCK_WRITE_OFF_MIN } = {}): Record<string, MemberLedger> {
+export function readStrategyLedgers(runsDir: string, { now = Date.now(), writeOffMin = STUCK_WRITE_OFF_MIN, until = Infinity } = {}): Record<string, MemberLedger> {
   const M: Record<string, MemberLedger> = {};
   if (!existsSync(runsDir)) return M;
   const symbols = new Map<string, string>(); // mint -> symbol, from the candidate lines (fills carry no symbol)
@@ -91,6 +92,7 @@ export function readStrategyLedgers(runsDir: string, { now = Date.now(), writeOf
     let text: string; try { text = readFileSync(join(runsDir, f), 'utf8'); } catch { continue; }
     for (const line of text.split('\n')) {
       if (!line) continue; let e: Ev; try { e = JSON.parse(line); } catch { continue; }
+      if (typeof e.t === 'number' && e.t > until) continue;
       if (e.kind === 'fleet_member' || e.kind === 'run_start') {
         member ??= e.member ?? e.strategy ?? null;
         if (member && !M[member]) {

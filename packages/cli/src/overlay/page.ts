@@ -60,7 +60,7 @@ const JS = `
   var PAGE = document.querySelector('meta[name="dexterm-page"]').content;
   var WS_URL = document.querySelector('meta[name="dexterm-ws"]').content;
   var SCENES = PAGE === 'all' ? ['coin','activity','pnl'] : [PAGE];
-  var TITLES = { activity: 'AGENT ACTIVITY', coin: 'COIN', pnl: 'PnL' };
+  var TITLES = { activity: 'AGENT ACTIVITY', coin: 'COIN', pnl: 'PnL', strategy: 'WATCH IT COOK' };
   var root = document.getElementById('root');
   if (PAGE === 'all') root.className = 'grid';
   var boxes = {};
@@ -122,6 +122,34 @@ const JS = `
         b.body.appendChild(el('div', 'k', 'LIVE SIGNALS'));
         c.flags.forEach(function(s){ b.body.appendChild(el('div', 'flag ' + s.level, '\\u25cf ' + s.title + ' \\u00b7 ' + s.text + ' \\u00b7 ' + s.source + ' \\u00b7 ' + s.age + ' old' + (s.stale ? ' (stale)' : ''))); });
       } else b.body.appendChild(kv('SIGNALS', 'none fired yet'));
+    },
+    strategy: function(b, v){
+      clear(b.body);
+      b.stamp.hidden = false; b.stamp.textContent = v.stamp; b.stamp.className = 'chip paper';
+      var top = el('div', 'kv'); top.appendChild(el('span', 'sym', v.name)); top.appendChild(el('span', 'mint', v.id + ' \u00b7 ' + v.stage + (v.generated ? ' \u00b7 GENERATED (a candidate, not an edge)' : ''))); b.body.appendChild(top);
+      b.body.appendChild(el('div', 'small', v.source + (v.attached ? ' \u00b7 ' + v.attached : '')));
+      var e = v.equity;
+      b.body.appendChild(kv('EQUITY', (e.startUsd !== null ? 'start $' + e.startUsd : 'no paper book yet') + (e.endUsd !== null ? ' \u00b7 now $' + e.endUsd : '') + (e.netUsd !== null ? ' \u00b7 net $' + e.netUsd : '') + ' \u00b7 ' + e.closed + ' closed \u00b7 ' + e.open + ' open'));
+      if (v.rules) {
+        b.body.appendChild(el('div', 'k', 'RULES'));
+        v.rules.entry.slice(0, 3).concat(v.rules.sizing.slice(0, 1)).forEach(function(l){ b.body.appendChild(el('div', 'small', '  ' + l)); });
+        v.rules.exits.forEach(function(x){ x.lines.slice(0, 3).forEach(function(l){ b.body.appendChild(el('div', 'small', '  [' + x.profile + '] ' + l)); }); });
+      }
+      b.body.appendChild(el('div', 'k', 'BAGS'));
+      if (!v.bags.length) b.body.appendChild(el('div', 'empty', 'no paper bags yet'));
+      v.bags.slice(0, 6).forEach(function(g){
+        var r = el('div', 'flag ' + (g.state === 'HELD' ? 'info' : (g.pnlPct !== null && g.pnlPct >= 0 ? 'up' : 'down')));
+        r.textContent = (g.state === 'HELD' ? '\u25cf HELD ' : '\u25cb SOLD ') + (g.symbol ? '$' + g.symbol + ' ' : '') + g.mint + (g.costUsd !== null ? ' \u00b7 cost $' + g.costUsd : '') + (g.pnlPct !== null ? ' \u00b7 ' + (g.pnlPct > 0 ? '+' : '') + g.pnlPct + '%' : '') + (g.exitReason ? ' \u00b7 ' + g.exitReason : '');
+        b.body.appendChild(r);
+      });
+      if (v.rungs.length) {
+        b.body.appendChild(el('div', 'k', 'LADDER RUNGS'));
+        b.body.appendChild(el('div', 'small', v.rungs.map(function(r){ return (r.hits ? '\u25cf ' : '\u25cb ') + r.label + (r.hits ? ' \u00d7' + r.hits : ''); }).join('   ')));
+      }
+      b.body.appendChild(el('div', 'k', 'ENTRIES AND EXITS'));
+      if (!v.events.length) b.body.appendChild(el('div', 'empty', 'no paper fills yet'));
+      v.events.slice(0, 6).forEach(function(f){ b.body.appendChild(el('div', 'flag ' + (f.side === 'buy' ? 'info' : 'up'), f.when + '  ' + (f.side === 'buy' ? 'ENTRY ' : 'EXIT  ') + (f.symbol ? '$' + f.symbol + ' ' : '') + f.mint + (f.usd !== null ? ' $' + f.usd : '') + '  ' + f.reason)); });
+      b.body.appendChild(el('div', 'small', v.note));
     },
     pnl: function(b, v){
       clear(b.body);

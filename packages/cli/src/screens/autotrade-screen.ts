@@ -100,7 +100,7 @@ function renderList(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
   const lowerH = a.h - listH;
   const box = c.box(a.x, a.y, a.w, listH, {
     title: `STRATEGIES · ${ui.entries.length} (${ui.entries.length - users} presets, ${users} yours)`,
-    caption: bp === 'compact' ? undefined : 'paper only · your files: ~/.dexterm/strategies · presets are read-only (d makes a copy)', focus: !ui.input,
+    caption: bp === 'compact' ? undefined : 'paper only · your files: ~/.dexterm/strategies · presets are read-only (d makes a copy) · in a browser: dexterm autotrade web', focus: !ui.input,
   });
   const bg = box.bg;
   let y = box.y;
@@ -115,6 +115,8 @@ function renderList(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
   if (!ui.entries.length) c.text(box.x + 1, y + 1, 'no strategies found (the shipped presets should always list: reinstall if this stays empty)', { fg: t.warn, bg });
   const rows = box.h - 1;
   const scroll = Math.max(0, ui.selected - (rows - 1));
+  // task-2159: the factory's candidates are tagged GENERATED (paper, simulated, a candidate; never an edge)
+  const gens = memo(ui, `generated:${Math.floor(ui.deps.now() / 10_000)}`, () => { try { return ui.deps.generated?.() ?? new Map(); } catch { return new Map(); } });
   for (let i = scroll; i < ui.entries.length && y < box.y + box.h; i++) {
     const e = ui.entries[i];
     const sel = i === ui.selected;
@@ -125,7 +127,8 @@ function renderList(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
     const marked = ui.marked.includes(e.id);
     c.text(box.x + cols.mark, y, running ? '▶' : marked ? '◆' : ' ', { fg: running ? t.up : t.accent, bg: rb, b: true });
     c.text(box.x + cols.id, y, fit(e.highRisk ? `${e.id} ⚠` : e.id, cols.src - cols.id - 1), { fg: e.ok ? (e.highRisk ? t.warn : sel ? t.borderFocus : t.text) : t.down, bg: rb, b: sel });
-    c.text(box.x + cols.src, y, e.source === 'preset' ? 'preset' : e.shadowsPreset ? 'yours*' : 'yours', { fg: e.source === 'preset' ? t.muted : t.accent, bg: rb });
+    const gen = gens.get(e.id);
+    c.text(box.x + cols.src, y, gen ? (gen.stage === 'retired' ? 'GEN ✗' : 'GENERATED') : e.source === 'preset' ? 'preset' : e.shadowsPreset ? 'yours*' : 'yours', { fg: gen ? (gen.stage === 'retired' ? t.dim : t.warn) : e.source === 'preset' ? t.muted : t.accent, bg: rb });
     if (!e.ok) {
       c.text(box.x + cols.mode, y, fit(`✗ invalid: ${e.errors?.[0] ? `${e.errors[0].path || '/'} ${e.errors[0].msg}` : ''}`, box.w - cols.mode - 2), { fg: t.down, bg: rb });
       y += 1; continue;
@@ -154,6 +157,12 @@ function renderList(c: Canvas, ui: AutotradeUi, a: Area, now: number): void {
     const line = (k: string, v: string, fg: Hex = t.text) => {
       wrap(v, dbox.w - 13).forEach((l, i) => { if (dy >= dbox.y + dbox.h) return; c.text(dbox.x + 1, dy, i ? '' : k.padEnd(10), { fg: t.dim, bg: dbox.bg }); c.text(dbox.x + 11, dy, fit(l, dbox.w - 13), { fg, bg: dbox.bg }); dy += 1; });
     };
+    const gt = memo(ui, `generated:${Math.floor(ui.deps.now() / 10_000)}`, () => { try { return ui.deps.generated?.() ?? new Map(); } catch { return new Map(); } }).get(s.id);
+    if (gt) {
+      line('GENERATED', `${gt.label} · ${gt.stage} · from ${gt.parents.join(' + ')}`, t.warn);
+      line('held out', gt.heldOut, t.muted);
+      line('why', `dexterm autotrade factory show ${s.id}`, t.dim);
+    }
     if (s.highRisk) line('⚠ HIGH', 'HIGH RISK: full port live (the signer sizes an entry up to the caps you set, up to the whole wallet); one rug can zero it. Experimental, not financial advice.', t.down);
     line('screen', s.entry.screen, t.accent);
     line('age', `${s.entry.ageHours.min}–${s.entry.ageHours.max ?? '∞'} h · ${s.entry.triggers.map((x) => x.kind).join(` ${s.entry.triggerMode} `)} · decide ${s.entry.decide}`);
@@ -239,12 +248,15 @@ function reviewCard(c: Canvas, ui: AutotradeUi): void {
   c.text(b.x + 1, b.y + b.h - 1, fit(looser ? 'y opens the less-safe popup (a second y applies) · n dismisses · any other key closes' : 'y applies it (a new version, journaled) · n dismisses · any other key closes', b.w - 2), { fg: looser ? t.warn : t.accent, bg, b: true });
 }
 
+const capK = (x: number) => (x >= 1e6 ? `${+(x / 1e6).toFixed(2)}M` : `${+(x / 1e3).toFixed(1)}K`);
+
 /** A one-line sketch of an exit profile: stop · cost-back · TP steps · trails · time/hold limits. */
 export function ladderSketch(p: ExitProfile): string {
   const parts: string[] = [];
   parts.push(p.hardStop.enabled && p.hardStop.atPct !== null ? `stop ${p.hardStop.atPct}% ┤` : 'no stop ┤');
   parts.push('entry');
-  const steps: Array<[number, string]> = p.tpLadder.map((s) => [s.atPct, `+${s.atPct}% ${frac(s.sellFrac)}`]);
+  // task-2163: market-cap steps sort after the gain levels (their gain depends on the entry cap)
+  const steps: Array<[number, string]> = p.tpLadder.map((s) => (s.atMcapUsd !== undefined ? [1e7 + s.atMcapUsd, `$${capK(s.atMcapUsd)} mcap ${frac(s.sellFrac)}`] : [s.atPct!, `+${s.atPct}% ${frac(s.sellFrac)}`]));
   if (p.costRecovery) steps.push([p.costRecovery.atPct, `+${p.costRecovery.atPct}% cost back (≤${Math.round(p.costRecovery.maxSellFrac * 100)}%)`]);
   steps.sort((x, y) => x[0] - y[0]);
   for (const [, s] of steps) parts.push(s);

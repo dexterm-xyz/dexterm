@@ -16,7 +16,7 @@ export {
 export {
   AutotradeTools, ProposalFiles, checkProposal, riskDelta, diffLines, screenDelta, deniedChanges, opsPolicyErrors, opsShapeErrors,
   proposalCardView, proposalsDir, isProposalId, cleanText, loadEngine, STRATEGY_DENIED_FOR_MODELS, STRATEGY_READ_TOOLS, STRATEGY_PROPOSE_TOOLS,
-  AUTOTRADE_TOOLS, PARALLEL_READ_TOOLS, PARALLEL_CONTROL_TOOLS, PARALLEL_TOOLS, JOURNEY_READ_TOOLS, JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, JOURNEY_TOOLS, FORWARD_START_RATE, defaultForwardSpawner, type ForwardSpawner, MAX_PROPOSAL_OPS, BACKTEST_MAX_DAYS, BACKTEST_RATE, PROPOSAL_SCHEMA, RUNNER_STATUS_SCHEMA,
+  AUTOTRADE_TOOLS, PARALLEL_READ_TOOLS, PARALLEL_CONTROL_TOOLS, PARALLEL_TOOLS, JOURNEY_READ_TOOLS, JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, JOURNEY_TOOLS, FACTORY_READ_TOOLS, FACTORY_CHANGE_TOOLS, FACTORY_AGENT_TOOLS, FACTORY_TOOLS, FACTORY_RUN_RATE, agentSource, defaultFactoryRunner, WEB_CHAT_DENIED_TOOLS, chatSurface, type FactoryRunner, FORWARD_START_RATE, defaultForwardSpawner, type ForwardSpawner, MAX_PROPOSAL_OPS, BACKTEST_MAX_DAYS, BACKTEST_RATE, PROPOSAL_SCHEMA, RUNNER_STATUS_SCHEMA,
   type Engine, type StrategyProposalRecord, type ProposalCheck, type ProposalInput, type RiskDelta, type RiskReason, type ProposalStatus,
 } from './autotrade-tools.ts';
 export { buildDossier, type DossierInput, type DossierAvailability } from './dossier.ts';

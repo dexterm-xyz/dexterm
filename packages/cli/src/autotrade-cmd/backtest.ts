@@ -137,7 +137,7 @@ export function defaultGrid(s: ResolvedStrategy): Grid {
   const p = s.exits.profiles[s.exits.default];
   const g: Grid = {};
   if (p.trailingStop) g['profile.trailingStop.trailPct'] = [15, 25, 35];
-  if (p.tpLadder.length) g['profile.tpLadder.0.atPct'] = [30, 50, 80];
+  if (p.tpLadder.length && p.tpLadder[0].atPct !== undefined) g['profile.tpLadder.0.atPct'] = [30, 50, 80];
   if (p.costRecovery) g['profile.costRecovery.atPct'] = [60, 100, 150];
   if (p.bagTrail) g['profile.bagTrail.trailPct'] = [35, 55, 75];
   if (s.sizing.mode === 'pct' && s.sizing.pct !== undefined) g['sizing.pct'] = [s.sizing.pct / 2, s.sizing.pct].map((x) => Math.round(x * 10) / 10);

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, PAPER_NOTE_TOOLS, isMoneyToolName, STRATEGY_READ_TOOLS, STRATEGY_PROPOSE_TOOLS, LEDGER_READ_TOOLS, LEDGER_PROPOSE_TOOLS } from '../src/index.ts';
+import { TOOLS, READ_ONLY_TOOLS, PAPER_WRITE_TOOLS, PAPER_READ_TOOLS, PAPER_NOTE_TOOLS, isMoneyToolName, STRATEGY_READ_TOOLS, STRATEGY_PROPOSE_TOOLS, LEDGER_READ_TOOLS, LEDGER_PROPOSE_TOOLS, FACTORY_AGENT_TOOLS } from '../src/index.ts';
 import { ANALYST_ACTION_TYPES } from '@dexterm/data';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -37,7 +37,16 @@ const LEDGER_TOOLS = ['ledger_trades', 'ledger_positions', 'ledger_equity', 'led
 const JOURNEY_TOOLS = ['strategy_journey', 'strategy_forward_report', 'strategy_forward_start', 'strategy_forward_stop', 'strategy_promote_propose'];
 // task-1822: classification models: read-only estimates (classify_coin / classify_batch / classifier_status); they never sign, trade or write config
 const CLASSIFIER_TOOLS = ['classify_coin', 'classify_batch', 'classifier_status'];
-const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS, ...JOURNEY_TOOLS, ...CLASSIFIER_TOOLS]);
+// task-2159: the strategy factory + chat control: two reads and one two-step change (paper on/off of an always-on
+// member, retire a generated strategy, factory pause/resume/run); it applies only on the user's own next message
+const FACTORY_TOOLS = ['strategy_overview', 'factory_status', 'strategy_change'];
+// task-2167: the factory for external MCP agents. READS (untrusted-text framing): candidates, provenance, lessons, the
+// evidence snapshot, a side-by-side compare. PAPER CONTROL FILES: pause (the agent's own AGENT-PAUSE), resume (lifts only
+// that), retire a GENERATED candidate, start one rate-limited run; PROPOSALS the user confirms: enable / disable; and an
+// OFFER through the factory's own gate (queued, never applied by the tool). None sets a mode, bankroll, cap or budget.
+const FACTORY_READ_2167 = ['factory_candidates', 'factory_why', 'factory_lessons', 'factory_evidence', 'strategy_compare_lab'];
+const FACTORY_AGENT_2167 = ['factory_pause', 'factory_resume', 'factory_run_now', 'strategy_enable', 'strategy_disable', 'strategy_retire', 'factory_offer_candidate'];
+const ALLOWLIST = new Set<string>([...READ_DATA_TOOLS, ...UI_NAV_TOOLS, ...PAPER_TOOLS, ...STRATEGY_TOOLS, ...PARALLEL_TOOLS, ...LEDGER_TOOLS, ...JOURNEY_TOOLS, ...CLASSIFIER_TOOLS, ...FACTORY_TOOLS, ...FACTORY_READ_2167, ...FACTORY_AGENT_2167]);
 
 const servedNames = TOOLS.map((t) => String(t.name));
 
@@ -47,7 +56,10 @@ test('every served tool is on the allowlist, and the allowlist has no stale name
   assert.deepEqual([...LEDGER_READ_TOOLS, ...LEDGER_PROPOSE_TOOLS].sort(), [...LEDGER_TOOLS].sort());
   for (const n of [...LEDGER_PROPOSE_TOOLS, ...PAPER_NOTE_TOOLS]) assert.ok(!READ_ONLY_TOOLS.includes(n), `${n} writes a file: not read-only`);
   // task-1647: forward-test control and promotion proposals act or write: never on the read-only surface
-  for (const n of ['strategy_forward_start', 'strategy_forward_stop', 'strategy_promote_propose']) assert.ok(!READ_ONLY_TOOLS.includes(n), `${n} acts or writes: not read-only`);
+  for (const n of ['strategy_forward_start', 'strategy_forward_stop', 'strategy_promote_propose', 'strategy_change', ...FACTORY_AGENT_2167]) assert.ok(!READ_ONLY_TOOLS.includes(n), `${n} acts or writes: not read-only`);
+  // task-2167: the factory reads stay on the read surface (a skill may name them); the agent controls are classified once
+  for (const n of FACTORY_READ_2167) assert.ok(READ_ONLY_TOOLS.includes(n), `${n} is a read`);
+  assert.deepEqual([...FACTORY_AGENT_TOOLS].sort(), [...FACTORY_AGENT_2167].sort());
   for (const n of ALLOWLIST) assert.ok(servedNames.includes(n), `allowlist names a tool "${n}" the server no longer serves`);
   assert.equal(servedNames.length, ALLOWLIST.size, 'no duplicate or missing tool names');
 });

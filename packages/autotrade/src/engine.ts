@@ -113,6 +113,9 @@ export interface Position {
   costRecovered?: boolean;
   /** A tightened bag trail (an agent `tighten` on a free bag); otherwise the profile's bagTrail.trailPct. */
   bagTrailPct?: number;
+  /** task-2163: the token supply read at entry (market cap / price), so a market-cap TP step can be checked as
+   *  price × supply; null when the entry tick had no market cap (absent on a restored older position). */
+  capSupply?: number | null;
   ladder: { frac: number; atPct: number; deadline: number; usd: number }[];
   fills: Fill[];
   status: 'open' | 'closed';
@@ -133,6 +136,12 @@ export interface ClosedTrade {
 }
 
 export interface Exec { slippageBps: number; feeBps: number; networkFeeUsd: number; maxPriceImpactPct: number; minExitLiquidityUsd: number }
+
+/** task-2163: market cap / price on a tick (the token supply); null when either is missing. */
+export function capSupplyOf(k: MarketTick): number | null {
+  const cap = k.mcapResolved ?? k.mcap;
+  return cap !== null && cap > 0 && k.price !== null && k.price > 0 ? cap / k.price : null;
+}
 
 /** Buy `usd` against the recorded pool. Constant product on half the liquidity; a partial fill at the impact cap. */
 export function simBuy(k: MarketTick, usd: number, x: Exec): Fill | { refused: string } {
@@ -264,7 +273,7 @@ export class SimBook {
       id, mint: k.mint, symbol: k.symbol, profileId: profile.id, openedAt: k.t, sessionId,
       tokens: fill.tokens, origTokens: fill.tokens, costUsd: fill.usd, realizedUsd: 0, entryPrice: fill.price, peakPrice: fill.price, troughPrice: fill.price,
       tpFilled: 0, trailArmed: false, ladder, fills: [fill], status: 'open', stuck: false, closedAt: null, exitReason: null,
-      liqWindow: [{ t: k.t, liq: k.liq ?? 0 }], lowTapeSince: null, lastTick: k, wakeSent: {},
+      liqWindow: [{ t: k.t, liq: k.liq ?? 0 }], lowTapeSince: null, lastTick: k, wakeSent: {}, capSupply: capSupplyOf(k),
     };
     this.state.cashUsd -= fill.usd;
     this.state.entriesToday++;

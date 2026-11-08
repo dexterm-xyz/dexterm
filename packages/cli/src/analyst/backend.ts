@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTION_FILE_ENV, ACTION_TOKEN_ENV, ANALYST_ACTION_TYPES, parseActionLine } from '@dexterm/data';
 import { basisLanguage, DEFAULT_PRICE_BASIS, fmtCap, isPriceBasis, knownSupply, NO_SUPPLY_REASON, pickBasis, type PriceBasis } from '@dexterm/data/basis';
-import { firewall, userSkillPreamble, JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
+import { firewall, userSkillPreamble, FACTORY_AGENT_TOOLS, FACTORY_CHANGE_TOOLS, JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS, type ContentEntry } from '@dexterm/mcp';
 import { skillStore } from '../kb-skill-cmd.ts';
 import { applyCodexEvent, buildCodexArgv, codexAllowedTools, codexDeveloperInstructions, codexFailure, expandSkillPrompt, newCodexTurn, strictSchema, type AnalystEngine } from './codex.ts';
 import { runOllamaTurn, type OllamaDeps } from './ollama.ts';
@@ -66,7 +66,18 @@ export interface AnalystRequest {
    * resumed session id belongs to the engine that created it, so a session keeps one engine for its life.
    */
   engine?: AnalystEngine;
+  /**
+   * task-2159: the chat turn the MCP server reads to confirm a `strategy_change` (DEXTERM_CHAT_TURN): this chat's id,
+   * this turn's id and the text the USER typed for it (empty for app-made turns). Written by the app, never by the
+   * model, so a change can only be confirmed by the user's own next message.
+   */
+  chatTurn?: { chatId: string; turn: string; userText: string; surface?: 'web' };
+  /** task-2170: extra dexterm MCP tools this turn may not call (bare names), denied at the CLI layer with the action tools. */
+  denyTools?: readonly string[];
 }
+
+/** task-2159: the env var the MCP server reads the chat turn from (autotrade factory/control.ts CHAT_TURN_ENV). */
+export const CHAT_TURN_ENV = 'DEXTERM_CHAT_TURN';
 
 /** The excluded action tools for a restricted session, as CLI tool names (task-1324). */
 export function deniedActionTools(actionTypes: readonly string[] | undefined): string[] {
@@ -74,7 +85,8 @@ export function deniedActionTools(actionTypes: readonly string[] | undefined): s
   // task-1507: an observe-only session (AI scan) cannot propose a strategy edit either
   // task-1529: nor start or stop a parallel strategy
   // task-1647: nor start / stop a forward test or propose a promotion
-  const propose = actionTypes.length === 0 ? [...STRATEGY_PROPOSE_TOOLS, ...PARALLEL_CONTROL_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...JOURNEY_PROPOSE_TOOLS] : [];
+  // task-2159: nor preview / confirm a strategy change; task-2167: nor any factory agent control or offer
+  const propose = actionTypes.length === 0 ? [...STRATEGY_PROPOSE_TOOLS, ...PARALLEL_CONTROL_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...JOURNEY_PROPOSE_TOOLS, ...FACTORY_CHANGE_TOOLS, ...FACTORY_AGENT_TOOLS] : [];
   return [...ANALYST_ACTION_TYPES.filter((t) => !actionTypes.includes(t)), ...propose].map((t) => `mcp__dexterm__${t}`);
 }
 
@@ -378,7 +390,7 @@ export function buildArgv(req: AnalystRequest, mcpConfigPath: string, pluginDir:
     argv.push('--json-schema', JSON.stringify(Object.fromEntries(Object.entries(schema).filter(([k]) => !k.startsWith('$')))));
   }
   // task-1324: a restricted session denies the excluded UI-action tools at the CLI layer too.
-  const denied = deniedActionTools(req.actionTypes);
+  const denied = [...deniedActionTools(req.actionTypes), ...(req.denyTools ?? []).filter((t) => /^[a-z][a-z0-9_]{1,63}$/.test(t)).map((t) => `mcp__dexterm__${t}`)];
   if (denied.length) argv.push('--disallowedTools', denied.join(','));
   if (req.resume) argv.push('--resume', req.resume);
   if (req.budgetUsd) argv.push('--max-budget-usd', String(req.budgetUsd));
@@ -411,6 +423,7 @@ export function runAnalyst(req0: AnalystRequest, handlers: AnalystHandlers, deps
     [ACTION_FILE_ENV]: actionPath,
     [ACTION_TOKEN_ENV]: actionToken,
   };
+  if (req.chatTurn) env[CHAT_TURN_ENV] = JSON.stringify(req.chatTurn);
   if (process.env.DEXTERM_RPC_URL) env.DEXTERM_RPC_URL = process.env.DEXTERM_RPC_URL;
   // task-1377: the MCP server reads the user's KB/skill overlay from the same DEXTERM_HOME as this process.
   if (process.env.DEXTERM_HOME) env.DEXTERM_HOME = process.env.DEXTERM_HOME;

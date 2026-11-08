@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { applyOps, dextermHome, type PatchOp } from '@dexterm/custom';
 import {
-  StrategyStore, MAX_OPS, recordBacktestEvidence, type BacktestEvidence, STRATEGY_ID, activeRunner, bumpPatch, fmtIssue, readControl, readFleetStatus, requestControl, runnerRendezvousPath, validateStrategy,
+  StrategyStore, MAX_OPS, listGenerated, recordBacktestEvidence, type BacktestEvidence, STRATEGY_ID, activeRunner, bumpPatch, fmtIssue, readControl, readFleetStatus, requestControl, runnerRendezvousPath, validateStrategy,
   type BacktestReport, type FleetStatus, type ControlAction, type Grid, type Issue, type ListEntry, type ResolvedStrategy, type Strategy, type StrategyCheck, type SweepResult,
 } from '@dexterm/autotrade';
 import type { ProposalFiles } from '@dexterm/mcp';
@@ -195,7 +195,19 @@ export interface AutotradeDeps {
   exportDir: string;
   /** task-1647: starts a forward test's host (default: the dexterm entry, detached). */
   forwardSpawn?: ForwardSpawn;
+  /** task-2159: the strategy factory's candidates by id (GENERATED tag, stage, held-out line); absent = none. */
+  generated?: () => Map<string, GeneratedTag>;
   now: () => number;
+}
+
+/** task-2159: what the Q screen shows for a strategy the factory made (always paper, simulated, a candidate). */
+export interface GeneratedTag { stage: string; parents: string[]; heldOut: string; label: string }
+
+export function generatedTags(home: string): Map<string, GeneratedTag> {
+  return new Map(listGenerated(home).map((g) => [g.id, {
+    stage: g.stage, parents: g.parents, label: g.label,
+    heldOut: g.heldOut ? `held out n ${g.heldOut.n}, mean ${g.heldOut.meanPct}% (95% ${g.heldOut.lo} to ${g.heldOut.hi}): ${g.heldOut.verdict}` : 'held-out test not run',
+  }]));
 }
 
 export interface Field {
@@ -265,6 +277,7 @@ export function defaultDeps(env: NodeJS.ProcessEnv = process.env, jobs: Backtest
     proposalSource: source,
     proposalFiles,
     exportDir: join(home, 'exports'),
+    generated: () => generatedTags(home),
     now: Date.now,
   };
 }
@@ -647,7 +660,7 @@ export function defaultGrid(s: ResolvedStrategy): Grid {
     if (p.bagTrail) g['profile.bagTrail.trailPct'] = around(p.bagTrail.trailPct, 10, 90);
   } else {
     if (p.trailingStop) g['profile.trailingStop.trailPct'] = around(p.trailingStop.trailPct, 5, 60);
-    if (p.tpLadder.length) g['profile.tpLadder.0.atPct'] = around(p.tpLadder[0].atPct, 0.1, 10000);
+    if (p.tpLadder.length && p.tpLadder[0].atPct !== undefined) g['profile.tpLadder.0.atPct'] = around(p.tpLadder[0].atPct, 0.1, 10000);
   }
   if (!Object.keys(g).length) {
     if (s.sizing.mode === 'pct' && s.sizing.pct) g['sizing.pct'] = around(s.sizing.pct, 0.1, 25);

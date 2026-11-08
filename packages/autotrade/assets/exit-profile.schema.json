@@ -121,13 +121,12 @@
     "tpLadder": {
       "type": "array",
       "minItems": 0,
-      "maxItems": 6,
-      "description": "Take-profit steps. sellFrac is a fraction of the ORIGINAL position size (0.25 = a quarter of what was bought).",
+      "maxItems": 10,
+      "description": "Take-profit steps. sellFrac is a fraction of the ORIGINAL position size (0.25 = a quarter of what was bought). Each step has atPct (gain over entry, at most 6 steps) or atMcapUsd (task-2163: the coin's market cap, price x the supply read at entry, up to 10 steps); one kind per ladder, ascending.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "atPct",
           "sellFrac"
         ],
         "properties": {
@@ -136,12 +135,29 @@
             "exclusiveMinimum": 0,
             "maximum": 10000
           },
+          "atMcapUsd": {
+            "type": "number",
+            "minimum": 1000,
+            "maximum": 1000000000000.0
+          },
           "sellFrac": {
             "type": "number",
             "exclusiveMinimum": 0,
             "maximum": 1
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "atPct"
+            ]
+          },
+          {
+            "required": [
+              "atMcapUsd"
+            ]
+          }
+        ]
       }
     },
     "trailingStop": {
