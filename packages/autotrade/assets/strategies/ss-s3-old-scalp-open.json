@@ -1,0 +1,172 @@
+{
+ "kind": "strategy",
+ "schema": "dexterm-strategy/1",
+ "id": "ss-s3-old-scalp-open",
+ "name": "Published S3 OPEN (gates off)",
+ "version": "1.0.0",
+ "description": "PAPER only, simulated fills, not financial advice. OPEN version: the same entry and exit rules with the holder-safety and pool-safety gates switched OFF. It exists to show what those filters are worth; expect more entries and more pulled pools. Entry: coins at least 6 h old with 500+ holders and a $10K pool; exits as S3. Rules frozen 2026-11-04; results in the docs (Published paper strategies).",
+ "mode": "paper",
+ "bankroll": {
+  "startUsd": 5000
+ },
+ "entry": {
+  "screen": "liq >= 10K holders >= 500",
+  "ageHours": {
+   "min": 6,
+   "max": null
+  },
+  "safety": {
+   "maxTop10Pct": null,
+   "maxDevPct": null,
+   "requireNoMintAuthority": false,
+   "requireNoFreezeAuthority": false,
+   "maxMcapSplitX": 3,
+   "youngVertical": null,
+   "unknownHolders": "allow",
+   "rugproof": null
+  },
+  "triggers": [
+   {
+    "kind": "screen"
+   }
+  ],
+  "triggerMode": "any",
+  "decide": "auto",
+  "candidateTtlSec": 240
+ },
+ "exits": {
+  "default": "ss-scalp20",
+  "profiles": [
+   {
+    "kind": "exit-profile",
+    "id": "ss-scalp20",
+    "name": "S3 exit: 20-minute scalp",
+    "version": "1.0.0",
+    "description": "Sells half at +30%, trails 15% once up 20%, stop at -15%, and is out after 20 minutes whatever happens.",
+    "fit": {
+     "summary": "Coins at least 6 h old with 500+ holders, a $10K pool and 5-min volume >= $500, after the holder-safety and pool-safety gates.",
+     "minLiquidityUsd": 10000,
+     "ageHours": {
+      "min": 6,
+      "max": null
+     },
+     "maxTop10Pct": 30,
+     "signals": [
+      "first clean 5m push with buyers ahead of sellers",
+      "liquidity rising with price"
+     ]
+    },
+    "sizing": {
+     "maxSizePctOfBankroll": 12
+    },
+    "tpLadder": [
+     {
+      "atPct": 30,
+      "sellFrac": 0.5
+     }
+    ],
+    "trailingStop": {
+     "armAtPct": 20,
+     "trailPct": 15
+    },
+    "costRecovery": null,
+    "bagTrail": null,
+    "timeStop": null,
+    "hardStop": {
+     "enabled": true,
+     "atPct": -15,
+     "why": "Fills at the next price read, so a pool pulled between reads can still fill near -100%; the position size caps that loss."
+    },
+    "thesisBreak": {
+     "liquidityDropPct": 20,
+     "liquidityWindowMin": 10,
+     "mcapDivergenceX": 5,
+     "devSell": {
+      "exitOnAnyDevSell": true,
+      "topHolderSellPctOfBag": 30
+     },
+     "volumeDeath": null
+    },
+    "reentry": {
+     "allowed": false,
+     "cooldownMinutes": 0,
+     "maxEntriesPerCoinPerSession": 1,
+     "requires": "one entry per coin"
+    },
+    "carry": {
+     "allowed": false,
+     "requiresTpFilled": 1,
+     "maxRemainderPctOfBankroll": 5
+    },
+    "reprofileTo": [],
+    "wake": {
+     "onTpFilled": false,
+     "onTimeReview": false,
+     "drawdownPct": -50,
+     "thesisWarnFrac": 0.6,
+     "noAnswer": "hold",
+     "onCostRecovered": false
+    },
+    "maxHoldMinutes": 20,
+    "notes": [
+     "Rules frozen 2026-11-04; results in the docs (Published paper strategies)."
+    ]
+   }
+  ]
+ },
+ "sizing": {
+  "mode": "pct",
+  "pct": 9,
+  "maxPctOfBankroll": 12,
+  "maxUsd": 900,
+  "minUsd": 2
+ },
+ "risk": {
+  "perTrade": {
+   "maxLossPctOfBankroll": 5,
+   "assumedLossPctNoStop": 100
+  },
+  "dailyLossHaltPct": 20,
+  "drawdown": {
+   "sizeDownAtPct": 30,
+   "sizeDownMult": 0.5,
+   "recoverBelowPct": 20,
+   "haltAtPct": 70
+  },
+  "maxConcurrent": 4,
+  "maxExposurePct": 50,
+  "lossStreak": {
+   "losses": 8,
+   "cooldownMin": 45
+  },
+  "maxEntriesPerDay": 15,
+  "perCoin": {
+   "maxEntries": 1,
+   "cooldownMin": 10080
+  },
+  "recoveredBags": {
+   "countAsOpen": false,
+   "maxBags": 8
+  }
+ },
+ "agent": {
+  "model": "haiku",
+  "maxSessions": 1,
+  "budgetUsdPerSession": 0.05,
+  "budgetUsdPerDay": 0.5,
+  "maxTurns": 10,
+  "deltaEverySec": 15,
+  "decideWithinSec": 60,
+  "sessionMaxMin": 30,
+  "onTimeout": "skip"
+ },
+ "execution": {
+  "slippageBps": 200,
+  "feeBps": 30,
+  "networkFeeUsd": 0.02,
+  "latencyMs": 3000,
+  "maxPriceImpactPct": 6,
+  "minExitLiquidityUsd": 2000,
+  "stuckWriteOffMin": 30
+ }
+}

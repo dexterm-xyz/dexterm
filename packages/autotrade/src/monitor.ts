@@ -44,6 +44,7 @@ export function splitDetail(k: MarketTick, maxX: number): string {
   return `the data layer flagged the two market-cap sources: their supplies are more than ${SOURCES_AGREE_X}x apart`;
 }
 const pct = (x: number) => `${x >= 0 ? '+' : ''}${x.toFixed(1)}%`;
+const capText = (x: number) => (x >= 1e6 ? `${+(x / 1e6).toFixed(2)}M` : x >= 1e3 ? `${+(x / 1e3).toFixed(1)}K` : `${Math.round(x)}`);
 
 export interface MonitorOpts {
   minExitLiquidityUsd: number;
@@ -131,13 +132,17 @@ export function monitorTick(p: Position, prof: ExitProfile, k: MarketTick, o: Mo
 
   // 4. Take-profit ladder (fractions of the ORIGINAL size; several steps may fill on one gap).
   let left = held;
-  while (p.tpFilled < prof.tpLadder.length && gain >= prof.tpLadder[p.tpFilled].atPct) {
+  // task-2163: a market-cap step fires when price × the supply read at entry reaches it (no supply: the tick's own cap).
+  const capNow = p.capSupply ? k.price * p.capSupply : (k.mcapResolved ?? k.mcap);
+  const reached = (s: ExitProfile['tpLadder'][number]) => (s.atMcapUsd !== undefined ? capNow !== null && capNow >= s.atMcapUsd : gain >= s.atPct!);
+  const at = (s: ExitProfile['tpLadder'][number]) => (s.atMcapUsd !== undefined ? `$${capText(capNow ?? 0)} mcap ≥ $${capText(s.atMcapUsd)}` : `${pct(gain)} ≥ +${s.atPct}%`);
+  while (p.tpFilled < prof.tpLadder.length && reached(prof.tpLadder[p.tpFilled])) {
     const step = prof.tpLadder[p.tpFilled];
     const tokens = Math.min(left, p.origTokens * step.sellFrac);
     p.tpFilled++;
     if (tokens <= 0) continue;
     left -= tokens;
-    out.push({ kind: 'sell', tokens, all: left <= p.origTokens * 1e-6, reason: `tp${p.tpFilled}`, detail: `${pct(gain)} ≥ +${step.atPct}%: sell ${Math.round(step.sellFrac * 100)}% of the original size` });
+    out.push({ kind: 'sell', tokens, all: left <= p.origTokens * 1e-6, reason: `tp${p.tpFilled}`, detail: `${at(step)}: sell ${Math.round(step.sellFrac * 100)}% of the original size` });
     if (prof.wake?.onTpFilled) wake('tp_filled', `TP${p.tpFilled} filled at ${pct(gain)}; ${Math.round((left / p.origTokens) * 100)}% of the original size left`, ['hold', 'exit', 'tighten', 'reprofile']);
   }
   if (left <= p.origTokens * 1e-6) return out;

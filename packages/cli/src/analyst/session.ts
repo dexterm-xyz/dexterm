@@ -5,6 +5,7 @@
 // move into `history`. Typing while a turn is in flight queues the question; it sends when the run
 // ends. Esc interrupts the running turn without leaving the screen.
 
+import { randomBytes } from 'node:crypto';
 import { runAnalyst, stampActionTypes, type AnalystDeps, type AnalystHandle, type ResultEvent, type ToolCallEvent } from './backend.ts';
 import { parseLarpGauge, type LarpGauge } from './larp-gauge.ts';
 import type { AnalystEngine } from './codex.ts';
@@ -231,7 +232,8 @@ export class AnalystSession {
   private startChatTurn(q: string, display?: string): void {
     if (this.status === 'done' || this.status === 'error' || this.status === 'interrupted') this.archiveCurrent();
     this.question = display?.trim() || q;
-    this.beginTurn({ prompt: q, resume: this.sessionId ?? undefined });
+    // A turn with a display label is app-made (AI scan); only a turn the user typed carries their words.
+    this.beginTurn({ prompt: q, resume: this.sessionId ?? undefined, userText: display === undefined ? q : '' });
   }
 
   /** Move the finished current turn into history and reset the current-turn fields for the next one. */
@@ -257,14 +259,20 @@ export class AnalystSession {
     this.error = null; this.doneAt = null;
   }
 
-  private beginTurn(req: { prompt: string; schema?: string; resume?: string }): void {
+  /** task-2159: this conversation's id and turn counter for the chat-turn env (a strategy change is confirmed by the
+   *  user's own next message; the MCP server compares turns). */
+  private readonly chatId = randomBytes(9).toString('base64url');
+  private turnSeq = 0;
+
+  private beginTurn(req: { prompt: string; schema?: string; resume?: string; userText?: string }): void {
     this.status = 'thinking';
+    const chatTurn = { chatId: this.chatId, turn: `t${++this.turnSeq}-${randomBytes(3).toString('hex')}`, userText: req.userText ?? '' };
     this.startedAt = Date.now();
     this.doneAt = null;
     this.handle = runAnalyst(
       {
         prompt: req.prompt, schema: req.schema, resume: req.resume, screenState: this.screenState, model: this.opts.model, budgetUsd: 1.0,
-        actionTypes: this.opts.actionTypes,
+        actionTypes: this.opts.actionTypes, chatTurn,
         ...(this.engine !== 'claude' ? { engine: this.engine } : {}),
         ...(this.opts.scan ? { longForm: false } : {}),
       },

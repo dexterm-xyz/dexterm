@@ -31,6 +31,8 @@ In scope:
 - the wallet link: the one-shot loopback page, its token, Host/Origin checks and CSP, and the signed-message check;
 - the Telegram connector: the bot token (keychain only, redacted everywhere), pairing, the allow-listed chat, the command list, and anything that lets chat make a run less safe or reach anything but the paper book;
 - the read-only Telegram commands (`/check`, `/top`, `/signals`): anything that lets them change state, reach a tool outside their read allowlist, answer outside the paired private chat or get past their rate limit;
+- the Strategy Builder in the browser (`dexterm strategies web`): the one-time link and session cookie, the Host / Origin / CSRF checks, anything that lets another site or another local user drive it, a change applied without your Confirm, any path to real mode, arming, limits or the paper book, and an address, key or home path in a response;
+- the strategy factory and its MCP tools: a model, an offer or lessons.md text that gets past the evidence checks or the spend caps, an agent applying a change it should only propose, lifting FACTORY-STOP, or reaching anything but paper;
 - any path from a model, voice command, agent, chat message or token metadata to arming a plan, switching a strategy to real, arming it or raising a limit;
 - real mode's signal path: the outbox (nonce, TTL, dedupe, restart), the webhook HMAC, the command hook (argv, no shell), the limits file and its integrity check, the kill switch, and anything that lets a paper strategy emit a signal or a signal leave its limits;
 - the loopback chart server and the native shell: ticket, token, Host/Origin checks, CSP, navigation pinning;

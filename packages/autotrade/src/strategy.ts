@@ -35,7 +35,9 @@ export interface ExitProfile {
   description: string;
   fit: { summary: string; minLiquidityUsd: number; ageHours: { min: number; max: number | null }; maxTop10Pct?: number | null; signals?: string[] };
   sizing: { maxSizePctOfBankroll: number };
-  tpLadder: { atPct: number; sellFrac: number }[];
+  /** A step fires at a gain over entry (`atPct`) or, task-2163, when the coin's market cap first reaches `atMcapUsd`
+   *  (the cap is the price times the supply read at entry; one kind per ladder). */
+  tpLadder: { atPct?: number; atMcapUsd?: number; sellFrac: number }[];
   trailingStop: { armAtPct: number; trailPct: number } | null;
   timeStop: { minutes: number; ifBelowPct: number; action: TimeAction } | null;
   hardStop: { enabled: boolean; atPct: number | null; why: string };
@@ -197,7 +199,7 @@ export const SCHEMAS: Refs = {
     id: str(32, ID), name: str(40), version: str(16, SEMVER), description: str(400),
     fit: obj({ summary: str(300), minLiquidityUsd: num(1000), ageHours: ageRange, maxTop10Pct: nullable(num(0, 100)), signals: { type: 'array', items: str(200), max: 8 } }, ['summary', 'minLiquidityUsd', 'ageHours']),
     sizing: obj({ maxSizePctOfBankroll: num(0.1, 25) }),
-    tpLadder: { type: 'array', max: 6, items: obj({ atPct: num(0.1, 10000), sellFrac: num(0.01, 1) }) },
+    tpLadder: { type: 'array', max: 10, items: obj({ atPct: num(0.1, 10000), atMcapUsd: num(1000, 1e12), sellFrac: num(0.01, 1) }, ['sellFrac']) },
     trailingStop: nullable(obj({ armAtPct: num(0), trailPct: num(5, 60) })),
     timeStop: nullable(obj({ minutes: num(1, 10080), ifBelowPct: num(-100, 10000), action: { type: 'string', enum: ['exit', 'review', 'tighten'] } })),
     hardStop: obj({ enabled: { type: 'boolean' }, atPct: nullable(num(-90, 0)), why: str(400) }),
@@ -293,13 +295,20 @@ export function validateExitProfile(p: unknown, at = ''): Issue[] {
   const errs = validate('exitProfile', p, at, [], SCHEMAS);
   if (errs.length) return errs;
   const x = p as ExitProfile;
-  for (let i = 1; i < x.tpLadder.length; i++) if (!(x.tpLadder[i].atPct > x.tpLadder[i - 1].atPct)) errs.push({ path: `${at}/tpLadder/${i}`, msg: 'atPct must be strictly ascending' });
+  const byCap = x.tpLadder.length > 0 && x.tpLadder[0].atMcapUsd !== undefined;
+  const lvl = (t: ExitProfile['tpLadder'][number]) => (byCap ? t.atMcapUsd : t.atPct);
+  x.tpLadder.forEach((t, i) => {
+    if ((t.atPct === undefined) === (t.atMcapUsd === undefined)) errs.push({ path: `${at}/tpLadder/${i}`, msg: 'a TP step needs exactly one of atPct or atMcapUsd' });
+    else if ((t.atMcapUsd !== undefined) !== byCap) errs.push({ path: `${at}/tpLadder/${i}`, msg: 'one kind per ladder: every step atPct, or every step atMcapUsd' });
+  });
+  if (x.tpLadder.length > 6 && !byCap) errs.push({ path: `${at}/tpLadder`, msg: 'at most 6 atPct steps (up to 10 market-cap steps)' });
+  for (let i = 1; i < x.tpLadder.length; i++) if (!((lvl(x.tpLadder[i]) ?? NaN) > (lvl(x.tpLadder[i - 1]) ?? NaN))) errs.push({ path: `${at}/tpLadder/${i}`, msg: `${byCap ? 'atMcapUsd' : 'atPct'} must be strictly ascending` });
   const sum = x.tpLadder.reduce((s, t) => s + t.sellFrac, 0);
   if (sum > 1 + 1e-9) errs.push({ path: `${at}/tpLadder`, msg: `sellFrac adds up to ${round(sum, 4)} (more than the whole position)` });
   if (x.hardStop.enabled && x.hardStop.atPct === null) errs.push({ path: `${at}/hardStop/atPct`, msg: 'an enabled hard stop needs atPct' });
   if (x.carry.allowed && x.carry.maxRemainderPctOfBankroll <= 0) errs.push({ path: `${at}/carry`, msg: 'carry allowed needs maxRemainderPctOfBankroll > 0' });
   if (x.bagTrail && !x.costRecovery) errs.push({ path: `${at}/bagTrail`, msg: 'a bag trail is armed by the cost-recovery sell: set costRecovery' });
-  if (x.costRecovery && x.tpLadder.length && x.tpLadder[0].atPct <= x.costRecovery.atPct) errs.push({ path: `${at}/tpLadder/0`, msg: 'a TP step at or below the cost-recovery level would sell first: put the ladder above costRecovery.atPct' });
+  if (x.costRecovery && x.tpLadder.length && !byCap && x.tpLadder[0].atPct! <= x.costRecovery.atPct) errs.push({ path: `${at}/tpLadder/0`, msg: 'a TP step at or below the cost-recovery level would sell first: put the ladder above costRecovery.atPct' });
   if (x.reprofileTo.includes(x.id)) errs.push({ path: `${at}/reprofileTo`, msg: 'a profile cannot re-profile to itself' });
   return errs;
 }

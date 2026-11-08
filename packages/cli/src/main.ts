@@ -851,6 +851,8 @@ export async function main(argv: string[], io: Io = process as unknown as Io, pr
     return dashCommand(argv.slice(1), { stdout: io.stdout, stderr: io.stderr, env: io.env });
   }
   // `dexterm autotrade validate|list|backtest|sweep …` and `dexterm backtest --subject strategy` → the paper autotrade engine (task-1503). No network, no model, no keys.
+  // task-2170: `dexterm strategies web` = `dexterm autotrade web` (the Strategy Builder web UI)
+  if (argv[0] === 'strategies' && argv[1] === 'web') { const at = await import('./autotrade-cmd.ts'); return at.autotradeCommand(['autotrade', ...argv.slice(1)], { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin }); }
   if (argv[0] === 'autotrade' || argv[0] === 'backtest') { const at = await import('./autotrade-cmd.ts'); if (at.handles(argv)) return at.autotradeCommand(argv, { stdout: io.stdout, stderr: io.stderr, env: io.env, stdin: io.stdin }); }
   // `dexterm backtest [--subject heuristic|pack_verdicts] [--horizon SEC]` → honest rug-model metrics over recorded outcomes (task-1356). No network, no model.
   if (argv[0] === 'backtest') {

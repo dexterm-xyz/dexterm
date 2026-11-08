@@ -157,6 +157,26 @@ export const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: 'the digest per strategy and mode: trades, win rate with its interval, net, drawdown, refusals, limits hit, executor health, paper vs real fills, an honest small-sample note',
     load: () => import('./autotrade-cmd/report.ts').then((m) => m.reportCmd),
   },
+  factory: {
+    usage: 'dexterm autotrade factory run [--stub] [--max-candidates N] [--focus TEXT] [--no-forward] | status | show <id> | retire <id> | stop | resume | config [show|set K V|reset] | lessons | install [--dry-run] [--load] | uninstall [--home PATH]',
+    summary: 'the strategy factory (PAPER): your own Claude reads every strategy\'s evidence and proposes ONE new candidate per run; it is checked (numbers, duplicates), tested on held-out days it never saw and queued for a paper forward test; failed forward tests retire it. Never promotes; caps, FACTORY-STOP, a daily schedule',
+    load: () => import('./autotrade-cmd/factory.ts').then((m) => m.factoryCmd),
+  },
+  generate: {
+    usage: 'dexterm autotrade generate [--stub] [--max-candidates N] [--focus TEXT] [--no-forward] [--json]',
+    summary: 'one strategy-factory run now (= `factory run`): at most the capped number of new PAPER candidates; candidates are not edges',
+    load: () => import('./autotrade-cmd/factory.ts').then((m) => m.generateCmd),
+  },
+  web: {
+    usage: 'dexterm autotrade web [--no-open] [--port N] [--json]   (also: dexterm strategies web)',
+    summary: 'the Strategy Builder in your browser, on this machine only (127.0.0.1): strategies, builder, factory, chat and Watch it cook. PAPER; the URL works once',
+    load: () => import('./autotrade-cmd/web.ts').then((m) => m.webCmd),
+  },
+  watch: {
+    usage: 'dexterm autotrade watch <id> [--open-overlay] [--no-overlay] [--every S] [--once [--json]]',
+    summary: 'watch one strategy cook, READ-ONLY: rules, paper bags HELD/SOLD, entries and exits, equity, ladder rungs hit; also as the overlay `strategy` scene',
+    load: () => import('./autotrade-cmd/watch.ts').then((m) => m.watchCmd),
+  },
   extract: {
     usage: 'dexterm autotrade extract --out FILE [--db PATH] [--max-mints N] [--min-peak-liq USD] [--span-hours H]',
     summary: 'save a replay tape from your recorder history (read-only) to a file you can backtest offline',

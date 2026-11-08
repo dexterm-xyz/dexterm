@@ -42,7 +42,7 @@ export function parseOverlayArgs(rest: string[]): Opts | string {
     const a = rest[i];
     const val = (): string | null => { const v = rest[++i]; return v === undefined || v.startsWith('--') ? null : v; };
     switch (a) {
-      case '--scene': { const v = val(); if (!v || !(OVERLAY_PAGES as readonly string[]).includes(v)) return `--scene is one of ${OVERLAY_PAGES.join(', ')}`; if (!o.scenes.includes(v as OverlayPage)) o.scenes.push(v as OverlayPage); break; }
+      case '--scene': { const v = val(); if (v === 'strategy') return 'the strategy scene is served by `dexterm autotrade watch <id>` (it reads that strategy\'s paper run)'; if (!v || !(OVERLAY_PAGES as readonly string[]).includes(v)) return `--scene is one of ${OVERLAY_PAGES.filter((p) => p !== 'strategy').join(', ')}`; if (!o.scenes.includes(v as OverlayPage)) o.scenes.push(v as OverlayPage); break; }
       case '--theme': { const v = val(); if (!v || !(OVERLAY_THEME_NAMES as string[]).includes(v)) return `--theme is one of ${OVERLAY_THEME_NAMES.join(', ')}`; o.theme = v as OverlayThemeName; break; }
       case '--replay': { const v = val(); if (!v) return '--replay needs a FILE'; o.replay = v; break; }
       case '--speed': { const n = Number(val()); if (!(n > 0 && n <= 100)) return '--speed is a number from 0 to 100'; o.speed = n; break; }

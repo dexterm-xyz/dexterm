@@ -17,8 +17,9 @@ export const OVERLAY_ACTIVITY_MAX = 8;
 /** Live signals kept on the coin card. */
 export const OVERLAY_FLAGS_MAX = 4;
 
-export type OverlayScene = 'activity' | 'coin' | 'pnl';
-export const OVERLAY_SCENES: readonly OverlayScene[] = ['activity', 'coin', 'pnl'];
+// task-2170: `strategy` is one strategy's PAPER run (overlay/strategy.ts), pushed by `dexterm autotrade watch <id>`.
+export type OverlayScene = 'activity' | 'coin' | 'pnl' | 'strategy';
+export const OVERLAY_SCENES: readonly OverlayScene[] = ['activity', 'coin', 'pnl', 'strategy'];
 
 export interface OverlayActivityRow {
   t: number;

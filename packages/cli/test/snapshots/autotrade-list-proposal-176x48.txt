@@ -1,22 +1,22 @@
   dexterm ┃  1 Screener   2 New pairs   3 Watchlist   4 Analyst          strategies · recorded history · paper runner status   SOL $120.73 ▼0.7%  ◈ PAPER · autotrade  19:04:11
 
   PAPER  AUTOTRADE   STRATEGIES   EDITOR   COMPARE   BACKTEST   RUNNER
-╭─ STRATEGIES · 6 (6 presets, 0 yours) ────────────────────────────────────────────── paper only · your files: ~/.dexterm/strategies · presets are read-only (d makes a copy) ─╮
+╭─ STRATEGIES · 14 (14 presets, 0 yours) ────── paper only · your files: ~/.dexterm/strategies · presets are read-only (d makes a copy) · in a browser: dexterm autotrade web ─╮
 │    STRATEGY              SOURCE  MODE   VERSION  HASH              PROFILES                                                      LAST BACKTEST · net · dd · n                │
 │▎   moonbag               preset  paper  v1.0.0   67fc4c95f08620eb  moonbag                                                       not backtested                              │
 │    runner                preset  paper  v1.0.0   82b98b1cd31f6699  runner swing                                                  not backtested                              │
 │    sample-dip-ladder     preset  paper  v1.0.0   607ba6bf86cf82a9  dip-trail swing                                               not backtested                              │
 │    scalp                 preset  paper  v1.0.0   70d65ef11ab72be0  scalp swing                                                   not backtested                              │
+│    ss-s2-old-holders     preset  paper  v1.0.0   6b13319bc667467c  ss-moon-cr50                                                  not backtested                              │
+│    ss-s2-old-holders-op… preset  paper  v1.0.0   e03391fa3a845503  ss-moon-cr50                                                  not backtested                              │
+│    ss-s3-old-scalp       preset  paper  v1.0.0   c5de399c846ea43d  ss-scalp20                                                    not backtested                              │
+│    ss-s3-old-scalp-open  preset  paper  v1.0.0   278548708364d62b  ss-scalp20                                                    not backtested                              │
+│    ss-t2-trend-hold60    preset  paper  v1.0.0   0a8da553972c8189  ss-hold60                                                     not backtested                              │
+│    ss-t2-trend-hold60-o… preset  paper  v1.0.0   1b6b315823864286  ss-hold60                                                     not backtested                              │
+│    stream-c30-fresh      preset  paper  v1.2.0   ede41df4ebadf93e  c30-moon                                                      not backtested                              │
+│    stream-c30-trend      preset  paper  v1.2.0   3954cb3f0957b1c2  c30-moon                                                      not backtested                              │
 │    swing                 preset  paper  v1.0.0   be171962d0568f46  swing runner scalp                                            not backtested                              │
 │    yolo ⚠                preset  paper  v1.0.0   f7857ca3bacffb77  yolo                                                          not backtested                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
-│                                                                                                                                                                              │
 │                                                                                                                                                                              │
 │                                                                                                                                                                              │
 │                                                                                                                                                                              │

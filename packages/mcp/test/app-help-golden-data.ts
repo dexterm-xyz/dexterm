@@ -2,6 +2,13 @@
 // app-help + docs search to prove the docs never displace an app-help answer).
 /** [question, expected top entry id]. */
 export const GOLDEN: Array<[string, string]> = [
+  // task-2167: the strategy factory from an external MCP agent
+  ['open the strategy builder in my browser', 'autotrade-web'],
+  ['which command opens the strategy builder web ui', 'autotrade-web'],
+  ['drive the strategy factory from my agent', 'autotrade-factory-agents'],
+  ['offer a strategy candidate from claude code over mcp', 'autotrade-factory-agents'],
+  ['confirm a pending factory proposal', 'autotrade-factory-agents'],
+  ['let my agent offer a generated strategy candidate', 'autotrade-factory-agents'],
   // open / paste a coin
   ['how do I paste a coin', 'open-a-coin'],
   ['paste a contract address to open it', 'open-a-coin'],

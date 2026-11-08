@@ -1024,12 +1024,14 @@ export async function runAutotrade(o: RunOpts): Promise<RunResult> {
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+const capK = (x: number) => (x >= 1e6 ? `${+(x / 1e6).toFixed(2)}M` : `${+(x / 1e3).toFixed(1)}K`);
+
 /** The exit plan of a profile in one line, for a proposal (engine state only). */
 export function exitPlanLine(p: import('./strategy.ts').ExitProfile): string {
   const parts: string[] = [];
   if (p.costRecovery) parts.push(`cost back at +${p.costRecovery.atPct}%`);
   if (p.bagTrail) parts.push(`then a ${p.bagTrail.trailPct}% bag trail`);
-  if (p.tpLadder.length) parts.push(`take profit ${p.tpLadder.map((t) => `+${t.atPct}%`).join(', ')}`);
+  if (p.tpLadder.length) parts.push(`take profit ${p.tpLadder.map((t) => (t.atMcapUsd !== undefined ? `$${capK(t.atMcapUsd)} mcap` : `+${t.atPct}%`)).join(', ')}`);
   if (p.trailingStop) parts.push(`${p.trailingStop.trailPct}% trail from +${p.trailingStop.armAtPct}%`);
   if (p.maxHoldMinutes) { const m = p.maxHoldMinutes; parts.push(`out after ${m >= 2880 ? `${Math.round(m / 1440)} days` : m >= 120 ? `${Math.round(m / 60)} h` : `${m} min`}`); }
   parts.push(p.hardStop.enabled && p.hardStop.atPct !== null ? `stop ${p.hardStop.atPct}%` : 'no hard stop');

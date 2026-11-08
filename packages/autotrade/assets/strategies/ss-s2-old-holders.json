@@ -1,0 +1,214 @@
+{
+ "kind": "strategy",
+ "schema": "dexterm-strategy/1",
+ "id": "ss-s2-old-holders",
+ "name": "Published S2: old coins, many holders",
+ "version": "1.0.0",
+ "description": "PAPER only, simulated fills, not financial advice. S2 from the authors' November 2026 strategy search: coins at least 6 h old with 2,000+ holders, a $10K pool and a 1-h change no worse than -20%, after the holder-safety and pool-safety gates. Cost back at +50%, the rest rides a 40% trail. Held-out backtest: no edge found (95% range spans zero). Rules frozen 2026-11-04; results in the docs (Published paper strategies).",
+ "mode": "paper",
+ "bankroll": {
+  "startUsd": 5000
+ },
+ "entry": {
+  "screen": "liq >= 10K vol5m >= 500 holders >= 2K h1 >= -20 !flag:mint !flag:freeze",
+  "ageHours": {
+   "min": 6,
+   "max": null
+  },
+  "safety": {
+   "maxTop10Pct": 30,
+   "maxDevPct": 5,
+   "requireNoMintAuthority": true,
+   "requireNoFreezeAuthority": true,
+   "maxMcapSplitX": 3,
+   "youngVertical": {
+    "maxAgeHours": 2,
+    "maxH1Pct": 150
+   },
+   "unknownHolders": "reject",
+   "rugproof": {
+    "minPoolAgeMin": 10,
+    "requireSafePool": true,
+    "maxHolderLpPct": 10,
+    "maxWithdraws": 0,
+    "withdrawScanTx": 25,
+    "liquidityRecheck": {
+     "afterSec": 60,
+     "floorX": 2,
+     "maxDropPct": 15
+    },
+    "routeX": 2,
+    "youngPool": {
+     "underMin": 30,
+     "maxSizePct": 50
+    },
+    "drainGuard": {
+     "pollSec": 10,
+     "liqDropPct": 25,
+     "exitOnNoRoute": true,
+     "minReserveSol": 0.5
+    }
+   }
+  },
+  "triggers": [
+   {
+    "kind": "screen"
+   }
+  ],
+  "triggerMode": "any",
+  "decide": "auto",
+  "candidateTtlSec": 240
+ },
+ "exits": {
+  "default": "ss-moon-cr50",
+  "profiles": [
+   {
+    "kind": "exit-profile",
+    "id": "ss-moon-cr50",
+    "name": "S2 exit: cost back at +50%",
+    "version": "1.0.0",
+    "description": "Takes the cost back at +50% (up to 60% of the position), sells 12% / 15% / 15% of the original at +200% / +400% / +900%, the rest rides a 40% trail off its peak. Stop at -32%; out after 45 min if not up 10%.",
+    "fit": {
+     "summary": "Coins at least 6 h old with 2,000+ holders, a $10K pool, 5-min volume >= $500 and a 1-h change no worse than -20%, after the holder-safety and pool-safety gates.",
+     "minLiquidityUsd": 10000,
+     "ageHours": {
+      "min": 6,
+      "max": null
+     },
+     "maxTop10Pct": 30,
+     "signals": [
+      "first clean 5m push with buyers ahead of sellers",
+      "liquidity rising with price"
+     ]
+    },
+    "sizing": {
+     "maxSizePctOfBankroll": 12
+    },
+    "tpLadder": [
+     {
+      "atPct": 200,
+      "sellFrac": 0.12
+     },
+     {
+      "atPct": 400,
+      "sellFrac": 0.15
+     },
+     {
+      "atPct": 900,
+      "sellFrac": 0.15
+     }
+    ],
+    "trailingStop": null,
+    "costRecovery": {
+     "atPct": 50,
+     "maxSellFrac": 0.6
+    },
+    "bagTrail": {
+     "trailPct": 40
+    },
+    "timeStop": {
+     "minutes": 45,
+     "ifBelowPct": 10,
+     "action": "exit"
+    },
+    "hardStop": {
+     "enabled": true,
+     "atPct": -32,
+     "why": "Fills at the next price read, so a pool pulled between reads can still fill near -100%; the position size caps that loss."
+    },
+    "thesisBreak": {
+     "liquidityDropPct": 40,
+     "liquidityWindowMin": 10,
+     "mcapDivergenceX": 5,
+     "devSell": {
+      "exitOnAnyDevSell": true,
+      "topHolderSellPctOfBag": 30
+     },
+     "volumeDeath": {
+      "m5TradesBelow": 5,
+      "forMinutes": 30
+     }
+    },
+    "reentry": {
+     "allowed": false,
+     "cooldownMinutes": 0,
+     "maxEntriesPerCoinPerSession": 1,
+     "requires": "one entry per coin"
+    },
+    "carry": {
+     "allowed": true,
+     "requiresTpFilled": 0,
+     "maxRemainderPctOfBankroll": 5
+    },
+    "reprofileTo": [],
+    "wake": {
+     "onTpFilled": false,
+     "onTimeReview": false,
+     "drawdownPct": -50,
+     "thesisWarnFrac": 0.6,
+     "noAnswer": "hold",
+     "onCostRecovered": false
+    },
+    "maxHoldMinutes": 10080,
+    "notes": [
+     "Rules frozen 2026-11-04; results in the docs (Published paper strategies)."
+    ]
+   }
+  ]
+ },
+ "sizing": {
+  "mode": "pct",
+  "pct": 9,
+  "maxPctOfBankroll": 12,
+  "maxUsd": 900,
+  "minUsd": 2
+ },
+ "risk": {
+  "perTrade": {
+   "maxLossPctOfBankroll": 5,
+   "assumedLossPctNoStop": 100
+  },
+  "dailyLossHaltPct": 20,
+  "drawdown": {
+   "sizeDownAtPct": 30,
+   "sizeDownMult": 0.5,
+   "recoverBelowPct": 20,
+   "haltAtPct": 70
+  },
+  "maxConcurrent": 4,
+  "maxExposurePct": 50,
+  "lossStreak": {
+   "losses": 8,
+   "cooldownMin": 45
+  },
+  "maxEntriesPerDay": 15,
+  "perCoin": {
+   "maxEntries": 1,
+   "cooldownMin": 10080
+  },
+  "recoveredBags": {
+   "countAsOpen": false,
+   "maxBags": 8
+  }
+ },
+ "agent": {
+  "model": "haiku",
+  "maxSessions": 1,
+  "budgetUsdPerSession": 0.05,
+  "budgetUsdPerDay": 0.5,
+  "maxTurns": 10,
+  "deltaEverySec": 15,
+  "decideWithinSec": 60,
+  "sessionMaxMin": 30,
+  "onTimeout": "skip"
+ },
+ "execution": {
+  "slippageBps": 200,
+  "feeBps": 30,
+  "networkFeeUsd": 0.02,
+  "latencyMs": 3000,
+  "maxPriceImpactPct": 6,
+  "minExitLiquidityUsd": 2000,
+  "stuckWriteOffMin": 30
+ }
+}

@@ -26,6 +26,10 @@
 - **Ask your own bot (0.2.2, experimental)**: `/check <CA>`, `/top` and `/signals` in your paired Telegram chat, read-only (`/check` shows the age of each fact).
 - **Confidence tiers (0.2.2, experimental, paper only, off by default)**: opt-in sizing by two measured entry figures, capped at 25% of the book; loses money more slowly than the earlier rules on held-out history, not shown to win.
 - **About 0.2.2**: Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.
+- **Strategy factory (0.3.0, experimental, paper only)**: `dexterm autotrade factory run` has your own Claude write one paper strategy from the evidence, tests it on days it never saw, and forward-tests it on paper; capped calls and spend, never promoted. Candidates are not edges.
+- **Strategy Builder in your browser (0.3.0, experimental)**: `dexterm strategies web` on 127.0.0.1: your strategies, a builder that writes proposals you apply, the factory and the chat; `dexterm autotrade watch <id>` shows one strategy cook, read-only.
+- **Paper strategies, published (0.3.0)**: the eight strategies our paper accounts run ship as presets with their rules. None has shown an edge.
+- **About 0.3.0**: Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice. No strategy, ours or generated, has shown an edge.
 - **A docked chart window** (TradingView Lightweight Charts, vendored, served from a loopback-only server) when you opt into building the small native shell.
 - **An MCP server** (`dexterm mcp`) so your own agents can use the same read-only tools. From 0.1.5, and only if you start `--agent-paper` on a mandate you armed, an agent you connected can also paper trade (simulated only) inside that mandate.
 

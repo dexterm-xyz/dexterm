@@ -15,7 +15,7 @@
 
 import { ANALYST_ACTION_TYPES } from '@dexterm/data';
 import { PAPER_NOTE_TOOLS, PAPER_READ_TOOLS, PAPER_WRITE_TOOLS, READ_ONLY_TOOLS } from '../server.ts';
-import { JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS } from '../autotrade-tools.ts';
+import { FACTORY_AGENT_TOOLS, FACTORY_CHANGE_TOOLS, JOURNEY_CONTROL_TOOLS, JOURNEY_PROPOSE_TOOLS, PARALLEL_CONTROL_TOOLS, STRATEGY_PROPOSE_TOOLS } from '../autotrade-tools.ts';
 import { LEDGER_PROPOSE_TOOLS } from '../ledger-tools.ts';
 
 export const RESTRICTION_LEVELS = ['observe', 'propose', 'paper', 'full'] as const;
@@ -78,7 +78,7 @@ export function engineToolAllowlist(level: Restriction, actionTypes?: readonly s
   if (allows(level, 'paper-orders') && !observeOnly) for (const t of [...PAPER_READ_TOOLS, ...PAPER_WRITE_TOOLS]) out.add(t);
   // v0.1.7 integration: the other paper-side writes (start / stop / pause one listed parallel strategy, a paper
   // journal tag, a backtest request file) join at `paper`, so `paper` and `full` offer every tool the claude path has
-  if (allows(level, 'paper-orders') && !observeOnly) for (const t of [...PARALLEL_CONTROL_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...PAPER_NOTE_TOOLS, ...LEDGER_PROPOSE_TOOLS]) out.add(t);
+  if (allows(level, 'paper-orders') && !observeOnly) for (const t of [...PARALLEL_CONTROL_TOOLS, ...JOURNEY_CONTROL_TOOLS, ...FACTORY_CHANGE_TOOLS, ...FACTORY_AGENT_TOOLS, ...PAPER_NOTE_TOOLS, ...LEDGER_PROPOSE_TOOLS]) out.add(t); // task-2159: strategy_change previews; only the user's next message applies it. task-2167: the agent controls are offered for parity and refuse in-app sessions (they point to strategy_change); NEVER_TOOL drops factory_resume
   return [...out].filter((n) => !NEVER_TOOL.test(n));
 }
 

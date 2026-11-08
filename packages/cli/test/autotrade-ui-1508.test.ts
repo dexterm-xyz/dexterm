@@ -131,7 +131,7 @@ test('strategies list: presets + the user\'s files with mode, version, hash and 
   assert.equal(h.state.screen, 'autotrade');
   assert.equal(ui(h).view, 'list');
   const ids = ui(h).entries.map((e) => e.id);
-  assert.deepEqual(ids, ['moonbag', 'runner', 'sample-dip-ladder', 'scalp', 'swing', 'yolo']);
+  assert.deepEqual(ids, ['moonbag', 'runner', 'sample-dip-ladder', 'scalp', 'ss-s2-old-holders', 'ss-s2-old-holders-open', 'ss-s3-old-scalp', 'ss-s3-old-scalp-open', 'ss-t2-trend-hold60', 'ss-t2-trend-hold60-open', 'stream-c30-fresh', 'stream-c30-trend', 'swing', 'yolo']);
   snapshot('list', frame(h));
   const f = frame(h, 176, 48);
   assert.ok(f.includes('PROPOSALS FROM CHAT · 0'));

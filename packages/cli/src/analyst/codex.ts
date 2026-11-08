@@ -39,7 +39,7 @@ export const CODEX_HARD_DISABLE = ['shell_tool', 'unified_exec', 'apps', 'plugin
 export const CODEX_SOFT_DISABLE = ['view_image', 'goals', 'image_generation', 'memories', 'skill_search', 'tool_suggest', 'sleep_tool', 'code_mode_host', 'in_app_browser'] as const;
 
 /** Env vars the dexterm MCP server needs, forwarded by NAME (`env_vars`) so the per-run action token never sits in argv. */
-export const CODEX_MCP_ENV = ['DEXTERM_SCREEN_STATE', ACTION_FILE_ENV, ACTION_TOKEN_ENV, 'DEXTERM_RPC_URL', 'DEXTERM_HOME'] as const;
+export const CODEX_MCP_ENV = ['DEXTERM_SCREEN_STATE', ACTION_FILE_ENV, ACTION_TOKEN_ENV, 'DEXTERM_RPC_URL', 'DEXTERM_HOME', 'DEXTERM_CHAT_TURN'] as const; // task-2159: the chat turn a strategy change is confirmed by
 
 /**
  * Is an analyst CLI on PATH in a form the shell-less spawn can start? Windows counts only `.exe` / `.com`
