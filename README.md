@@ -20,7 +20,7 @@
 - **Your own Telegram bot**: alerts, `/status`, `/pause`, `/resume`, `/kill`, `/flatten` and one-tap approvals of paper entries during a paper autotrade run, through a bot you create; the token stays in your OS keychain.
 - **A local model**: the analyst, your agents and paper autotrade sessions can run on Ollama on your own machine, inside a restriction profile you choose.
 - **Classification models (0.2.1, experimental, opt-in)**: pick the model that scores coins with probabilities: the built-in scores (default), an open Kev model on your own machine (downloaded only after your typed yes, sha256-verified), or hosted Jev with your own key. Model estimates, never advice.
-- **Rug-proof entries and a memes + narratives tracker (0.2.1, experimental)**: per-strategy pool-safety gates with a drain guard, and coins grouped by the theme they carry with measured heat (not advice).
+- **Pool-safety entry gates and a memes + narratives tracker (0.2.1, experimental)**: per-strategy pool-safety gates with a drain guard, and coins grouped by the theme they carry with measured heat (not advice).
 - **Your results, on your screen (0.2.1)**: `dexterm dash` (strategy results in a browser on 127.0.0.1) and `dexterm overlay` (OBS scenes for streaming your agent, PAPER / LIVE stamped).
 - **About 0.2.1**: Everything new is experimental and off until you turn it on; paper stays the default; dexterm never holds a key; not financial advice.
 - **Ask your own bot (0.2.2, experimental)**: `/check <CA>`, `/top` and `/signals` in your paired Telegram chat, read-only (`/check` shows the age of each fact).
